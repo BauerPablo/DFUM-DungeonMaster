@@ -25,7 +25,7 @@ namespace DaggerfallWorkshop.Game.Networking
 
         [Header("Motion Interpolation")]
         public float lerpRate = 12.0f;
-        public float snapDistance = 8.0f;
+        public float snapDistance = 3.5f;
 
         private Vector3 targetPosition;
         private Quaternion targetRotation;
@@ -173,8 +173,10 @@ namespace DaggerfallWorkshop.Game.Networking
         private void Update()
         {
             // Smoothly glide towards target snapshot position & orientation
-            transform.position = Vector3.Lerp(transform.position, targetPosition, Time.deltaTime * lerpRate);
-            transform.rotation = Quaternion.Slerp(transform.rotation, targetRotation, Time.deltaTime * lerpRate);
+            float currentDist = Vector3.Distance(transform.position, targetPosition);
+            float effectiveLerpRate = currentDist > 1.5f ? lerpRate * 2.5f : lerpRate;
+            transform.position = Vector3.Lerp(transform.position, targetPosition, Time.deltaTime * effectiveLerpRate);
+            transform.rotation = Quaternion.Slerp(transform.rotation, targetRotation, Time.deltaTime * effectiveLerpRate);
 
             // Orient 3D name tag towards active camera
             if (nameTagObject != null)
@@ -291,6 +293,11 @@ namespace DaggerfallWorkshop.Game.Networking
             if (gameObject.activeSelf != isVisible)
             {
                 gameObject.SetActive(isVisible);
+                if (isVisible)
+                {
+                    transform.position = targetPosition;
+                    transform.rotation = targetRotation;
+                }
             }
         }
 

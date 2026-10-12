@@ -66,6 +66,13 @@ namespace DaggerfallWorkshop.Game
             if (!entityBehaviour)
                 return;
 
+            // Remote player puppets must never execute local enemy death or corpse loot creation
+            if (GetComponent<DaggerfallWorkshop.Game.Networking.NativePlayerPuppet>() != null)
+            {
+                performDeath = false;
+                return;
+            }
+
             // If enemy associated with quest system, make sure quest system is done with it first
             QuestResourceBehaviour questResourceBehaviour = GetComponent<QuestResourceBehaviour>();
             if (questResourceBehaviour)

@@ -40,6 +40,8 @@ namespace DaggerfallWorkshop.Game.Networking
             get { return singleton as DFUNetworkManager; }
         }
 
+        public static int LastCrimeConnId = 0;
+
         [Header("DFU Native Network Settings")]
         [Tooltip("Default port for KCP transport")]
         public ushort defaultPort = 7777;
@@ -192,6 +194,7 @@ namespace DaggerfallWorkshop.Game.Networking
             {
                 gameObject.AddComponent<FreeCamController>();
             }
+            PlayerEnterExit.OnPreTransition += HandleOnPreTransition;
             PlayerEnterExit.OnTransitionInterior += HandleOnTransitionInterior;
             PlayerEnterExit.OnTransitionExterior += HandleOnTransitionExterior;
             PlayerEnterExit.OnTransitionDungeonInterior += HandleOnTransitionDungeonInterior;
@@ -201,6 +204,7 @@ namespace DaggerfallWorkshop.Game.Networking
 
         public override void OnDestroy()
         {
+            PlayerEnterExit.OnPreTransition -= HandleOnPreTransition;
             PlayerEnterExit.OnTransitionInterior -= HandleOnTransitionInterior;
             PlayerEnterExit.OnTransitionExterior -= HandleOnTransitionExterior;
             PlayerEnterExit.OnTransitionDungeonInterior -= HandleOnTransitionDungeonInterior;
@@ -604,6 +608,7 @@ namespace DaggerfallWorkshop.Game.Networking
             NetworkClient.RegisterHandler<MsgPartyQuestStart>(OnClientReceivePartyQuestStart);
             NetworkClient.RegisterHandler<MsgDialogueSpeech>(OnClientReceiveDialogueSpeech);
             NetworkClient.RegisterHandler<MsgDialogueEnded>(OnClientReceiveDialogueEnded);
+            NetworkClient.RegisterHandler<MsgPlayerDamaged>(OnClientReceivePlayerDamaged);
         }
 
         public override void OnStopClient()
@@ -618,6 +623,7 @@ namespace DaggerfallWorkshop.Game.Networking
             NetworkClient.UnregisterHandler<MsgPlayerDespawn>();
             NetworkClient.UnregisterHandler<MsgEntityDamaged>();
             NetworkClient.UnregisterHandler<MsgEntityDeath>();
+            NetworkClient.UnregisterHandler<MsgPlayerDamaged>();
             NetworkClient.UnregisterHandler<MsgLootSync>();
             NetworkClient.UnregisterHandler<MsgSpawnLoot>();
             NetworkClient.UnregisterHandler<MsgDespawnLoot>();
@@ -811,10 +817,21 @@ namespace DaggerfallWorkshop.Game.Networking
                     NativeNetworkEntity netEnt = existing.GetComponent<NativeNetworkEntity>();
                     if (netEnt != null)
                     {
+                        netEnt.loadID = msg.loadID;
                         netEnt.isInside = msg.isInside;
                         netEnt.isInsideDungeon = msg.isInsideDungeon;
                         netEnt.buildingKey = msg.buildingKey;
                         netEnt.isQuestSpawn = msg.isQuestSpawn;
+                        if (msg.loadID != 0)
+                        {
+                            DFUNetworkRegistry.Register(msg.loadID, netEnt);
+                        }
+                    }
+                    DaggerfallEnemy enemy = existing.GetComponent<DaggerfallEnemy>();
+                    if (enemy != null && msg.loadID != 0)
+                    {
+                        enemy.LoadID = msg.loadID;
+                        enemy.QuestSpawn = msg.isQuestSpawn;
                     }
                     RefreshAllClientEnemyProxies();
                     return;
@@ -1438,12 +1455,89 @@ namespace DaggerfallWorkshop.Game.Networking
             }
         }
 
+        /// <summary>
+        /// Routes damage to a player across the network. If host (connId == 0), applies locally.
+        /// If client (connId > 0), sends authoritative MsgPlayerDamaged to that client.
+        /// </summary>
+        public void SendPlayerDamage(int connId, int damage)
+        {
+            if (connId == 0)
+            {
+                if (GameManager.Instance.PlayerEntity != null)
+                {
+                    GameManager.Instance.PlayerEntity.DecreaseHealth(damage);
+                }
+            }
+            else if (NetworkServer.active)
+            {
+                MsgPlayerDamaged msg = new MsgPlayerDamaged
+                {
+                    connectionId = connId,
+                    damage = damage
+                };
+                foreach (var client in connectedClients)
+                {
+                    if (client.connectionId == connId)
+                    {
+                        client.Send(msg);
+                        break;
+                    }
+                }
+            }
+        }
+
+        private void OnClientReceivePlayerDamaged(MsgPlayerDamaged msg)
+        {
+            if (msg.connectionId == localConnectionId || (!NetworkServer.active && msg.connectionId != 0))
+            {
+                if (GameManager.Instance.PlayerEntity != null)
+                {
+                    GameManager.Instance.PlayerEntity.DecreaseHealth(msg.damage);
+                }
+            }
+        }
+
         private void OnClientReceiveEntityDeath(MsgEntityDeath msg)
         {
             if (NetworkSession.IsHost)
                 return;
 
             NativeNetworkEntity proxyNet = DFUNetworkRegistry.Get(msg.entityId);
+            if (proxyNet == null)
+            {
+                foreach (var kvp in DFUNetworkRegistry.GetAllEntities())
+                {
+                    if (kvp.Value != null)
+                    {
+                        NativeNetworkEntity ne = kvp.Value.GetComponent<NativeNetworkEntity>();
+                        if (ne != null && (ne.EntityId == msg.entityId || (ne.loadID != 0 && ne.loadID == msg.entityId) || (msg.lootLoadID != 0 && ne.loadID == msg.lootLoadID)))
+                        {
+                            proxyNet = ne;
+                            break;
+                        }
+                    }
+                }
+            }
+            if (proxyNet == null)
+            {
+                float closestDist = float.MaxValue;
+                foreach (var kvp in DFUNetworkRegistry.GetAllEntities())
+                {
+                    if (kvp.Value != null && kvp.Value.activeInHierarchy)
+                    {
+                        NativeNetworkEntity ne = kvp.Value.GetComponent<NativeNetworkEntity>();
+                        if (ne != null && ne.isClientProxy)
+                        {
+                            float d = Vector3.Distance(ne.transform.position, msg.position);
+                            if (d < 3.5f && d < closestDist)
+                            {
+                                closestDist = d;
+                                proxyNet = ne;
+                            }
+                        }
+                    }
+                }
+            }
             if (proxyNet == null || proxyNet.gameObject == null)
                 return;
 
@@ -1496,6 +1590,10 @@ namespace DaggerfallWorkshop.Game.Networking
             // Deactivate proxy gameobject and unregister
             proxyNet.gameObject.SetActive(false);
             DFUNetworkRegistry.Unregister(msg.entityId);
+            if (proxyNet.EntityId != 0 && proxyNet.EntityId != msg.entityId)
+                DFUNetworkRegistry.Unregister(proxyNet.EntityId);
+            if (proxyNet.entityId != Guid.Empty)
+                DFUNetworkRegistry.UnregisterEntity(proxyNet.entityId);
         }
 
         private void OnServerReceiveRequestLootSync(NetworkConnection conn, MsgRequestLootSync msg)
@@ -1777,6 +1875,17 @@ namespace DaggerfallWorkshop.Game.Networking
             return true;
         }
 
+        private void HandleOnPreTransition(PlayerEnterExit.TransitionType type, StaticDoor door)
+        {
+            foreach (var kvp in remotePlayerPuppets)
+            {
+                if (kvp.Value != null && kvp.Value.gameObject != null)
+                {
+                    kvp.Value.transform.SetParent(null, true);
+                }
+            }
+        }
+
         private void HandleOnTransitionInterior(PlayerEnterExit.TransitionEventArgs args)
         {
             ReparentAllPuppets();
@@ -1787,6 +1896,8 @@ namespace DaggerfallWorkshop.Game.Networking
         {
             ReparentAllPuppets();
             RefreshAllClientEnemyProxies();
+            lastLocalPlayerPos = Vector3.zero;
+            StreamLocalPlayerTransform();
         }
 
         private void HandleOnTransitionDungeonInterior(PlayerEnterExit.TransitionEventArgs args)
@@ -3194,16 +3305,35 @@ namespace DaggerfallWorkshop.Game.Networking
 
                     GUILayout.BeginHorizontal();
                     GUILayout.Label($"<b>{q.QuestName}</b> - {displayName}\n<size=9>UID: {uid} | Faction: {q.FactionId}</size>", GUILayout.ExpandWidth(true));
-                    if (GUILayout.Button(isExpanded ? "Hide" : "View", GUILayout.Width(50), GUILayout.Height(28)))
+                    if (GUILayout.Button(isExpanded ? "Hide" : "View", GUILayout.Width(45), GUILayout.Height(28)))
                     {
                         if (isExpanded) expandedQuestDetails.Remove(uid);
                         else expandedQuestDetails.Add(uid);
                     }
-                    if (GUILayout.Button("End", GUILayout.Width(45), GUILayout.Height(28)))
+                    if (GUILayout.Button("Cancel", GUILayout.Width(50), GUILayout.Height(28)))
                     {
                         q.EndQuest();
                         expandedQuestDetails.Remove(uid);
-                        DaggerfallUI.AddHUDText($"[Quest] Ended '{q.QuestName}'.");
+                        DaggerfallUI.AddHUDText($"[Quest] Canceled '{q.QuestName}'.");
+                    }
+                    if (GUILayout.Button("Complete", GUILayout.Width(65), GUILayout.Height(28)))
+                    {
+                        QuestResource[] items = q.GetAllResources(typeof(Item));
+                        if (items != null)
+                        {
+                            foreach (var itmRes in items)
+                            {
+                                Item itm = itmRes as Item;
+                                if (itm != null && itm.DaggerfallUnityItem != null && GameManager.Instance.PlayerEntity != null)
+                                {
+                                    GameManager.Instance.PlayerEntity.Items.AddItem(itm.DaggerfallUnityItem);
+                                }
+                            }
+                        }
+                        q.QuestSuccess = true;
+                        q.EndQuest();
+                        expandedQuestDetails.Remove(uid);
+                        DaggerfallUI.AddHUDText($"[DM] Completed '{q.QuestName}' successfully!");
                     }
                     GUILayout.EndHorizontal();
 
@@ -4480,6 +4610,7 @@ namespace DaggerfallWorkshop.Game.Networking
         private void OnServerReceivePlayerCrime(NetworkConnection conn, MsgPlayerCrime msg)
         {
             LogNetwork($"[DFU Crime] Received crime event from client {conn.connectionId}: type={msg.crimeType} at {msg.playerPosition}");
+            LastCrimeConnId = conn.connectionId;
             if (GameManager.Instance.PlayerEntity != null)
             {
                 GameManager.Instance.PlayerEntity.SpawnCityGuardsAtPosition(msg.playerPosition, true);

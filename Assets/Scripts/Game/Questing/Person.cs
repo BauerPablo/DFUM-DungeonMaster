@@ -866,18 +866,24 @@ namespace DaggerfallWorkshop.Game.Questing
             {
                 // Fallback: provide virtual/dummy questor data so remote clients compile and accept the quest successfully
                 // even if the host declined or the NPC is not in the client's current scene.
+                int curMapID = GameManager.Instance.PlayerGPS != null ? GameManager.Instance.PlayerGPS.CurrentMapID : 0;
+                int curLocID = (GameManager.Instance.PlayerGPS != null && GameManager.Instance.PlayerGPS.CurrentLocation.Loaded) ? GameManager.Instance.PlayerGPS.CurrentLocation.MapTableData.LocationId : 0;
+                int curBKey = (GameManager.Instance.PlayerEnterExit != null && GameManager.Instance.PlayerEnterExit.IsPlayerInsideBuilding) ? GameManager.Instance.PlayerEnterExit.BuildingDiscoveryData.buildingKey : 0;
+
+                int deterministicSeed = (ParentQuest != null && ParentQuest.UID != 0) ? (int)(ParentQuest.UID & 0x7FFFFFFF) : UnityEngine.Random.Range(1, int.MaxValue);
+
                 questorData = new StaticNPC.NPCData
                 {
                     hash = 10001,
                     flags = 0,
                     factionID = (ParentQuest != null && ParentQuest.FactionId != 0) ? ParentQuest.FactionId : 0,
-                    nameSeed = UnityEngine.Random.Range(1, int.MaxValue),
+                    nameSeed = deterministicSeed,
                     gender = Genders.Male,
                     race = Races.Breton,
                     context = StaticNPC.Context.Custom,
-                    mapID = 0,
-                    buildingKey = 0,
-                    locationID = 0,
+                    mapID = curMapID,
+                    buildingKey = curBKey,
+                    locationID = curLocID,
                     nameBank = NameHelper.BankTypes.Breton
                 };
                 isQuestor = true;

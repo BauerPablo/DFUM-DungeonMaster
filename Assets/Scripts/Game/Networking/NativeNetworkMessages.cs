@@ -437,6 +437,16 @@ namespace DaggerfallWorkshop.Game.Networking
         public int playerConnectionId;
         public string npcName;
     }
+
+    /// <summary>
+    /// Message sent from Server to a Client to apply authoritative damage from an enemy or hazard.
+    /// </summary>
+    public struct MsgPlayerDamaged : NetworkMessage
+    {
+        public int connectionId;
+        public int damage;
+    }
 }
+
 
 

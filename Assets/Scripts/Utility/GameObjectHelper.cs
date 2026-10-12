@@ -1247,12 +1247,17 @@ namespace DaggerfallWorkshop.Utility
             // Configure enemy
             setupEnemy.ApplyEnemySettings(mobileType, mobileReaction, gender);
 
+            // Assign LoadID if missing
+            DaggerfallEnemy enemy = go.GetComponent<DaggerfallEnemy>();
+            if (enemy != null && enemy.LoadID == 0)
+            {
+                enemy.LoadID = DaggerfallUnity.NextUID;
+            }
+
             // Align non-flying units with ground
             MobileUnit mobileUnit = setupEnemy.GetMobileBillboardChild();
             if (mobileUnit.Enemy.Behaviour != MobileBehaviour.Flying)
                 AlignControllerToGround(go.GetComponent<CharacterController>());
-
-            GameManager.Instance?.RaiseOnEnemySpawnEvent(go);
 
             return go;
         }

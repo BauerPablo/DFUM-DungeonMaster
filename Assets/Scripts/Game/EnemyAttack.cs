@@ -320,23 +320,25 @@ namespace DaggerfallWorkshop.Game
             // Play hit sound and trigger blood splash at hit point
             if (damage > 0)
             {
-                targetSounds.PlayHitSound(weapon);
+                if (targetSounds != null)
+                    targetSounds.PlayHitSound(weapon);
 
                 EnemyBlood blood = senses.Target.transform.GetComponent<EnemyBlood>();
                 CharacterController targetController = senses.Target.transform.GetComponent<CharacterController>();
-                Vector3 bloodPos = senses.Target.transform.position + targetController.center;
-                bloodPos.y += targetController.height / 8;
+                Vector3 bloodPos = senses.Target.transform.position + (targetController != null ? targetController.center : new Vector3(0, 0.9f, 0));
+                if (targetController != null)
+                    bloodPos.y += targetController.height / 8;
 
-                if (blood)
+                if (blood && targetEntity != null && targetEntity.MobileEnemy != null)
                 {
                     blood.ShowBloodSplash(targetEntity.MobileEnemy.BloodIndex, bloodPos);
                 }
 
                 // Knock back enemy based on damage and enemy weight
                 if (targetMotor && (targetMotor.KnockbackSpeed <= (5 / (PlayerSpeedChanger.classicToUnitySpeedUnitRatio / 10))
-                        && (entityBehaviour.EntityType == EntityTypes.EnemyClass || targetEntity.MobileEnemy.Weight > 0)))
+                        && (entityBehaviour.EntityType == EntityTypes.EnemyClass || (targetEntity != null && targetEntity.MobileEnemy != null && targetEntity.MobileEnemy.Weight > 0))))
                 {
-                    float enemyWeight = targetEntity.GetWeightInClassicUnits();
+                    float enemyWeight = targetEntity != null ? targetEntity.GetWeightInClassicUnits() : 100f;
                     float tenTimesDamage = damage * 10;
                     float twoTimesDamage = damage * 2;
 
@@ -354,12 +356,13 @@ namespace DaggerfallWorkshop.Game
                 {
                     var targetMobileUnit = senses.Target.GetComponentInChildren<MobileUnit>();
                     Genders gender;
-                    if (targetMobileUnit.Enemy.Gender == MobileGender.Male || targetEntity.MobileEnemy.ID == (int)MobileTypes.Knight_CityWatch)
+                    if (targetMobileUnit != null && (targetMobileUnit.Enemy.Gender == MobileGender.Male || (targetEntity != null && targetEntity.MobileEnemy.ID == (int)MobileTypes.Knight_CityWatch)))
                         gender = Genders.Male;
                     else
                         gender = Genders.Female;
 
-                    targetSounds.PlayCombatVoice(gender, false, damage >= targetEntity.MaxHealth / 4);
+                    if (targetSounds != null)
+                        targetSounds.PlayCombatVoice(gender, false, targetEntity != null && damage >= targetEntity.MaxHealth / 4);
                 }
             }
             else
@@ -368,9 +371,9 @@ namespace DaggerfallWorkshop.Game
                 if (weapon != null)
                     weaponType = DaggerfallUnity.Instance.ItemHelper.ConvertItemToAPIWeaponType(weapon);
 
-                if ((!bowAttack && !targetEntity.MobileEnemy.ParrySounds) || weaponType == WeaponTypes.Melee)
+                if ((!bowAttack && (targetEntity == null || !targetEntity.MobileEnemy.ParrySounds)) || weaponType == WeaponTypes.Melee)
                     sounds.PlayMissSound(weapon);
-                else if (targetEntity.MobileEnemy.ParrySounds)
+                else if (targetEntity != null && targetEntity.MobileEnemy.ParrySounds && targetSounds != null)
                     targetSounds.PlayParrySound();
             }
 
@@ -378,11 +381,23 @@ namespace DaggerfallWorkshop.Game
             if (weapon != null && weapon.IsEnchanted)
             {
                 EntityEffectManager effectManager = GetComponent<EntityEffectManager>();
-                if (effectManager)
+                if (effectManager && targetEntity != null)
                     damage = effectManager.DoItemEnchantmentPayloads(EnchantmentPayloadFlags.Strikes, weapon, entity.Items, targetEntity.EntityBehaviour, damage);
             }
 
-            targetEntity.DecreaseHealth(damage);
+            // Route damage to remote player puppet if attacking a human party member
+            DaggerfallWorkshop.Game.Networking.NativePlayerPuppet targetPuppet = senses.Target.GetComponent<DaggerfallWorkshop.Game.Networking.NativePlayerPuppet>();
+            if (targetPuppet != null)
+            {
+                if (DaggerfallWorkshop.Game.Networking.DFUNetworkManager.Instance != null && Mirror.NetworkServer.active)
+                {
+                    DaggerfallWorkshop.Game.Networking.DFUNetworkManager.Instance.SendPlayerDamage(targetPuppet.connectionId, damage);
+                }
+            }
+            else if (targetEntity != null)
+            {
+                targetEntity.DecreaseHealth(damage);
+            }
 
             if (targetMotor)
             {

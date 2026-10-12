@@ -639,6 +639,11 @@ namespace DaggerfallWorkshop.Game.Entity
                 return;
             }
 
+            if (NetworkSession.IsServer)
+            {
+                DaggerfallWorkshop.Game.Networking.DFUNetworkManager.LastCrimeConnId = 0;
+            }
+
             SpawnCityGuardsAtPosition(myPos, immediateSpawn);
         }
 
@@ -779,23 +784,38 @@ namespace DaggerfallWorkshop.Game.Entity
 
             // Classic does not do anything special to make guards aware of the player, but since they're responding to a crime, standing around
             // unaware of the player can be perceived as a bug.
-            // In multiplayer, target the closest party player to this guard.
+            // In multiplayer, target the actual criminal who committed the crime, or fallback to closest party player.
             DaggerfallEntityBehaviour targetPlayer = GameManager.Instance.PlayerEntityBehaviour;
             if (NetworkSession.IsActive)
             {
-                float closestDist = float.MaxValue;
-                var players = DFUNetworkManager.ConnectedPlayers;
-                if (players != null)
+                int crimeConnId = DaggerfallWorkshop.Game.Networking.DFUNetworkManager.LastCrimeConnId;
+                if (crimeConnId > 0 && DaggerfallWorkshop.Game.Networking.DFUNetworkManager.Instance != null)
                 {
-                    for (int i = 0; i < players.Count; i++)
+                    if (DaggerfallWorkshop.Game.Networking.DFUNetworkManager.Instance.remotePlayerPuppets.TryGetValue(crimeConnId, out DaggerfallWorkshop.Game.Networking.NativePlayerPuppet puppet) && puppet != null)
                     {
-                        if (players[i] != null)
+                        targetPlayer = puppet.GetComponent<DaggerfallEntityBehaviour>();
+                    }
+                }
+                else if (crimeConnId == 0)
+                {
+                    targetPlayer = GameManager.Instance.PlayerEntityBehaviour;
+                }
+                else
+                {
+                    float closestDist = float.MaxValue;
+                    var players = DFUNetworkManager.ConnectedPlayers;
+                    if (players != null)
+                    {
+                        for (int i = 0; i < players.Count; i++)
                         {
-                            float d = Vector3.Distance(position, players[i].transform.position);
-                            if (d < closestDist)
+                            if (players[i] != null)
                             {
-                                closestDist = d;
-                                targetPlayer = players[i];
+                                float d = Vector3.Distance(position, players[i].transform.position);
+                                if (d < closestDist)
+                                {
+                                    closestDist = d;
+                                    targetPlayer = players[i];
+                                }
                             }
                         }
                     }
