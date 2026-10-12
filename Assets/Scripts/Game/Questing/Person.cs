@@ -848,8 +848,65 @@ namespace DaggerfallWorkshop.Game.Questing
             // Must have a questor set
             if (QuestMachine.Instance.LastNPCClicked == null)
             {
-                Debug.LogErrorFormat("Quest Person _{0}_ is expecting a Questor NPC, but one has not been clicked. Proceeding with a virtual NPC so quest will compile.", Symbol.Name);
-                return false;
+                // Fallback: check if TalkManager was interacting with a static NPC
+                if (GameManager.Instance.TalkManager != null && GameManager.Instance.TalkManager.StaticNPC != null)
+                {
+                    QuestMachine.Instance.SetLastNPCClicked(GameManager.Instance.TalkManager.StaticNPC);
+                }
+                else
+                {
+                    // Fallback: auto-recover with any local static NPC in the active scene
+                    StaticNPC[] npcs = GameObject.FindObjectsOfType<StaticNPC>();
+                    if (npcs != null && npcs.Length > 0)
+                        QuestMachine.Instance.SetLastNPCClicked(npcs[0]);
+                }
+            }
+
+            if (QuestMachine.Instance.LastNPCClicked == null)
+            {
+                // Fallback: provide virtual/dummy questor data so remote clients compile and accept the quest successfully
+                // even if the host declined or the NPC is not in the client's current scene.
+                questorData = new StaticNPC.NPCData
+                {
+                    hash = 10001,
+                    flags = 0,
+                    factionID = (ParentQuest != null && ParentQuest.FactionId != 0) ? ParentQuest.FactionId : 0,
+                    nameSeed = UnityEngine.Random.Range(1, int.MaxValue),
+                    gender = Genders.Male,
+                    race = Races.Breton,
+                    context = StaticNPC.Context.Custom,
+                    mapID = 0,
+                    buildingKey = 0,
+                    locationID = 0,
+                    nameBank = NameHelper.BankTypes.Breton
+                };
+                isQuestor = true;
+
+                FactionFile.FactionData fallbackFactionData = new FactionFile.FactionData();
+                if (questorData.factionID != 0)
+                {
+                    try
+                    {
+                        fallbackFactionData = GetFactionData(questorData.factionID);
+                    }
+                    catch
+                    {
+                        fallbackFactionData.id = questorData.factionID;
+                        fallbackFactionData.name = "Quest Giver";
+                    }
+                }
+                else
+                {
+                    fallbackFactionData.id = 0;
+                    fallbackFactionData.name = "Quest Giver";
+                }
+
+                this.factionData = fallbackFactionData;
+                nameSeed = questorData.nameSeed;
+                npcGender = questorData.gender;
+
+                Debug.LogWarningFormat("Quest Person _{0}_ is expecting a Questor NPC, but one has not been clicked. Provided virtual/dummy questor fallback (Faction: {1}) so quest compiles successfully.", Symbol.Name, questorData.factionID);
+                return true;
             }
 
             // Set questor data

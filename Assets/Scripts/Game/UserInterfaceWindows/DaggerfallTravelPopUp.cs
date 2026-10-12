@@ -460,6 +460,31 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
                 showNotEnoughGoldPopup();
                 return;
             }
+
+            if (GameManager.Instance.NetworkManager != null && GameManager.Instance.NetworkManager.HasMultiplePlayers)
+            {
+                string destName = (travelWindow != null) ? travelWindow.DestinationName : "Destination";
+                string regionName = (travelWindow != null) ? travelWindow.DestinationRegionName : "Region";
+                int travelDays = (travelTimeTotalMins / 1440) + ((travelTimeTotalMins % 1440) > 0 ? 1 : 0);
+                int cost = travelTimeCalculator.TotalCost;
+
+                DaggerfallUI.Instance.UserInterfaceManager.PopWindow();
+                if (travelWindow != null)
+                    travelWindow.CloseTravelWindows(true);
+
+                GameManager.Instance.NetworkManager.InitiatePartyTravelVote(
+                    destName,
+                    regionName,
+                    (int)endPos.X,
+                    (int)endPos.Y,
+                    travelDays,
+                    travelTimeTotalMins,
+                    cost,
+                    speedCautious,
+                    sleepModeInn,
+                    travelShip);
+                return;
+            }
             else
             {
                 GameManager.Instance.PlayerEntity.GoldPieces -= travelTimeCalculator.PiecesCost;

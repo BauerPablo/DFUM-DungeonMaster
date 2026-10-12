@@ -202,6 +202,16 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
 
         public ContentReader.MapSummary LocationSummary { get => locationSummary; }
 
+        public string DestinationName
+        {
+            get => (locationSummary.MapIndex >= 0) ? GetLocationNameInCurrentRegion(locationSummary.MapIndex, true) : "Destination";
+        }
+
+        public string DestinationRegionName
+        {
+            get => (locationSummary.RegionIndex >= 0) ? GetRegionName(locationSummary.RegionIndex) : "Region";
+        }
+
         public void ActivateTeleportationTravel()
         {
             teleportationTravel = true;

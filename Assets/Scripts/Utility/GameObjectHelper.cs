@@ -21,6 +21,7 @@ using DaggerfallWorkshop.Game.Entity;
 using DaggerfallWorkshop.Game.Questing;
 using DaggerfallWorkshop.Game.Serialization;
 using DaggerfallWorkshop.Game.Utility;
+using DaggerfallWorkshop.Game.Networking;
 using DaggerfallWorkshop.Utility.AssetInjection;
 
 namespace DaggerfallWorkshop.Utility
@@ -425,6 +426,29 @@ namespace DaggerfallWorkshop.Utility
             {
                 return null;
             }
+        }
+
+        /// <summary>
+        /// Gets best persistent parent for remote player puppets.
+        /// Unlike standard enemies and loot, puppets are persistent entities across the multiplayer session
+        /// and must NEVER be parented to CurrentPlayerLocationObject, which gets destroyed during regional
+        /// fast travel and terrain streaming.
+        /// </summary>
+        public static Transform GetBestPuppetParent()
+        {
+            PlayerEnterExit playerEnterExit = GameManager.Instance.PlayerEnterExit;
+            if (playerEnterExit != null)
+            {
+                if (playerEnterExit.IsPlayerInsideBuilding && playerEnterExit.Interior != null)
+                    return playerEnterExit.Interior.transform;
+                if (playerEnterExit.IsPlayerInsideDungeon && playerEnterExit.Dungeon != null)
+                    return playerEnterExit.Dungeon.transform;
+            }
+
+            if (GameManager.Instance.StreamingWorld != null && GameManager.Instance.StreamingWorld.StreamingTarget != null)
+                return GameManager.Instance.StreamingWorld.StreamingTarget;
+
+            return null;
         }
 
         public static void TagStaticGeometry(GameObject go)
@@ -1060,6 +1084,10 @@ namespace DaggerfallWorkshop.Utility
             if (SaveLoadManager.Instance.LoadInProgress)
                 return;
 
+            // Pure clients must NOT create autonomous enemies locally; server is authoritative
+            if (!NetworkSession.ShouldHandleSpawns)
+                return;
+
             // Get foe gender
             MobileGender mobileGender = MobileGender.Unspecified;
             if (foe.Gender == Genders.Male)
@@ -1070,6 +1098,8 @@ namespace DaggerfallWorkshop.Utility
             // Create enemy GameObject
             Vector3 dungeonBlockPosition = new Vector3(marker.dungeonX * RDBLayout.RDBSide, 0, marker.dungeonZ * RDBLayout.RDBSide);
             GameObject go = CreateEnemy("Quest Foe", foe.FoeType, dungeonBlockPosition + marker.flatPosition, mobileGender, parent);
+            if (go == null)
+                return;
 
             // Assign loadID and custom spawn
             DaggerfallEnemy enemy = go.GetComponent<DaggerfallEnemy>();
@@ -1093,6 +1123,12 @@ namespace DaggerfallWorkshop.Utility
             //  * This should be rearmed at the beginning of each wave
             //  * Only first wounding of a wave will trigger "injured aFoe" until rearmed on next wave
             foe.RearmInjured();
+
+            // Re-notify server enemy spawn so quest spawn flag and loadID are broadcast to clients
+            if (NetworkSession.IsServer)
+            {
+                GameManager.Instance?.RaiseOnEnemySpawnEvent(go);
+            }
         }
 
         /// <summary>
@@ -1181,6 +1217,10 @@ namespace DaggerfallWorkshop.Utility
         /// </summary>
         public static GameObject CreateEnemy(string name, MobileTypes mobileType, Vector3 localPosition, MobileGender mobileGender = MobileGender.Unspecified, Transform parent = null, MobileReactions mobileReaction = MobileReactions.Hostile)
         {
+            // Network authority check: pure clients must never spawn enemies autonomously
+            if (!NetworkSession.ShouldHandleSpawns)
+                return null;
+
             // Create target GameObject
             string displayName = string.Format("{0} [{1}]", name, mobileType.ToString());
             GameObject go = InstantiatePrefab(DaggerfallUnity.Instance.Option_EnemyPrefab.gameObject, displayName, parent, Vector3.zero);
@@ -1227,6 +1267,10 @@ namespace DaggerfallWorkshop.Utility
         /// <returns>GameObject[] array of 1-N foes. Array can be null or empty if create fails.</returns>
         public static GameObject[] CreateFoeGameObjects(Vector3 position, MobileTypes foeType, int spawnCount = 1, MobileReactions reaction = MobileReactions.Hostile, Foe foeResource = null, bool alliedToPlayer = false)
         {
+            // Network authority check: pure clients must never spawn enemies autonomously
+            if (!NetworkSession.ShouldHandleSpawns)
+                return new GameObject[0];
+
             List<GameObject> gameObjects = new List<GameObject>();
 
             // Clamp total spawn count
@@ -1298,6 +1342,10 @@ namespace DaggerfallWorkshop.Utility
         /// <returns>FoeSpawner GameObject.</returns>
         public static GameObject CreateFoeSpawner(bool lineOfSightCheck = true, MobileTypes foeType = MobileTypes.None, int spawnCount = 0, float minDistance = 4, float maxDistance = 20, Transform parent = null, bool alliedToPlayer = false)
         {
+            // Network authority check: pure clients must never spawn enemies autonomously
+            if (!NetworkSession.ShouldHandleSpawns)
+                return null;
+
             // Create new foe spawner
             GameObject go = new GameObject();
             FoeSpawner spawner = go.AddComponent<FoeSpawner>();
@@ -1313,6 +1361,251 @@ namespace DaggerfallWorkshop.Utility
             // Spawner can be placed anywhere to work, but rest system considers a spawner to be an enemy "in potentia" for purposes of breaking rest and travel
             // Placing spawner on player at moment of creation will trigger the nearby enemy check even while spawn is pending
             spawner.transform.position = GameManager.Instance.PlayerObject.transform.position;
+
+            return go;
+        }
+
+        /// <summary>
+        /// Instantiates an authoritative enemy replica/proxy on a client without autonomous AI or physics.
+        /// </summary>
+        public static GameObject CreateClientEnemyProxy(MsgSpawnEnemy msg)
+        {
+            if (DaggerfallUnity.Instance.Option_EnemyPrefab == null)
+                return null;
+
+            // Determine best parent based on cell context
+            Transform parent = GetBestEnemyParent(msg);
+
+            // Instantiate prefab at world position
+            GameObject go = InstantiatePrefab(DaggerfallUnity.Instance.Option_EnemyPrefab.gameObject, msg.entityName, parent, msg.position);
+            if (go == null)
+                return null;
+
+            go.transform.rotation = msg.rotation;
+
+            // Configure visual billboard and stats
+            SetupDemoEnemy setupEnemy = go.GetComponent<SetupDemoEnemy>();
+            if (setupEnemy != null)
+            {
+                setupEnemy.ApplyEnemySettings(msg.mobileType, msg.reaction, msg.mobileGender);
+            }
+
+            DaggerfallEnemy enemy = go.GetComponent<DaggerfallEnemy>();
+            if (enemy != null)
+            {
+                enemy.LoadID = msg.loadID;
+                enemy.QuestSpawn = msg.isQuestSpawn;
+            }
+
+            // Strip/disable autonomous AI components on pure client
+            EnemyMotor motor = go.GetComponent<EnemyMotor>();
+            if (motor != null)
+                motor.enabled = false;
+
+            EnemySenses senses = go.GetComponent<EnemySenses>();
+            if (senses != null)
+                senses.enabled = false;
+
+            EnemyAttack attack = go.GetComponent<EnemyAttack>();
+            if (attack != null)
+                attack.enabled = false;
+
+            CharacterController cc = go.GetComponent<CharacterController>();
+            if (cc != null)
+                cc.enabled = false;
+
+            Rigidbody rb = go.GetComponent<Rigidbody>();
+            if (rb != null)
+            {
+                rb.isKinematic = true;
+                rb.detectCollisions = false;
+            }
+
+            // Ensure client proxy enemy has an active CapsuleCollider for weapon hit detection and raycasts
+            CapsuleCollider enemyCol = go.GetComponent<CapsuleCollider>();
+            if (enemyCol == null)
+                enemyCol = go.AddComponent<CapsuleCollider>();
+            if (cc != null)
+            {
+                enemyCol.center = cc.center;
+                enemyCol.radius = cc.radius;
+                enemyCol.height = cc.height;
+            }
+            else
+            {
+                enemyCol.center = new Vector3(0, 0.9f, 0);
+                enemyCol.radius = 0.45f;
+                enemyCol.height = 1.8f;
+            }
+            enemyCol.isTrigger = false;
+            go.layer = LayerMask.NameToLayer("Enemies");
+
+            // Attach and initialize NativeNetworkEntity
+            NativeNetworkEntity netEntity = go.GetComponent<NativeNetworkEntity>();
+            if (netEntity == null)
+                netEntity = go.AddComponent<NativeNetworkEntity>();
+
+            netEntity.Initialize(msg.entityId, msg.entityName, msg.mobileType, msg.mobileGender, msg.reaction, msg.loadID, proxy: true, msg.isInside, msg.isInsideDungeon, msg.buildingKey, msg.isQuestSpawn);
+
+            // Attach and configure NativeNetworkTransform for client interpolation
+            NativeNetworkTransform netTrans = go.GetComponent<NativeNetworkTransform>();
+            if (netTrans == null)
+                netTrans = go.AddComponent<NativeNetworkTransform>();
+            netTrans.netEntity = netEntity;
+            netTrans.isClientProxy = true;
+
+            // Link QuestResourceBehaviour on pure client if this is a quest enemy
+            if (msg.isQuestSpawn && DaggerfallWorkshop.Game.Questing.QuestMachine.Instance != null)
+            {
+                ulong[] activeQuests = DaggerfallWorkshop.Game.Questing.QuestMachine.Instance.GetAllActiveQuests();
+                if (activeQuests != null)
+                {
+                    foreach (ulong qUid in activeQuests)
+                    {
+                        DaggerfallWorkshop.Game.Questing.Quest q = DaggerfallWorkshop.Game.Questing.QuestMachine.Instance.GetQuest(qUid);
+                        if (q != null)
+                        {
+                            DaggerfallWorkshop.Game.Questing.QuestResource[] foes = q.GetAllResources(typeof(DaggerfallWorkshop.Game.Questing.Foe));
+                            if (foes != null)
+                            {
+                                foreach (var fRes in foes)
+                                {
+                                    DaggerfallWorkshop.Game.Questing.Foe f = fRes as DaggerfallWorkshop.Game.Questing.Foe;
+                                    if (f != null && f.FoeType == msg.mobileType)
+                                    {
+                                        DaggerfallWorkshop.Game.Questing.Components.QuestResourceBehaviour qrb = go.GetComponent<DaggerfallWorkshop.Game.Questing.Components.QuestResourceBehaviour>();
+                                        if (qrb == null)
+                                            qrb = go.AddComponent<DaggerfallWorkshop.Game.Questing.Components.QuestResourceBehaviour>();
+                                        qrb.AssignResource(f);
+                                        f.QuestResourceBehaviour = qrb;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Ensure GameObject is active
+            go.SetActive(true);
+
+            return go;
+        }
+
+        public static Transform GetBestEnemyParent(MsgSpawnEnemy msg)
+        {
+            PlayerEnterExit pee = GameManager.Instance != null ? GameManager.Instance.PlayerEnterExit : null;
+            if (pee != null)
+            {
+                if (msg.isInsideDungeon && pee.IsPlayerInsideDungeon && pee.Dungeon != null)
+                    return pee.Dungeon.transform;
+
+                if (msg.isInside && pee.IsPlayerInsideBuilding && pee.Interior != null)
+                    return pee.Interior.transform;
+            }
+
+            return GetBestParent();
+        }
+
+        /// <summary>
+        /// Maps character class/career name to matching native DFU MobileTypes for visual billboard representation.
+        /// </summary>
+        public static MobileTypes ResolvePlayerClassMobileType(string careerName)
+        {
+            if (string.IsNullOrEmpty(careerName))
+                return MobileTypes.Warrior;
+
+            switch (careerName.Trim().ToLowerInvariant())
+            {
+                case "spellsword": return MobileTypes.Spellsword;
+                case "warrior": return MobileTypes.Warrior;
+                case "battlemage": return MobileTypes.Battlemage;
+                case "sorcerer": return MobileTypes.Sorcerer;
+                case "bard": return MobileTypes.Bard;
+                case "mage": return MobileTypes.Mage;
+                case "healer": return MobileTypes.Healer;
+                case "nightblade": return MobileTypes.Nightblade;
+                case "burglar": return MobileTypes.Burglar;
+                case "acrobat": return MobileTypes.Acrobat;
+                case "rogue": return MobileTypes.Rogue;
+                case "assassin": return MobileTypes.Assassin;
+                case "archer": return MobileTypes.Archer;
+                case "ranger": return MobileTypes.Ranger;
+                case "monk": return MobileTypes.Monk;
+                case "barbarian": return MobileTypes.Barbarian;
+                case "knight": return MobileTypes.Knight;
+                case "thief": return MobileTypes.Thief;
+                default: return MobileTypes.Warrior;
+            }
+        }
+
+        /// <summary>
+        /// Creates a lightweight visual representation for a remote player.
+        /// Configures class/gender billboard sprite, overhead name tag, and disables local gameplay controllers.
+        /// </summary>
+        public static GameObject CreateRemotePlayerProxy(MsgPlayerProfile profile)
+        {
+            if (DaggerfallUnity.Instance.Option_EnemyPrefab == null)
+                return null;
+
+            GameObject go = InstantiatePrefab(
+                DaggerfallUnity.Instance.Option_EnemyPrefab.gameObject,
+                $"RemotePlayer_{profile.playerName}_{profile.connectionId}",
+                GetBestPuppetParent(),
+                profile.position
+            );
+
+            if (go == null)
+                return null;
+
+            go.transform.rotation = Quaternion.Euler(0, profile.yaw, 0);
+
+            // Strip/disable autonomous enemy components
+            EnemyMotor motor = go.GetComponent<EnemyMotor>();
+            if (motor != null) motor.enabled = false;
+
+            EnemySenses senses = go.GetComponent<EnemySenses>();
+            if (senses != null) senses.enabled = false;
+
+            EnemyAttack attack = go.GetComponent<EnemyAttack>();
+            if (attack != null) attack.enabled = false;
+
+            CharacterController cc = go.GetComponent<CharacterController>();
+            if (cc != null) cc.enabled = false;
+
+            DaggerfallEnemy enemy = go.GetComponent<DaggerfallEnemy>();
+            if (enemy != null) enemy.enabled = false;
+
+            Rigidbody rb = go.GetComponent<Rigidbody>();
+            if (rb != null)
+            {
+                rb.isKinematic = true;
+                rb.detectCollisions = false;
+            }
+
+            // Ensure remote player puppet has an active capsule collider for AI perception & raycasts
+            CapsuleCollider puppetCol = go.GetComponent<CapsuleCollider>();
+            if (puppetCol == null)
+                puppetCol = go.AddComponent<CapsuleCollider>();
+            puppetCol.center = new Vector3(0, 0.9f, 0);
+            puppetCol.height = 1.8f;
+            puppetCol.radius = 0.45f;
+            puppetCol.isTrigger = false;
+
+            // Configure visual billboard for player's class and gender
+            MobileTypes classType = ResolvePlayerClassMobileType(profile.careerName);
+            MobileGender gender = profile.gender == 0 ? MobileGender.Male : MobileGender.Female;
+
+            SetupDemoEnemy setupEnemy = go.GetComponent<SetupDemoEnemy>();
+            if (setupEnemy != null)
+            {
+                setupEnemy.ApplyEnemySettings(classType, MobileReactions.Passive, gender, alliedToPlayer: true);
+            }
+
+            // Attach and initialize NativePlayerPuppet
+            NativePlayerPuppet puppet = go.AddComponent<NativePlayerPuppet>();
+            puppet.Initialize(profile);
 
             return go;
         }

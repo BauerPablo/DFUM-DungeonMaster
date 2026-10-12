@@ -1,4 +1,4 @@
-﻿using System.Collections;
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using DaggerfallWorkshop;
@@ -8,7 +8,7 @@ public class Sprite8dir : MonoBehaviour
 	public Transform cam;
 	public float frequency = 0.25f;
 	public float angle;
-	public SpriteRenderer renderer;
+	public new SpriteRenderer renderer;
 	public PlayerAssets playerAssets;
 	Vector3 lastPos;
 	int walkIndex = 0, attackIndex = 0;

@@ -9,6 +9,7 @@ using DaggerfallWorkshop.Game.Questing;
 using DaggerfallConnect.Arena2;
 using DaggerfallWorkshop.Utility;
 using DaggerfallWorkshop.Game.Entity;
+using DaggerfallWorkshop.Game.Networking;
 
 namespace DaggerfallWorkshop.Game.UserInterfaceWindows
 {
@@ -81,6 +82,26 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
                 {
                     messageBox.OnButtonClick += OfferQuest_OnButtonClick;
                     messageBox.Show();
+
+                    if (NetworkSession.IsActive && GameManager.Instance.NetworkManager != null)
+                    {
+                        Message offerMsg = offeredQuest.GetMessage((int)QuestMachine.QuestMessages.QuestorOffer);
+                        if (offerMsg != null)
+                        {
+                            string text = "";
+                            foreach (var tok in offerMsg.GetTextTokens())
+                            {
+                                if (tok.formatting == TextFile.Formatting.Text)
+                                    text += (text.Length > 0 ? " " : "") + tok.text;
+                            }
+                            if (!string.IsNullOrEmpty(text))
+                            {
+                                string npcName = TalkManager.Instance != null ? TalkManager.Instance.NameNPC : "Quest Giver";
+                                Vector3 npcPos = GameManager.Instance.PlayerObject != null ? GameManager.Instance.PlayerObject.transform.position + GameManager.Instance.PlayerObject.transform.forward * 1.5f : Vector3.zero;
+                                GameManager.Instance.NetworkManager.BroadcastDialogueSpeech(1, npcName, npcPos, text);
+                            }
+                        }
+                    }
                 }
             }
             else if (!GameManager.Instance.IsPlayerInsideCastle) // Failed get quest messages do not appear inside castles in classic.

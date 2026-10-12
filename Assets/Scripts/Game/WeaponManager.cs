@@ -22,6 +22,8 @@ using DaggerfallWorkshop.Game.MagicAndEffects;
 using DaggerfallWorkshop.Game.MagicAndEffects.MagicEffects;
 using DaggerfallWorkshop.Game.Utility;
 using DaggerfallWorkshop.Utility;
+using DaggerfallWorkshop.Game.Networking;
+using Mirror;
 
 namespace DaggerfallWorkshop.Game
 {
@@ -293,6 +295,13 @@ namespace DaggerfallWorkshop.Game
                 return;
             }
 
+            // Do not swing weapons while interacting with multiplayer debug/DM GUI
+            if (DaggerfallWorkshop.Game.Networking.DFUNetworkManager.Instance != null &&
+                DaggerfallWorkshop.Game.Networking.DFUNetworkManager.Instance.IsAnyGuiOpen)
+            {
+                return;
+            }
+
             // Get if bow is equipped
             bool bowEquipped = (ScreenWeapon && ScreenWeapon.WeaponType == WeaponTypes.Bow);
 
@@ -542,6 +551,52 @@ namespace DaggerfallWorkshop.Game
                         entityMobileUnit.EnemyState != MobileStates.SeducerTransform2;
                     int damage = FormulaHelper.CalculateAttackDamage(playerEntity, enemyEntity, isEnemyFacingAwayFromPlayer, animTime, strikingWeapon);
 
+                    // Pure client: route attack intent to server without applying local damage
+                    if (NetworkSession.IsClient && !NetworkSession.IsHost)
+                    {
+                        NativeNetworkEntity netEnt = hitTransform.GetComponentInParent<NativeNetworkEntity>();
+                        if (netEnt != null)
+                        {
+                            MsgAttackEntity attackMsg = new MsgAttackEntity
+                            {
+                                entityId = netEnt.EntityId,
+                                hitPosition = impactPosition,
+                                hitDirection = direction,
+                                weaponType = strikingWeapon != null ? (int)strikingWeapon.TemplateIndex : (int)Weapons.Dagger,
+                                weaponMaterial = strikingWeapon != null ? (int)strikingWeapon.NativeMaterialValue : (int)WeaponMaterialTypes.Iron,
+                                animTimeMs = animTime,
+                                isEnemyFacingAway = isEnemyFacingAwayFromPlayer,
+                                damage = damage
+                            };
+                            NetworkClient.Send(attackMsg);
+
+                            // Local responsiveness feedback
+                            if (damage > 0)
+                            {
+                                if (playerEntity.IsMagicallyConcealedNormalPower)
+                                    EntityEffectManager.BreakNormalPowerConcealmentEffects(GameManager.Instance.PlayerEntityBehaviour);
+
+                                if (usingRightHand)
+                                    enemySounds?.PlayHitSound(currentRightHandWeapon);
+                                else
+                                    enemySounds?.PlayHitSound(currentLeftHandWeapon);
+
+                                EnemyBlood blood = hitTransform.GetComponent<EnemyBlood>();
+                                if (blood)
+                                    blood.ShowBloodSplash(enemyEntity != null ? enemyEntity.MobileEnemy.BloodIndex : 0, impactPosition);
+                            }
+                            else
+                            {
+                                if ((!arrowHit && (enemyEntity == null || !enemyEntity.MobileEnemy.ParrySounds)) || strikingWeapon == null)
+                                    ScreenWeapon.PlaySwingSound();
+                                else if (enemyEntity != null && enemyEntity.MobileEnemy.ParrySounds)
+                                    enemySounds?.PlayParrySound();
+                            }
+
+                            return true;
+                        }
+                    }
+
                     // Break any "normal power" concealment effects on player
                     if (playerEntity.IsMagicallyConcealedNormalPower && damage > 0)
                         EntityEffectManager.BreakNormalPowerConcealmentEffects(GameManager.Instance.PlayerEntityBehaviour);
@@ -621,6 +676,23 @@ namespace DaggerfallWorkshop.Game
 
                     // Remove health
                     enemyEntity.DecreaseHealth(damage);
+
+                    // Server: broadcast authoritative damage to all peers
+                    if (damage > 0 && NetworkSession.IsServer && NetworkServer.active)
+                    {
+                        NativeNetworkEntity netEnt = hitTransform.GetComponentInParent<NativeNetworkEntity>();
+                        if (netEnt != null)
+                        {
+                            MsgEntityDamaged dmgMsg = new MsgEntityDamaged
+                            {
+                                entityId = netEnt.EntityId,
+                                damage = damage,
+                                hitPosition = impactPosition,
+                                bloodIndex = enemyEntity != null ? enemyEntity.MobileEnemy.BloodIndex : 0
+                            };
+                            NetworkServer.SendToAll(dmgMsg);
+                        }
+                    }
 
                     // Handle attack from player
                     enemyEntity.EntityBehaviour.HandleAttackFromSource(GameManager.Instance.PlayerEntityBehaviour);

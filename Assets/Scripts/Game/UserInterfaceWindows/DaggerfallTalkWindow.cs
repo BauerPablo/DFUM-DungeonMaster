@@ -24,6 +24,7 @@ using DaggerfallWorkshop;
 using DaggerfallWorkshop.Utility;
 using DaggerfallWorkshop.Utility.AssetInjection;
 using DaggerfallWorkshop.Game.Player;
+using DaggerfallWorkshop.Game.Networking;
 
 namespace DaggerfallWorkshop.Game.UserInterface
 {
@@ -316,6 +317,11 @@ namespace DaggerfallWorkshop.Game.UserInterface
                 prev = idx;
             }
             GameManager.Instance.PlayerEntity.Notebook.AddNote(copiedEntries);
+
+            if (GameManager.Instance.NetworkManager != null && NetworkSession.IsActive)
+            {
+                GameManager.Instance.NetworkManager.BroadcastDialogueEnded(TalkManager.Instance != null ? TalkManager.Instance.NameNPC : "");
+            }
         }
 
         public override void Update()
@@ -651,6 +657,17 @@ namespace DaggerfallWorkshop.Game.UserInterface
             }
 
             TalkManager.Instance.StartNewConversation();
+
+            if (GameManager.Instance.NetworkManager != null && NetworkSession.IsActive)
+            {
+                string greeting = TalkManager.Instance != null ? TalkManager.Instance.NPCGreetingText : null;
+                if (!string.IsNullOrEmpty(greeting))
+                {
+                    string npcName = TalkManager.Instance != null ? TalkManager.Instance.NameNPC : "NPC";
+                    Vector3 npcPos = GetCurrentNPCPosition();
+                    GameManager.Instance.NetworkManager.BroadcastDialogueSpeech(1, npcName, npcPos, greeting);
+                }
+            }
         }
 
         protected virtual void SetupButtons()
@@ -1280,6 +1297,37 @@ namespace DaggerfallWorkshop.Game.UserInterface
 
             UpdateScrollBarConversation();
             UpdateScrollButtonsConversation();
+
+            if (GameManager.Instance.NetworkManager != null && NetworkSession.IsActive)
+            {
+                string playerName = GameManager.Instance.PlayerEntity != null ? GameManager.Instance.PlayerEntity.Name : "Player";
+                Vector3 playerPos = GameManager.Instance.PlayerObject != null ? GameManager.Instance.PlayerObject.transform.position : Vector3.zero;
+                string npcName = TalkManager.Instance != null ? TalkManager.Instance.NameNPC : "NPC";
+                Vector3 npcPos = GetCurrentNPCPosition();
+
+                if (!string.IsNullOrEmpty(question))
+                {
+                    GameManager.Instance.NetworkManager.BroadcastDialogueSpeech(0, playerName, playerPos, question);
+                }
+                if (!string.IsNullOrEmpty(answer))
+                {
+                    GameManager.Instance.NetworkManager.BroadcastDialogueSpeech(1, npcName, npcPos, answer);
+                }
+            }
+        }
+
+        protected virtual Vector3 GetCurrentNPCPosition()
+        {
+            if (TalkManager.Instance != null)
+            {
+                if (TalkManager.Instance.CurrentNPCType == TalkManager.NPCType.Mobile && TalkManager.Instance.MobileNPC != null)
+                    return TalkManager.Instance.MobileNPC.transform.position;
+                if (TalkManager.Instance.CurrentNPCType == TalkManager.NPCType.Static && TalkManager.Instance.StaticNPC != null)
+                    return TalkManager.Instance.StaticNPC.transform.position;
+            }
+            if (GameManager.Instance.PlayerObject != null)
+                return GameManager.Instance.PlayerObject.transform.position + GameManager.Instance.PlayerObject.transform.forward * 1.5f;
+            return Vector3.zero;
         }
 
         protected virtual void SelectTopicFromTopicList(int index, bool forceExecution = false)

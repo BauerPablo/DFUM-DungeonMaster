@@ -24,6 +24,9 @@ using DaggerfallWorkshop.Game.Banking;
 using System.Linq;
 using DaggerfallConnect;
 using DaggerfallWorkshop.Game.Formulas;
+using DaggerfallWorkshop.Game.Networking;
+using DaggerfallWorkshop.Game.Serialization;
+using Mirror;
 
 namespace DaggerfallWorkshop.Game.UserInterfaceWindows
 {
@@ -244,6 +247,11 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
         {
             get { return lootTarget; }
             set { lootTarget = value; }
+        }
+
+        public bool IsOpen
+        {
+            get { return uiManager != null && uiManager.ContainsWindow(this); }
         }
 
         public ItemCollection TheftBasket
@@ -1564,6 +1572,36 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
                 from.RemoveItem(item);
                 Refresh(false);
                 DaggerfallUI.Instance.PlayOneShot(SoundClips.GoldPieces);
+
+                // Multiplayer Loot Synchronization
+                if (lootTarget != null)
+                {
+                    if (NetworkSession.IsServer && NetworkServer.active)
+                    {
+                        ItemData_v1[] itemArray = lootTarget.Items.SerializeItems();
+                        string itemsJson = SaveLoadManager.Serialize(typeof(ItemData_v1[]), itemArray, false);
+                        NetworkServer.SendToAll(new MsgLootSync
+                        {
+                            loadID = lootTarget.LoadID,
+                            itemsJson = itemsJson
+                        });
+                    }
+                    else if (NetworkSession.IsClient && !NetworkSession.IsHost)
+                    {
+                        if (from == remoteItems) // Player took gold from container
+                        {
+                            NetworkClient.Send(new MsgLootTakeItem
+                            {
+                                loadID = lootTarget.LoadID,
+                                itemUID = item.UID,
+                                itemGroup = (int)item.ItemGroup,
+                                templateIndex = item.TemplateIndex,
+                                stackCount = item.stackCount
+                            });
+                        }
+                    }
+                }
+
                 return;
             }
 
@@ -1578,6 +1616,45 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
                 EquipItem(item);
             Refresh(false);
             DaggerfallUI.Instance.PlayOneShot(SoundClips.ButtonClick);
+
+            // Multiplayer Loot Synchronization
+            if (lootTarget != null)
+            {
+                if (NetworkSession.IsServer && NetworkServer.active)
+                {
+                    ItemData_v1[] itemArray = lootTarget.Items.SerializeItems();
+                    string itemsJson = SaveLoadManager.Serialize(typeof(ItemData_v1[]), itemArray, false);
+                    NetworkServer.SendToAll(new MsgLootSync
+                    {
+                        loadID = lootTarget.LoadID,
+                        itemsJson = itemsJson
+                    });
+                }
+                else if (NetworkSession.IsClient && !NetworkSession.IsHost)
+                {
+                    if (from == remoteItems) // Player took item from container
+                    {
+                        NetworkClient.Send(new MsgLootTakeItem
+                        {
+                            loadID = lootTarget.LoadID,
+                            itemUID = item.UID,
+                            itemGroup = (int)item.ItemGroup,
+                            templateIndex = item.TemplateIndex,
+                            stackCount = item.stackCount
+                        });
+                    }
+                    else if (to == remoteItems) // Player placed item into container
+                    {
+                        ItemData_v1 itemData = item.GetSaveData();
+                        string itemJson = SaveLoadManager.Serialize(typeof(ItemData_v1), itemData, false);
+                        NetworkClient.Send(new MsgLootDropItem
+                        {
+                            loadID = lootTarget.LoadID,
+                            itemJson = itemJson
+                        });
+                    }
+                }
+            }
 
             if (chooseOne && remoteItems == from && !usingWagon)
             {

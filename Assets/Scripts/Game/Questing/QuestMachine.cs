@@ -92,6 +92,12 @@ namespace DaggerfallWorkshop.Game.Questing
         #region Properties
 
         /// <summary>
+        /// Optional deterministic seed for multiplayer quest parsing.
+        /// When set, this seed overrides internalSeed.Next() and is automatically cleared after parsing.
+        /// </summary>
+        public int? CustomQuestSeed { get; set; }
+
+        /// <summary>
         /// Gets count of all quests running at this time.
         /// </summary>
         public int QuestCount
@@ -654,7 +660,15 @@ namespace DaggerfallWorkshop.Game.Questing
         {
             LogFormat("\r\n\r\nParsing quest {0}", questName);
 
-            UnityEngine.Random.InitState(internalSeed.Next());
+            if (CustomQuestSeed.HasValue && CustomQuestSeed.Value != 0)
+            {
+                UnityEngine.Random.InitState(CustomQuestSeed.Value);
+                CustomQuestSeed = null;
+            }
+            else
+            {
+                UnityEngine.Random.InitState(internalSeed.Next());
+            }
 
             try
             {

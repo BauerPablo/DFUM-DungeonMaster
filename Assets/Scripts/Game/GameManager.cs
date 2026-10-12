@@ -26,6 +26,8 @@ using DaggerfallWorkshop.Game.Questing;
 using DaggerfallWorkshop.Game.Guilds;
 using DaggerfallWorkshop.Game.MagicAndEffects;
 using UnityEngine.Rendering.PostProcessing;
+using DaggerfallWorkshop.Game.Networking;
+using Mirror;
 
 namespace DaggerfallWorkshop.Game
 {
@@ -97,6 +99,7 @@ namespace DaggerfallWorkshop.Game
         GuildManager guildManager = null;
         QuestListsManager questListsManager = null;
         PostProcessVolume postProcessVolume = null;
+        DFUNetworkManager networkManager = null;
 
         #endregion
 
@@ -228,6 +231,40 @@ namespace DaggerfallWorkshop.Game
         {
             get { return (weaponManager) ? weaponManager : weaponManager = GetComponentFromObject<WeaponManager>(PlayerObject); }
             set { weaponManager = value; }
+        }
+
+        public DFUNetworkManager NetworkManager
+        {
+            get { return (networkManager) ? networkManager : networkManager = GetNetworkManager(); }
+            set { networkManager = value; }
+        }
+
+        private DFUNetworkManager GetNetworkManager()
+        {
+            DFUNetworkManager mgr = DFUNetworkManager.Instance;
+            if (mgr == null)
+            {
+                mgr = GetMonoBehaviour<DFUNetworkManager>(false);
+                if (mgr == null)
+                {
+                    // Clean up any legacy mod NetworkManagers in the scene to avoid singleton collision
+                    Mirror.NetworkManager[] existingManagers = FindObjectsOfType<Mirror.NetworkManager>();
+                    foreach (Mirror.NetworkManager em in existingManagers)
+                    {
+                        if (!(em is DFUNetworkManager))
+                        {
+                            if (Mirror.NetworkManager.singleton == em)
+                                Mirror.NetworkManager.ResetStatics();
+                            Destroy(em.gameObject);
+                        }
+                    }
+
+                    GameObject go = new GameObject("DFUNetworkManager");
+                    mgr = go.AddComponent<DFUNetworkManager>();
+                    DontDestroyOnLoad(go);
+                }
+            }
+            return mgr;
         }
 
         public GameObject MainCameraObject 
@@ -485,11 +522,18 @@ namespace DaggerfallWorkshop.Game
 
             // Log welcome message
             Debug.Log("Welcome to Daggerfall Unity " + VersionInfo.DaggerfallUnityVersion);
+
+            // Register native multiplayer console commands
+            DFUNetworkCommands.RegisterCommands();
+
+            // Initialize native multiplayer manager
+            networkManager = GetNetworkManager();
         }
 
         void FixedUpdate()
         {
-            if (!IsPlayingGame())
+            // In multiplayer, the classic simulation tick (1/16s) must keep running on server and active sessions
+            if (!IsPlayingGame() && !NetworkSession.IsActive)
             {
                 classicUpdate = false;
                 return;
@@ -508,8 +552,8 @@ namespace DaggerfallWorkshop.Game
 
         void Update()
         {
-            // Don't process game manager input messages when game not running
-            if (!IsPlayingGame())
+            // Don't process in-game window hotkeys when game not running or when player is interacting with menu/console
+            if (!IsPlayingGame() || (NetworkSession.IsActive && (isGamePaused || (DaggerfallUI.UIManager != null && DaggerfallUI.UIManager.TopWindow != null && !(DaggerfallUI.UIManager.TopWindow is DaggerfallHUD)))))
                 return;
 
             // Post message to open options dialog on escape during gameplay
@@ -604,7 +648,10 @@ namespace DaggerfallWorkshop.Game
             if (pause && !isGamePaused)
             {
                 savedTimeScale = Time.timeScale;
-                Time.timeScale = 0;
+                // Never freeze time scale in multiplayer sessions; world simulation must stay active
+                if (!NetworkSession.IsActive)
+                    Time.timeScale = 0;
+
                 InputManager.Instance.IsPaused = true;
                 isGamePaused = true;
 
@@ -616,7 +663,11 @@ namespace DaggerfallWorkshop.Game
             }
             else if (!pause && isGamePaused)
             {
-                Time.timeScale = savedTimeScale;
+                if (!NetworkSession.IsActive)
+                    Time.timeScale = savedTimeScale;
+                else
+                    Time.timeScale = 1.0f;
+
                 InputManager.Instance.IsPaused = false;
                 isGamePaused = false;
 
@@ -934,6 +985,14 @@ namespace DaggerfallWorkshop.Game
         /// </summary>
         public bool IsPlayingGame()
         {
+            // In active multiplayer, world simulation remains active even if player has a menu or console open
+            if (NetworkSession.IsActive)
+            {
+                if (SaveLoadManager.Instance != null && SaveLoadManager.Instance.LoadInProgress)
+                    return false;
+                return true;
+            }
+
             // Game not active when paused
             if (isGamePaused)
                 return false;

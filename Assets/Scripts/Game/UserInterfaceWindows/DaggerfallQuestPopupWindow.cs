@@ -17,6 +17,7 @@ using DaggerfallWorkshop.Utility;
 using DaggerfallWorkshop.Game.Entity;
 using DaggerfallWorkshop.Game.Formulas;
 using DaggerfallWorkshop.Game.Utility;
+using DaggerfallWorkshop.Game.Networking;
 
 namespace DaggerfallWorkshop.Game.UserInterfaceWindows
 {
@@ -124,19 +125,59 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
 
             // Present popup message
             messageBox.Show();
+
+            if (NetworkSession.IsActive && GameManager.Instance.NetworkManager != null)
+            {
+                string text = "";
+                foreach (var tok in tokens)
+                {
+                    if (tok.formatting == TextFile.Formatting.Text)
+                        text += (text.Length > 0 ? " " : "") + tok.text;
+                }
+                if (!string.IsNullOrEmpty(text))
+                {
+                    string npcName = TalkManager.Instance != null ? TalkManager.Instance.NameNPC : "Quest Giver";
+                    Vector3 npcPos = GameManager.Instance.PlayerObject != null ? GameManager.Instance.PlayerObject.transform.position + GameManager.Instance.PlayerObject.transform.forward * 1.5f : Vector3.zero;
+                    if (TalkManager.Instance != null && TalkManager.Instance.StaticNPC != null)
+                        npcPos = TalkManager.Instance.StaticNPC.transform.position;
+                    GameManager.Instance.NetworkManager.BroadcastDialogueSpeech(1, npcName, npcPos, text);
+                }
+            }
         }
 
         protected virtual void OfferQuest_OnButtonClick(DaggerfallMessageBox sender, DaggerfallMessageBox.MessageBoxButtons messageBoxButton)
         {
             if (messageBoxButton == DaggerfallMessageBox.MessageBoxButtons.Yes)
             {
+                if (NetworkSession.IsActive && GameManager.Instance.NetworkManager != null)
+                {
+                    string playerName = GameManager.Instance.PlayerEntity != null ? GameManager.Instance.PlayerEntity.Name : "Player";
+                    Vector3 playerPos = GameManager.Instance.PlayerObject != null ? GameManager.Instance.PlayerObject.transform.position : Vector3.zero;
+                    GameManager.Instance.NetworkManager.BroadcastDialogueSpeech(0, playerName, playerPos, "I accept your task.");
+                }
+
                 // Show accept message, add quest
                 sender.CloseWindow();
                 ShowQuestPopupMessage(offeredQuest, (int)QuestMachine.QuestMessages.AcceptQuest);
-                QuestMachine.Instance.StartQuest(offeredQuest);
+
+                if (NetworkSession.IsActive && GameManager.Instance.NetworkManager != null && GameManager.Instance.NetworkManager.HasMultiplePlayers)
+                {
+                    GameManager.Instance.NetworkManager.InitiatePartyQuestOffer(offeredQuest.QuestName, offeredQuest.FactionId);
+                }
+                else
+                {
+                    QuestMachine.Instance.StartQuest(offeredQuest);
+                }
             }
             else
             {
+                if (NetworkSession.IsActive && GameManager.Instance.NetworkManager != null)
+                {
+                    string playerName = GameManager.Instance.PlayerEntity != null ? GameManager.Instance.PlayerEntity.Name : "Player";
+                    Vector3 playerPos = GameManager.Instance.PlayerObject != null ? GameManager.Instance.PlayerObject.transform.position : Vector3.zero;
+                    GameManager.Instance.NetworkManager.BroadcastDialogueSpeech(0, playerName, playerPos, "I cannot accept this task.");
+                }
+
                 // inform TalkManager so that it can remove the quest topics that have been added
                 // (note by Nystul: I know it is a bit ugly that it is added in the first place at all, but didn't find a good way to do it differently -
                 // may revisit this later)
@@ -156,6 +197,10 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
 
         protected virtual void QuestPopupMessage_OnClose()
         {
+            if (NetworkSession.IsActive && GameManager.Instance.NetworkManager != null)
+            {
+                GameManager.Instance.NetworkManager.BroadcastDialogueEnded(TalkManager.Instance != null ? TalkManager.Instance.NameNPC : "");
+            }
             CloseWindow();
         }
 

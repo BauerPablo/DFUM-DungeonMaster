@@ -14,6 +14,7 @@ using UnityEngine;
 using DaggerfallWorkshop.Utility;
 using DaggerfallWorkshop.Game.UserInterfaceWindows;
 using DaggerfallWorkshop.Game.Entity;
+using DaggerfallWorkshop.Game.Networking;
 
 namespace DaggerfallWorkshop.Game.Utility
 {
@@ -46,6 +47,14 @@ namespace DaggerfallWorkshop.Game.Utility
 
         void Update()
         {
+            // Network authority check: pure clients must never spawn enemies autonomously
+            if (!NetworkSession.ShouldHandleSpawns)
+            {
+                DestroyOldFoeGameObjects(pendingFoeGameObjects);
+                Destroy(gameObject);
+                return;
+            }
+
             // Create new foe list when changed in editor
             if (FoeType != MobileTypes.None && FoeType != lastFoeType && SpawnCount > 0)
             {

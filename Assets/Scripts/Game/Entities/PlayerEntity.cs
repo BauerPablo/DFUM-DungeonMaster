@@ -28,6 +28,8 @@ using DaggerfallWorkshop.Game.MagicAndEffects;
 using DaggerfallWorkshop.Game.MagicAndEffects.MagicEffects;
 using DaggerfallWorkshop.Game.Questing;
 using DaggerfallWorkshop.Utility.AssetInjection;
+using DaggerfallWorkshop.Game.Networking;
+using Mirror;
 
 namespace DaggerfallWorkshop.Game.Entity
 {
@@ -367,7 +369,7 @@ namespace DaggerfallWorkshop.Game.Entity
             uint gameMinutes = DaggerfallUnity.Instance.WorldTime.DaggerfallDateTime.ToClassicDaggerfallTime();
             if (gameMinutes < lastGameMinutes)
             {
-                throw new Exception(string.Format("lastGameMinutes {0} greater than gameMinutes: {1}", lastGameMinutes, gameMinutes));
+                lastGameMinutes = gameMinutes;
             }
 
             // Wait until game has started and the game time has been set.
@@ -620,6 +622,31 @@ namespace DaggerfallWorkshop.Game.Entity
         // Recreation of guard spawning based on classic
         public void SpawnCityGuards(bool immediateSpawn)
         {
+            Vector3 myPos = GameManager.Instance.PlayerMotor != null
+                ? GameManager.Instance.PlayerMotor.transform.position
+                : (entityBehaviour != null ? entityBehaviour.transform.position : Vector3.zero);
+
+            if (NetworkSession.IsClient && !NetworkSession.IsHost)
+            {
+                if (NetworkClient.active)
+                {
+                    NetworkClient.Send(new MsgPlayerCrime
+                    {
+                        crimeType = (int)crimeCommitted,
+                        playerPosition = myPos
+                    });
+                }
+                return;
+            }
+
+            SpawnCityGuardsAtPosition(myPos, immediateSpawn);
+        }
+
+        public void SpawnCityGuardsAtPosition(Vector3 spawnTargetPos, bool immediateSpawn)
+        {
+            if (DaggerfallWorkshop.Game.Networking.DFUNetworkManager.Instance != null && DaggerfallWorkshop.Game.Networking.DFUNetworkManager.Instance.isDmInvisible)
+                return;
+
             const int maxActiveGuardSpawns = 5;
 
             // Only spawn if player is not in a dungeon, and if there are fewer than max active guards
@@ -661,7 +688,7 @@ namespace DaggerfallWorkshop.Game.Entity
                         if (!populationManager.PopulationPool[i].npc.isActiveAndEnabled)
                             continue;
 
-                        Vector3 directionToMobile = populationManager.PopulationPool[i].npc.Motor.transform.position - GameManager.Instance.PlayerMotor.transform.position;
+                        Vector3 directionToMobile = populationManager.PopulationPool[i].npc.Motor.transform.position - spawnTargetPos;
                         if (directionToMobile.magnitude <= 77.5f)
                         {
                             // Spawn from guard mobile NPCs first
@@ -672,7 +699,7 @@ namespace DaggerfallWorkshop.Game.Entity
                                 ++guardsSpawnedFromNPCs;
                             }
                             // Next try non-guards
-                            else if (Vector3.Angle(directionToMobile, GameManager.Instance.PlayerMotor.transform.forward) >= 105.469
+                            else if (Vector3.Angle(directionToMobile, GameManager.Instance.PlayerMotor != null ? GameManager.Instance.PlayerMotor.transform.forward : Vector3.forward) >= 105.469
                                 && UnityEngine.Random.Range(0, 4) == 0)
                             {
                                 SpawnCityGuard(populationManager.PopulationPool[i].npc.transform.position, populationManager.PopulationPool[i].npc.transform.forward);
@@ -697,7 +724,7 @@ namespace DaggerfallWorkshop.Game.Entity
                         if (!populationManager.PopulationPool[i].npc.isActiveAndEnabled)
                             continue;
 
-                        Vector3 toPlayer = GameManager.Instance.PlayerMotor.transform.position - populationManager.PopulationPool[i].npc.Motor.transform.position;
+                        Vector3 toPlayer = spawnTargetPos - populationManager.PopulationPool[i].npc.Motor.transform.position;
                         if (toPlayer.magnitude <= 77.5f && Vector3.Angle(toPlayer, populationManager.PopulationPool[i].npc.Motor.transform.forward) <= 95)
                         {
                             // Check if line of sight to target
@@ -709,8 +736,8 @@ namespace DaggerfallWorkshop.Game.Entity
 
                             // Set destination to the player's approximate eye position
                             CharacterController controller = GameManager.Instance.PlayerEntityBehaviour.transform.GetComponent<CharacterController>();
-                            Vector3 playerEyePos = GameManager.Instance.PlayerMotor.transform.position;
-                            playerEyePos.y += controller.height / 3;
+                            Vector3 playerEyePos = spawnTargetPos;
+                            if (controller != null) playerEyePos.y += controller.height / 3;
 
                             // Check if npc sees player
                             Vector3 eyeToTarget = playerEyePos - eyePos;
@@ -719,7 +746,7 @@ namespace DaggerfallWorkshop.Game.Entity
                             {
                                 // Check if hit was player
                                 DaggerfallEntityBehaviour entity = hit.transform.gameObject.GetComponent<DaggerfallEntityBehaviour>();
-                                if (entity == GameManager.Instance.PlayerEntityBehaviour)
+                                if (entity == GameManager.Instance.PlayerEntityBehaviour || DFUNetworkManager.IsAnyPlayer(entity))
                                     seen = true;
                                 if (populationManager.PopulationPool[i].npc.IsGuard)
                                     seenByGuard = true;
@@ -752,7 +779,32 @@ namespace DaggerfallWorkshop.Game.Entity
 
             // Classic does not do anything special to make guards aware of the player, but since they're responding to a crime, standing around
             // unaware of the player can be perceived as a bug.
-            enemyMotor.MakeEnemyHostileToAttacker(GameManager.Instance.PlayerEntityBehaviour);
+            // In multiplayer, target the closest party player to this guard.
+            DaggerfallEntityBehaviour targetPlayer = GameManager.Instance.PlayerEntityBehaviour;
+            if (NetworkSession.IsActive)
+            {
+                float closestDist = float.MaxValue;
+                var players = DFUNetworkManager.ConnectedPlayers;
+                if (players != null)
+                {
+                    for (int i = 0; i < players.Count; i++)
+                    {
+                        if (players[i] != null)
+                        {
+                            float d = Vector3.Distance(position, players[i].transform.position);
+                            if (d < closestDist)
+                            {
+                                closestDist = d;
+                                targetPlayer = players[i];
+                            }
+                        }
+                    }
+                }
+            }
+            if (targetPlayer != null && !(DaggerfallWorkshop.Game.Networking.DFUNetworkManager.Instance != null && DaggerfallWorkshop.Game.Networking.DFUNetworkManager.Instance.isDmInvisible))
+            {
+                enemyMotor.MakeEnemyHostileToAttacker(targetPlayer);
+            }
 
             // Set a longer giveUpTimer than usual in case it takes more than the usual timer to get to the player position
             enemyMotor.GiveUpTimer *= 3;
@@ -2341,9 +2393,10 @@ namespace DaggerfallWorkshop.Game.Entity
 
         void SetCrimeCommitted(Crimes crime)
         {
-            // Racial override can suppress crimes, e.g. transformed lycanthrope
+            // Racial override or DM Invisibility can suppress crimes
             RacialOverrideEffect racialOverride = GameManager.Instance.PlayerEffectManager.GetRacialOverrideEffect();
-            bool suppressCrime = racialOverride != null && racialOverride.SuppressCrime;
+            bool suppressCrime = (racialOverride != null && racialOverride.SuppressCrime)
+                || (DaggerfallWorkshop.Game.Networking.DFUNetworkManager.Instance != null && DaggerfallWorkshop.Game.Networking.DFUNetworkManager.Instance.isDmInvisible);
 
             crimeCommitted = (!suppressCrime) ? crime : Crimes.None;
         }

@@ -93,10 +93,22 @@ namespace DaggerfallWorkshop.Game
 
         void Update()
         {
+            if (!Application.isFocused)
+                return;
+
             if (forceHideCursor)
             {
                 Cursor.lockState = CursorLockMode.Locked;
                 InputManager.Instance.CursorVisible = false;
+                return;
+            }
+
+            // Suppress mouse look and unlock cursor when multiplayer debug/DM GUI is open
+            if (DaggerfallWorkshop.Game.Networking.DFUNetworkManager.Instance != null &&
+                DaggerfallWorkshop.Game.Networking.DFUNetworkManager.Instance.IsAnyGuiOpen)
+            {
+                Cursor.lockState = CursorLockMode.None;
+                InputManager.Instance.CursorVisible = true;
                 return;
             }
 

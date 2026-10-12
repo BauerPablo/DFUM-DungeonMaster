@@ -32,9 +32,11 @@ public class PositionMultiplayer : NetworkBehaviour
 			StartCoroutine(Check());
     }
 	
+	public static bool UseNativeSync = true;
+	
 	void FixedUpdate()
 	{
-		if (playerTransform != null){
+		if (!UseNativeSync && playerTransform != null){
 			transform.position = playerTransform.position;
 			transform.rotation = playerTransform.rotation;
 		}

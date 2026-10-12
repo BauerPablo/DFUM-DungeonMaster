@@ -125,6 +125,11 @@ namespace DaggerfallWorkshop
         public bool IsInit { get { return init; } }
 
         /// <summary>
+        /// True if terrain updates are currently running.
+        /// </summary>
+        public bool IsTerrainUpdateRunning { get { return terrainUpdateRunning; } }
+
+        /// <summary>
         /// Gets the scene name for the current map pixel.
         /// </summary>
         public string SceneName { get { return GetSceneName(MapPixelX, MapPixelY); } }
@@ -1352,10 +1357,15 @@ namespace DaggerfallWorkshop
                 if (!grounded && position.y > targetPosition.y)
                     targetPosition.y = position.y;
 
-                // Move player object to new position
+                // Move player object to new position (disabling CharacterController to avoid PhysX depenetration fall-through)
+                controller.enabled = false;
                 LocalPlayerGPS.transform.position = targetPosition;
+                controller.enabled = true;
 
-                // Clear falling damage so player doesn't take damage after reposition
+                // Clear falling damage and cancel movement velocity so player doesn't take damage or carry fall speed
+                if (GameManager.Instance.PlayerMotor != null)
+                    GameManager.Instance.PlayerMotor.CancelMovement = true;
+
                 GameManager.Instance.AcrobatMotor.ClearFallingDamage();
 
                 // Perform another pass at collecting loose objects as sometimes they don't clean up properly after fast travel
@@ -1477,49 +1487,61 @@ namespace DaggerfallWorkshop
             bool useNearestStartMarker = false,
             bool grounded = true)
         {
-            UnityEngine.Random.InitState(DateTime.Now.Millisecond);
-
             int side;
-            if (travelStartX == null || travelStartZ == null)
+            if (DaggerfallWorkshop.Game.Networking.NetworkSession.IsActive)
             {
-                // Randomly pick one side of location to spawn
+                // In multiplayer, ensure 100% deterministic gate selection across Host and all Clients
+                int seed = (mapPixelX * 10007) ^ (mapPixelY * 31);
+                UnityEngine.Random.InitState(seed);
                 side = UnityEngine.Random.Range(0, 4);
+                travelStartX = null;
+                travelStartZ = null;
             }
             else
             {
-                // use travel origin as a facing hint
-                int worldDeltaX = LocalPlayerGPS.WorldX - (int)travelStartX;
-                int worldDeltaZ = LocalPlayerGPS.WorldZ - (int)travelStartZ;
+                UnityEngine.Random.InitState(DateTime.Now.Millisecond);
 
-                if (worldDeltaX == 0 && worldDeltaZ == 0)
+                if (travelStartX == null || travelStartZ == null)
+                {
+                    // Randomly pick one side of location to spawn
                     side = UnityEngine.Random.Range(0, 4);
+                }
                 else
                 {
-                    int px = Math.Abs(worldDeltaX);
-                    int pz = Math.Abs(worldDeltaZ);
-                    // if travel start is distant enough, chances of hitting square sides are
-                    // approximatively px/(px+pz) and pz/(px+pz)
-                    int random = UnityEngine.Random.Range(0, px + pz);
-                    if (px > pz)
-                    {
-                        // direction is mainly E-W, do we hit square front side?
-                        if (random < px)
-                            side = worldDeltaX > 0 ? 3 : 2;
-                        else
-                            side = worldDeltaZ > 0 ? 1 : 0;
-                    }
+                    // use travel origin as a facing hint
+                    int worldDeltaX = LocalPlayerGPS.WorldX - (int)travelStartX;
+                    int worldDeltaZ = LocalPlayerGPS.WorldZ - (int)travelStartZ;
+
+                    if (worldDeltaX == 0 && worldDeltaZ == 0)
+                        side = UnityEngine.Random.Range(0, 4);
                     else
                     {
-                        // direction is mainly N-S, do we hit square front side?
-                        if (random < pz)
-                            side = worldDeltaZ > 0 ? 1 : 0;
+                        int px = Math.Abs(worldDeltaX);
+                        int pz = Math.Abs(worldDeltaZ);
+                        // if travel start is distant enough, chances of hitting square sides are
+                        // approximatively px/(px+pz) and pz/(px+pz)
+                        int random = UnityEngine.Random.Range(0, px + pz);
+                        if (px > pz)
+                        {
+                            // direction is mainly E-W, do we hit square front side?
+                            if (random < px)
+                                side = worldDeltaX > 0 ? 3 : 2;
+                            else
+                                side = worldDeltaZ > 0 ? 1 : 0;
+                        }
                         else
-                            side = worldDeltaX > 0 ? 3 : 2;
+                        {
+                            // direction is mainly N-S, do we hit square front side?
+                            if (random < pz)
+                                side = worldDeltaZ > 0 ? 1 : 0;
+                            else
+                                side = worldDeltaX > 0 ? 3 : 2;
+                        }
                     }
+                    // Debug.Log(String.Format("{0},{1} => {2},{3}: facing {4}", (int)travelStartX, (int)travelStartZ, LocalPlayerGPS.WorldX, LocalPlayerGPS.WorldZ, side));
+                    travelStartX = null;
+                    travelStartZ = null;
                 }
-                // Debug.Log(String.Format("{0},{1} => {2},{3}: facing {4}", (int)travelStartX, (int)travelStartZ, LocalPlayerGPS.WorldX, LocalPlayerGPS.WorldZ, side));
-                travelStartX = null;
-                travelStartZ = null;
             }
 
             // Get half width and height
@@ -1582,15 +1604,31 @@ namespace DaggerfallWorkshop
                 }
                 if (closestMarker != -1)
                 {
-                    //PositionPlayerToTerrain(mapPixelX, mapPixelY, startMarkers[closestMarker].transform.position);
-                    RepositionPlayer(mapPixelX, mapPixelY, startMarkers[closestMarker].transform.position, grounded);
+                    Vector3 spawnPos = startMarkers[closestMarker].transform.position;
+                    if (DaggerfallWorkshop.Game.Networking.NetworkSession.IsActive && !DaggerfallWorkshop.Game.Networking.NetworkSession.IsHost)
+                    {
+                        int peerIndex = DaggerfallWorkshop.Game.Networking.NetworkSession.LocalConnectionId;
+                        if (peerIndex <= 0) peerIndex = 1;
+                        // In town gates, lateral offsets easily clip into stone wall colliders and cause void falls.
+                        // Instead, offset peers safely backwards along the open approach road.
+                        Vector3 roadBackward = (side == 0) ? Vector3.forward : (side == 1) ? Vector3.back : (side == 2) ? Vector3.right : Vector3.left;
+                        spawnPos += roadBackward * (1.5f * peerIndex);
+                    }
+                    RepositionPlayer(mapPixelX, mapPixelY, spawnPos, grounded);
                     return;
                 }
             }
 
             // Just position to outside location
-            //PositionPlayerToTerrain(mapPixelX, mapPixelY, newPlayerPosition);
-            RepositionPlayer(mapPixelX, mapPixelY, newPlayerPosition, grounded);
+            Vector3 outsidePos = newPlayerPosition;
+            if (DaggerfallWorkshop.Game.Networking.NetworkSession.IsActive && !DaggerfallWorkshop.Game.Networking.NetworkSession.IsHost)
+            {
+                int peerIndex = DaggerfallWorkshop.Game.Networking.NetworkSession.LocalConnectionId;
+                if (peerIndex <= 0) peerIndex = 1;
+                Vector3 roadBackward = (side == 0) ? Vector3.forward : (side == 1) ? Vector3.back : (side == 2) ? Vector3.right : Vector3.left;
+                outsidePos += roadBackward * (1.5f * peerIndex);
+            }
+            RepositionPlayer(mapPixelX, mapPixelY, outsidePos, grounded);
         }
 
         // Align player to ground

@@ -2327,16 +2327,36 @@ namespace DaggerfallWorkshop.Game
         }
 
 
-        public DFLocation.BuildingTypes GetBuildingTypeForBuildingKey(int buildingKey)
+        public bool TryGetBuildingTypeForBuildingKey(int buildingKey, out DFLocation.BuildingTypes buildingType)
         {
+            buildingType = DFLocation.BuildingTypes.AllValid;
+            if (buildingKey == 0)
+                return false;
+
             if (listBuildings == null)
                 GetBuildingList();
-            List<BuildingInfo> matchingBuildings = listBuildings.FindAll(x => x.buildingKey == buildingKey);
-            if (matchingBuildings.Count == 0)
-                throw new Exception(String.Format("GetBuildingTypeForBuildingKey(): No building with the queried key found"));
-            if (matchingBuildings.Count > 1)
-                throw new Exception(String.Format("GetBuildingTypeForBuildingKey(): More than one building with the queried key found"));
-            return matchingBuildings[0].buildingType;
+
+            if (listBuildings == null || listBuildings.Count == 0)
+                return false;
+
+            for (int i = 0; i < listBuildings.Count; i++)
+            {
+                if (listBuildings[i].buildingKey == buildingKey)
+                {
+                    buildingType = listBuildings[i].buildingType;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        public DFLocation.BuildingTypes GetBuildingTypeForBuildingKey(int buildingKey)
+        {
+            if (TryGetBuildingTypeForBuildingKey(buildingKey, out DFLocation.BuildingTypes buildingType))
+                return buildingType;
+
+            return (DFLocation.BuildingTypes)(-1);
         }
 
         public string GetBuildingNameForBuildingKey(int buildingKey)
@@ -3218,22 +3238,14 @@ namespace DaggerfallWorkshop.Game
                         Place place = (Place)questResourceInfo.Value.questResource;
                         // (Fixes bug reports http://forums.dfworkshop.net/viewtopic.php?f=24&t=996, http://forums.dfworkshop.net/viewtopic.php?f=24&t=997)
                         // Only build entries for place quest resources that are in the same location as the PC
-                        if (GameManager.Instance.PlayerGPS.CurrentLocation.MapTableData.MapId != place.SiteDetails.mapId)
+                        if (place.SiteDetails.mapId == 0 || GameManager.Instance.PlayerGPS.CurrentLocation.MapTableData.MapId != place.SiteDetails.mapId)
                             continue;
 
                         if (place.SiteDetails.buildingKey == 0)
                             continue;
 
-                        DFLocation.BuildingTypes buildingType;
-                        try
-                        {
-                            buildingType = GetBuildingTypeForBuildingKey(place.SiteDetails.buildingKey);
-                        }
-                        catch (Exception ex)
-                        {
-                            Debug.LogError(string.Format("Error in TalkManager.GetBuildingTypeForBuildingKey: {0}", ex.Message));
+                        if (!TryGetBuildingTypeForBuildingKey(place.SiteDetails.buildingKey, out DFLocation.BuildingTypes buildingType))
                             continue;
-                        }
 
                         if (RMBLayout.IsResidence(buildingType))
                         {

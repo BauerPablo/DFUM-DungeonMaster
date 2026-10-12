@@ -209,6 +209,14 @@ namespace DaggerfallWorkshop.Game
             if (falling)
             {
                 falling = false;
+
+                // Suppress fall damage during player teleportation, freeze, or world streaming transitions
+                if (GameManager.Instance.PlayerMotor != null && (GameManager.Instance.PlayerMotor.FreezeMotor > 0f || GameManager.Instance.PlayerMotor.CancelMovement))
+                {
+                    fallStartLevel = myTransform.position.y;
+                    return;
+                }
+
                 // don't take damage if landing in outdoor water
                 if (GameManager.Instance.StreamingWorld.PlayerTileMapIndex == 0)
                     return;

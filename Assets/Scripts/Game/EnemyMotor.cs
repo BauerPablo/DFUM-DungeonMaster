@@ -14,6 +14,7 @@ using DaggerfallWorkshop.Game.Entity;
 using DaggerfallWorkshop.Game.MagicAndEffects;
 using System.Collections.Generic;
 using DaggerfallWorkshop.Utility;
+using DaggerfallWorkshop.Game.Networking;
 using System.Linq;
 
 namespace DaggerfallWorkshop.Game
@@ -166,9 +167,27 @@ namespace DaggerfallWorkshop.Game
         /// <summary>
         /// Immediately become hostile towards attacker and know attacker's location.
         /// </summary>
+        /// <summary>
+        /// Clears any active target and resets hostility state.
+        /// </summary>
+        public void ClearTarget()
+        {
+            if (!senses)
+                senses = GetComponent<EnemySenses>();
+            if (senses)
+            {
+                senses.Target = null;
+                senses.SecondaryTarget = null;
+            }
+            IsHostile = false;
+        }
+
         /// <param name="attacker">Attacker to become hostile towards</param>
         public void MakeEnemyHostileToAttacker(DaggerfallEntityBehaviour attacker)
         {
+            if (attacker && (DFUNetworkManager.Instance != null && DFUNetworkManager.Instance.isDmInvisible))
+                return;
+
             if (!senses)
                 senses = GetComponent<EnemySenses>();
             if (!entityBehaviour)
@@ -185,7 +204,7 @@ namespace DaggerfallWorkshop.Game
                 GiveUpTimer = 200;
             }
 
-            if (attacker == GameManager.Instance.PlayerEntityBehaviour)
+            if (attacker == GameManager.Instance.PlayerEntityBehaviour || DFUNetworkManager.IsAnyPlayer(attacker))
             {
                 IsHostile = true;
                 // Reset former ally's team
@@ -419,7 +438,7 @@ namespace DaggerfallWorkshop.Game
             // Classic AI moves only as close as melee range. It uses a different range for the player and for other AI.
             if (!DaggerfallUnity.Settings.EnhancedCombatAI)
             {
-                if (senses.Target == GameManager.Instance.PlayerEntityBehaviour)
+                if (IsPlayerTarget(senses.Target))
                     stopDistance = attack.MeleeDistance;
                 else
                     stopDistance = attack.ClassicMeleeDistanceVsAI;
@@ -505,7 +524,14 @@ namespace DaggerfallWorkshop.Game
         /// </summary>
         void GetDestination()
         {
-            CharacterController targetController = senses.Target.GetComponent<CharacterController>();
+            CharacterController targetController = senses.Target ? senses.Target.GetComponent<CharacterController>() : null;
+            CapsuleCollider targetCapsule = senses.Target ? senses.Target.GetComponent<CapsuleCollider>() : null;
+            float targetHeight = 1.8f;
+            if (targetController != null && targetController.enabled)
+                targetHeight = targetController.height;
+            else if (targetCapsule != null)
+                targetHeight = targetCapsule.height;
+
             // If detouring around an obstacle or fall, use the detour position
             if (avoidObstaclesTimer > 0)
             {
@@ -517,7 +543,7 @@ namespace DaggerfallWorkshop.Game
                 destination = senses.PredictedTargetPos;
                 // Flying enemies and slaughterfish aim for target face
                 if (flies || IsLevitating || (swims && mobile.Enemy.ID == (int)MonsterCareers.Slaughterfish))
-                    destination.y += targetController.height * 0.5f;
+                    destination.y += targetHeight * 0.5f;
 
                 searchMult = 0;
             }
@@ -535,7 +561,7 @@ namespace DaggerfallWorkshop.Game
             {
                 // Ground enemies target at their own height
                 // Otherwise, short enemies' vector can aim up towards the target, which could interfere with distance-to-target calculations.
-                float deltaHeight = (targetController.height - originalHeight) / 2;
+                float deltaHeight = (targetHeight - originalHeight) / 2;
                 destination.y -= deltaHeight;
             }
         }
@@ -1229,7 +1255,7 @@ namespace DaggerfallWorkshop.Game
                 }
 
                 // No retreat if enemy is player with bow or weapon not out
-                if (senses.Target == GameManager.Instance.PlayerEntityBehaviour
+                if (IsPlayerTarget(senses.Target)
                     && GameManager.Instance.WeaponManager.ScreenWeapon
                     && (GameManager.Instance.WeaponManager.ScreenWeapon.WeaponType == WeaponTypes.Bow
                     || !GameManager.Instance.WeaponManager.ScreenWeapon.ShowWeapon))
@@ -1448,6 +1474,16 @@ namespace DaggerfallWorkshop.Game
                 heightChangeTimer -= Time.deltaTime;
             }
         }
+
+        private bool IsPlayerTarget(DaggerfallEntityBehaviour targetEntity)
+        {
+            if (targetEntity == null)
+                return false;
+            if (targetEntity == GameManager.Instance.PlayerEntityBehaviour)
+                return true;
+            return DFUNetworkManager.IsAnyPlayer(targetEntity);
+        }
+
         #endregion
     }
 }

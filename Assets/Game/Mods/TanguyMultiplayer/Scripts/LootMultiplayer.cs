@@ -1,21 +1,30 @@
-﻿using System.Collections;
-using System.Collections.Generic;
+﻿using System;
 using UnityEngine;
 
 public class LootMultiplayer : MonoBehaviour
 {
 	public LootCatcher lootCatcher;
-	
+	public Guid guid;
+	private bool _isCleaningUp = false;
 	
 	void OnDisable()
 	{
-		print("LOOT REMOVED");
-		lootCatcher.DisableLootOn(transform.position);
+		NotifyPickup();
 	}
 	
 	void OnDestroy()
 	{
-		print("LOOT REMOVED");
-		lootCatcher.DisableLootOn(transform.position);
+		NotifyPickup();
+	}
+
+	private void NotifyPickup()
+	{
+		if (_isCleaningUp) return;
+		_isCleaningUp = true;
+
+		if (lootCatcher != null && guid != Guid.Empty)
+		{
+			lootCatcher.RequestPickLoot(guid);
+		}
 	}
 }

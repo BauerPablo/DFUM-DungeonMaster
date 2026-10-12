@@ -33,6 +33,10 @@ MonoBehaviour:
     m_Address: Assets/Localization/StringTables/Internal_Flats Shared Data.asset
     m_ReadOnly: 1
     m_SerializedLabels: []
+  - m_GUID: d1ef7d6264c7ec342937b0963a2b7042
+    m_Address: Assets/Localization/GameData Shared Data.asset
+    m_ReadOnly: 1
+    m_SerializedLabels: []
   m_ReadOnly: 1
   m_Settings: {fileID: 11400000, guid: d18e8e9fddb22f341a7e4df0a26a67e2, type: 2}
   m_SchemaSet:

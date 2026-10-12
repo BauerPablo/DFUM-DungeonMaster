@@ -17,6 +17,7 @@ using DaggerfallConnect;
 using DaggerfallWorkshop.Game.UserInterfaceWindows;
 using DaggerfallWorkshop.Game.Questing;
 using DaggerfallWorkshop.Game.Utility;
+using DaggerfallWorkshop.Game.Networking;
 
 namespace DaggerfallWorkshop.Game
 {
@@ -91,6 +92,12 @@ namespace DaggerfallWorkshop.Game
         {
             get { return secondaryTarget; }
             set { secondaryTarget = value; }
+        }
+
+        public DaggerfallEntityBehaviour OldTarget
+        {
+            get { return targetOnLastUpdate; }
+            set { targetOnLastUpdate = value; }
         }
 
         public bool TargetInSight
@@ -217,6 +224,8 @@ namespace DaggerfallWorkshop.Game
             if (GameManager.Instance.DisableAI)
                 return;
 
+            DaggerfallEntityBehaviour activePlayer = GetClosestPlayer();
+
             targetPosPredictTimer += Time.deltaTime;
             if (targetPosPredictTimer >= predictionInterval)
             {
@@ -256,7 +265,7 @@ namespace DaggerfallWorkshop.Game
                         }
                     }
 
-                    float YDiffToPlayer = transform.position.y - player.transform.position.y;
+                    float YDiffToPlayer = transform.position.y - (activePlayer != null ? activePlayer.transform.position.y : player.transform.position.y);
                     float YDiffToPlayerAbs = Mathf.Abs(YDiffToPlayer);
                     float distanceToPlayerXZ = Mathf.Sqrt(distanceToPlayer * distanceToPlayer - YDiffToPlayerAbs * YDiffToPlayerAbs);
 
@@ -292,9 +301,9 @@ namespace DaggerfallWorkshop.Game
                 // Non-hostile mode
                 if (GameManager.Instance.PlayerEntity.NoTargetMode || !motor.IsHostile)
                 {
-                    if (target == player)
+                    if (IsPlayerTarget(target))
                         target = null;
-                    if (secondaryTarget == player)
+                    if (IsPlayerTarget(secondaryTarget))
                         secondaryTarget = null;
                 }
 
@@ -341,10 +350,10 @@ namespace DaggerfallWorkshop.Game
                 }
             }
 
-            if (player != null)
+            if (activePlayer != null)
             {
-                // Get distance to player
-                Vector3 toPlayer = player.transform.position - transform.position;
+                // Get distance to closest player
+                Vector3 toPlayer = activePlayer.transform.position - transform.position;
                 distanceToPlayer = toPlayer.magnitude;
 
                 // If out of classic spawn range, still check for direct LOS to player so that enemies who see player will
@@ -353,7 +362,7 @@ namespace DaggerfallWorkshop.Game
                 {
                     distanceToTarget = distanceToPlayer;
                     directionToTarget = toPlayer.normalized;
-                    playerInSight = CanSeeTarget(player);
+                    playerInSight = CanSeeAnyPlayer();
                 }
 
                 if (classicTargetUpdateTimer > 5)
@@ -365,7 +374,7 @@ namespace DaggerfallWorkshop.Game
                     {
                         GetTargets();
 
-                        if (target != null && target != player)
+                        if (target != null && !IsPlayerTarget(target))
                             targetSenses = target.GetComponent<EnemySenses>();
                         else
                             targetSenses = null;
@@ -385,19 +394,10 @@ namespace DaggerfallWorkshop.Game
                     return;
                 }
 
-                if (!wouldBeSpawnedInClassic && target == player)
-                {
-                    distanceToTarget = distanceToPlayer;
-                    directionToTarget = toPlayer.normalized;
-                    targetInSight = playerInSight;
-                }
-                else
-                {
-                    Vector3 toTarget = target.transform.position - transform.position;
-                    distanceToTarget = toTarget.magnitude;
-                    directionToTarget = toTarget.normalized;
-                    targetInSight = CanSeeTarget(target);
-                }
+                Vector3 toTarget = target.transform.position - transform.position;
+                distanceToTarget = toTarget.magnitude;
+                directionToTarget = toTarget.normalized;
+                targetInSight = CanSeeTarget(target);
 
                 // Classic stealth mechanics would be interfered with by hearing, so only enable
                 // hearing if the enemy has detected the target. If target is visible we can omit hearing.
@@ -627,6 +627,10 @@ namespace DaggerfallWorkshop.Game
         {
             // In classic if the target is another AI character true is always returned.
 
+            // DM Invisibility is absolute and cannot be seen through
+            if (DaggerfallWorkshop.Game.Networking.DFUNetworkManager.Instance != null && DaggerfallWorkshop.Game.Networking.DFUNetworkManager.Instance.isDmInvisible)
+                return true;
+
             // Some enemy types can see through these effects.
             if (mobile.Enemy.SeesThroughInvisibility)
                 return false;
@@ -718,7 +722,9 @@ namespace DaggerfallWorkshop.Game
             {
                 DaggerfallEntityBehaviour targetBehaviour = entityBehaviours[i];
                 EnemyEntity targetEntity = null;
-                if (targetBehaviour != player)
+                bool isPlayer = IsPlayerTarget(targetBehaviour);
+
+                if (!isPlayer)
                     targetEntity = targetBehaviour.Entity as EnemyEntity;
 
                 // Can't target self
@@ -727,14 +733,14 @@ namespace DaggerfallWorkshop.Game
 
                 // Evaluate potential targets
                 if (targetBehaviour.EntityType == EntityTypes.EnemyMonster || targetBehaviour.EntityType == EntityTypes.EnemyClass
-                    || targetBehaviour.EntityType == EntityTypes.Player)
+                    || targetBehaviour.EntityType == EntityTypes.Player || isPlayer)
                 {
-                    // NoTarget mode
-                    if ((GameManager.Instance.PlayerEntity.NoTargetMode || !motor.IsHostile || enemyEntity.MobileEnemy.Team == MobileTeams.PlayerAlly) && targetBehaviour == player)
+                    // NoTarget mode or DM Invisibility
+                    if ((GameManager.Instance.PlayerEntity.NoTargetMode || !motor.IsHostile || enemyEntity.MobileEnemy.Team == MobileTeams.PlayerAlly || (DaggerfallWorkshop.Game.Networking.DFUNetworkManager.Instance != null && DaggerfallWorkshop.Game.Networking.DFUNetworkManager.Instance.isDmInvisible)) && isPlayer)
                         continue;
 
                     // Can't target ally
-                    if (targetBehaviour == player && enemyEntity.Team == MobileTeams.PlayerAlly)
+                    if (isPlayer && enemyEntity.Team == MobileTeams.PlayerAlly)
                         continue;
                     else if (DaggerfallUnity.Settings.EnemyInfighting && !enemyEntity.SuppressInfighting && targetEntity != null && !targetEntity.SuppressInfighting)
                     {
@@ -743,12 +749,12 @@ namespace DaggerfallWorkshop.Game
                     }
                     else
                     {
-                        if (targetBehaviour != player && enemyEntity.MobileEnemy.Team != MobileTeams.PlayerAlly)
+                        if (!isPlayer && enemyEntity.MobileEnemy.Team != MobileTeams.PlayerAlly)
                             continue;
                     }
 
                     // Quest enemy AI only targets player by default unless explicitly marked as attackable by a mod/quest.
-                    if (questBehaviour && !questBehaviour.IsAttackableByAI && targetBehaviour != player)
+                    if (questBehaviour && !questBehaviour.IsAttackableByAI && !isPlayer)
                         continue;
 
                     EnemySenses targetSenses = null;
@@ -784,6 +790,11 @@ namespace DaggerfallWorkshop.Game
                         distancePriority = 0;
 
                     priority += distancePriority;
+
+                    // Hysteresis: give current target a retention bonus (+3 priority) to avoid target fluttering/flapping
+                    if (targetBehaviour == target)
+                        priority += 3.0f;
+
                     if (priority > highestPriority)
                     {
                         secondHighestPriority = highestPriority;
@@ -839,8 +850,22 @@ namespace DaggerfallWorkshop.Game
 
                     // Set destination to the target's approximate eye position
                     controller = target.transform.GetComponent<CharacterController>();
-                    Vector3 targetEyePos = target.transform.position + controller.center;
-                    targetEyePos.y += controller.height / 3;
+                    CapsuleCollider targetCapsule = target.transform.GetComponent<CapsuleCollider>();
+                    Vector3 targetEyePos;
+                    if (controller != null && controller.enabled)
+                    {
+                        targetEyePos = target.transform.position + controller.center;
+                        targetEyePos.y += controller.height / 3;
+                    }
+                    else if (targetCapsule != null)
+                    {
+                        targetEyePos = target.transform.position + targetCapsule.center;
+                        targetEyePos.y += targetCapsule.height / 3;
+                    }
+                    else
+                    {
+                        targetEyePos = target.transform.position + Vector3.up * 1.5f;
+                    }
 
                     // Check if can see.
                     Vector3 eyeToTarget = targetEyePos - eyePos;
@@ -851,6 +876,9 @@ namespace DaggerfallWorkshop.Game
                     {
                         // Check if hit was target
                         DaggerfallEntityBehaviour entity = hit.transform.gameObject.GetComponent<DaggerfallEntityBehaviour>();
+                        if (entity == null)
+                            entity = hit.transform.gameObject.GetComponentInParent<DaggerfallEntityBehaviour>();
+
                         if (entity == target)
                             seen = true;
 
@@ -886,6 +914,63 @@ namespace DaggerfallWorkshop.Game
 
             // TODO: Modify this by how much noise the target is making
             return distanceToTarget < (HearingRadius * hearingScale) + mobile.Enemy.HearingModifier;
+        }
+
+        // Multi-Target Player Helper Methods
+        private bool IsPlayerTarget(DaggerfallEntityBehaviour targetEntity)
+        {
+            if (targetEntity == null)
+                return false;
+            if (targetEntity == player)
+                return true;
+            return DFUNetworkManager.IsAnyPlayer(targetEntity);
+        }
+
+        private DaggerfallEntityBehaviour GetClosestPlayer()
+        {
+            if (!NetworkSession.IsActive)
+                return player;
+
+            var players = DFUNetworkManager.ConnectedPlayers;
+            if (players == null || players.Count == 0)
+                return player;
+
+            DaggerfallEntityBehaviour closest = null;
+            float minDistSq = float.MaxValue;
+            Vector3 myPos = transform.position;
+
+            for (int i = 0; i < players.Count; i++)
+            {
+                var p = players[i];
+                if (p == null) continue;
+                float distSq = (p.transform.position - myPos).sqrMagnitude;
+                if (distSq < minDistSq)
+                {
+                    minDistSq = distSq;
+                    closest = p;
+                }
+            }
+
+            return closest ?? player;
+        }
+
+        private bool CanSeeAnyPlayer()
+        {
+            if (!NetworkSession.IsActive)
+                return player != null && CanSeeTarget(player);
+
+            var players = DFUNetworkManager.ConnectedPlayers;
+            if (players == null || players.Count == 0)
+                return player != null && CanSeeTarget(player);
+
+            for (int i = 0; i < players.Count; i++)
+            {
+                var p = players[i];
+                if (p != null && CanSeeTarget(p))
+                    return true;
+            }
+
+            return false;
         }
 
         #endregion

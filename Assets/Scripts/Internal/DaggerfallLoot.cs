@@ -20,6 +20,7 @@ using DaggerfallWorkshop.Game.Formulas;
 using DaggerfallConnect.FallExe;
 using DaggerfallWorkshop.Game.Entity;
 using DaggerfallWorkshop.Game.Questing;
+using DaggerfallWorkshop.Game.Networking;
 
 namespace DaggerfallWorkshop
 {
@@ -51,7 +52,14 @@ namespace DaggerfallWorkshop
         public ulong LoadID
         {
             get { return loadID; }
-            set { loadID = value; }
+            set
+            {
+                if (loadID != 0 && loadID != value)
+                    DFUNetworkLootRegistry.Unregister(loadID);
+                loadID = value;
+                if (loadID != 0)
+                    DFUNetworkLootRegistry.Register(loadID, this);
+            }
         }
 
         public ItemCollection Items
@@ -363,6 +371,12 @@ namespace DaggerfallWorkshop
                     items.AddItem(item);
                 }
             }
+        }
+
+        private void OnDestroy()
+        {
+            if (loadID != 0)
+                DFUNetworkLootRegistry.Unregister(loadID);
         }
     }
 }

@@ -11,6 +11,7 @@
 
 using DaggerfallWorkshop.Game.Serialization;
 using DaggerfallWorkshop.Game.Weather;
+using DaggerfallWorkshop.Game.Networking;
 using DaggerfallWorkshop.Utility;
 using UnityEngine;
 using UnityEngine.Rendering.PostProcessing;
@@ -99,6 +100,8 @@ namespace DaggerfallWorkshop.Game
         public bool IsSnowing { get; private set; }
 
         public bool IsOvercast { get; private set; }
+
+        public WeatherType CurrentWeather => PlayerWeather != null ? PlayerWeather.WeatherType : WeatherType.Sunny;
 
         bool updateWeatherFromClimateArray = false;
 
@@ -385,6 +388,10 @@ namespace DaggerfallWorkshop.Game
 
         void PollWeatherChanges(bool forceUpdate = false)
         {
+            // In multiplayer, pure clients do not run autonomous weather rolls; the server is authoritative
+            if (NetworkSession.IsClient && !NetworkSession.IsHost)
+                return;
+
             // Increment poll timer
             _pollTimer += Time.deltaTime;
             if (_pollTimer < _pollWeatherInSeconds && !forceUpdate)
@@ -405,6 +412,13 @@ namespace DaggerfallWorkshop.Game
 
         void UpdateFromClimateArrayCheck()
         {
+            // In multiplayer, pure clients do not run autonomous weather rolls; the server is authoritative
+            if (NetworkSession.IsClient && !NetworkSession.IsHost)
+            {
+                updateWeatherFromClimateArray = false;
+                return;
+            }
+
             if (updateWeatherFromClimateArray)
             {
                 if (PlayerWeather.PlayerGps.ReadyCheck())

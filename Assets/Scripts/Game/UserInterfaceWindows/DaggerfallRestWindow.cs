@@ -17,6 +17,7 @@ using DaggerfallWorkshop.Game.Formulas;
 using DaggerfallWorkshop.Game.Serialization;
 using DaggerfallConnect;
 using DaggerfallWorkshop.Game.Banking;
+using DaggerfallWorkshop.Game.Networking;
 
 namespace DaggerfallWorkshop.Game.UserInterfaceWindows
 {
@@ -271,6 +272,9 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
         public override void OnPop()
         {
             base.OnPop();
+            if (NetworkSession.IsHost && !endedRest)
+                GameManager.Instance.NetworkManager?.BroadcastPartyRest(false, 0, false, isLoiter: currentRestMode == RestModes.Loiter);
+
             ignoreAllocatedBed = false;
             GameManager.OnEncounter -= GameManager_OnEncounter;
 
@@ -301,6 +305,23 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
         public void AbortRestForEnemySpawn()
         {
             abortRestForEnemySpawn = true;
+        }
+
+        public void StartAuthoritativeRest(int hours)
+        {
+            hoursRemaining = hours;
+            waitTimer = Time.realtimeSinceStartup;
+            currentRestMode = RestModes.TimedRest;
+            MoveToBed();
+        }
+
+        public void StartAuthoritativeLoiter(int hours)
+        {
+            hoursRemaining = hours;
+            waitTimer = Time.realtimeSinceStartup;
+            currentRestMode = RestModes.Loiter;
+            if (playerEntity != null)
+                playerEntity.IsLoitering = true;
         }
 
         #endregion
@@ -449,6 +470,9 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
 
         void EndRest()
         {
+            if (NetworkSession.IsHost)
+                GameManager.Instance.NetworkManager?.BroadcastPartyRest(false, 0, wasInterrupted: enemyBrokeRest, isLoiter: currentRestMode == RestModes.Loiter);
+
             const int youWakeUpTextId = 353;
             const int enemiesNearby = 354;
             const int youAreHealedTextId = 350;
@@ -629,10 +653,46 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
         {
             if (CanRest(alreadyWarned))
             {
+                if (GameManager.Instance.NetworkManager != null && GameManager.Instance.NetworkManager.HasMultiplePlayers)
+                {
+                    int hoursToHeal = CalculateHoursUntilHealed();
+                    CloseWindow();
+                    GameManager.Instance.NetworkManager.InitiatePartyRestVote(hoursToHeal, isLoiter: false);
+                    return;
+                }
+
                 waitTimer = Time.realtimeSinceStartup;
                 currentRestMode = RestModes.FullRest;
                 MoveToBed();
             }
+        }
+
+        private int CalculateHoursUntilHealed()
+        {
+            if (playerEntity == null)
+                return 1;
+
+            if (IsPlayerFullyHealed())
+                return 1;
+
+            int healthRate = FormulaHelper.CalculateHealthRecoveryRate(playerEntity);
+            int fatigueRate = FormulaHelper.CalculateFatigueRecoveryRate(playerEntity.MaxFatigue);
+            int magickaRate = FormulaHelper.CalculateSpellPointRecoveryRate(playerEntity);
+
+            int healthHours = (healthRate > 0 && playerEntity.CurrentHealth < playerEntity.MaxHealth)
+                ? Mathf.CeilToInt((float)(playerEntity.MaxHealth - playerEntity.CurrentHealth) / healthRate)
+                : 0;
+
+            int fatigueHours = (fatigueRate > 0 && playerEntity.CurrentFatigue < playerEntity.MaxFatigue)
+                ? Mathf.CeilToInt((float)(playerEntity.MaxFatigue - playerEntity.CurrentFatigue) / fatigueRate)
+                : 0;
+
+            int magickaHours = (magickaRate > 0 && !playerEntity.Career.NoRegenSpellPoints && playerEntity.CurrentMagicka < playerEntity.MaxMagicka)
+                ? Mathf.CeilToInt((float)(playerEntity.MaxMagicka - playerEntity.CurrentMagicka) / magickaRate)
+                : 0;
+
+            int needed = Mathf.Max(healthHours, Mathf.Max(fatigueHours, magickaHours));
+            return Mathf.Clamp(needed, 1, 99);
         }
 
         #endregion
@@ -756,9 +816,24 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
                 return;
             }
 
+            if (time <= 0)
+            {
+                CloseWindow();
+                return;
+            }
+
+            if (GameManager.Instance.NetworkManager != null && GameManager.Instance.NetworkManager.HasMultiplePlayers)
+            {
+                CloseWindow();
+                GameManager.Instance.NetworkManager.InitiatePartyRestVote(time, isLoiter: false);
+                return;
+            }
+
             hoursRemaining = time;
             waitTimer = Time.realtimeSinceStartup;
             currentRestMode = RestModes.TimedRest;
+            if (NetworkSession.IsHost)
+                GameManager.Instance.NetworkManager?.BroadcastPartyRest(true, hoursRemaining);
             MoveToBed();
         }
 
@@ -783,10 +858,25 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
                 return;
             }
 
+            if (time <= 0)
+            {
+                CloseWindow();
+                return;
+            }
+
+            if (GameManager.Instance.NetworkManager != null && GameManager.Instance.NetworkManager.HasMultiplePlayers)
+            {
+                CloseWindow();
+                GameManager.Instance.NetworkManager.InitiatePartyRestVote(time, isLoiter: true);
+                return;
+            }
+
             hoursRemaining = time;
             waitTimer = Time.realtimeSinceStartup;
             currentRestMode = RestModes.Loiter;
             playerEntity.IsLoitering = true;
+            if (NetworkSession.IsHost)
+                GameManager.Instance.NetworkManager?.BroadcastPartyRest(true, hoursRemaining, false, isLoiter: true);
         }
 
 

@@ -26,6 +26,8 @@ using DaggerfallWorkshop.Utility.AssetInjection;
 using DaggerfallWorkshop.Game.Utility;
 using DaggerfallWorkshop.Game.Formulas;
 using DaggerfallWorkshop.Game.Utility.ModSupport;
+using DaggerfallWorkshop.Game.Networking;
+using Mirror;
 
 namespace DaggerfallWorkshop.Game
 {
@@ -230,6 +232,13 @@ namespace DaggerfallWorkshop.Game
             if (GameManager.Instance.PlayerMouseLook.cursorActive &&
                 DaggerfallUI.Instance.DaggerfallHUD != null &&
                 DaggerfallUI.Instance.DaggerfallHUD.LargeHUD.ActiveMouseOverLargeHUD)
+            {
+                return;
+            }
+
+            // Do not do scene activation if player is interacting with multiplayer debug/DM GUI
+            if (DaggerfallWorkshop.Game.Networking.DFUNetworkManager.Instance != null &&
+                DaggerfallWorkshop.Game.Networking.DFUNetworkManager.Instance.IsAnyGuiOpen)
             {
                 return;
             }
@@ -836,6 +845,16 @@ namespace DaggerfallWorkshop.Game
                 DaggerfallUI.SetMidScreenText(TextManager.Instance.GetLocalizedText("youAreTooFarAway"));
                 return;
             }
+
+            // Multiplayer loot sync request for non-corpse containers
+            if (NetworkSession.IsClient && !NetworkSession.IsHost)
+            {
+                if (loot.ContainerType != LootContainerTypes.CorpseMarker && loot.LoadID != 0)
+                {
+                    NetworkClient.Send(new MsgRequestLootSync { loadID = loot.LoadID });
+                }
+            }
+
             Random.InitState(Time.frameCount);
             UserInterfaceManager uiManager = DaggerfallUI.Instance.UserInterfaceManager;
             switch (loot.ContainerType)
@@ -904,7 +923,7 @@ namespace DaggerfallWorkshop.Game
                             DaggerfallUI.SetMidScreenText(TextManager.Instance.GetLocalizedText("youAreTooFarAway"));
                             return;
                         }
-                        else if (loot.Items.Count == 0)
+                        else if (loot.Items.Count == 0 && loot.LoadID == 0)
                         {
                             DaggerfallUI.AddHUDText(TextManager.Instance.GetLocalizedText("theBodyHasNoTreasure"));
                             DisableEmptyCorpseContainer(loot.gameObject);

@@ -1,4 +1,4 @@
-﻿using System.Collections;
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using DaggerfallWorkshop.Game;
@@ -32,7 +32,6 @@ public class SpriteMultiplayer : MonoBehaviour
 	
 	
 	
-	bool isAttacking = false;
 	float timeWalk = 0f;
 	
 	void Start()
@@ -99,56 +98,38 @@ public class SpriteMultiplayer : MonoBehaviour
 		switch (s){
 			case "Spellsword":
 				return MobileTypes.Spellsword;
-				break;
 			case "Warrior":
 				return MobileTypes.Warrior;
-				break;
 			case "Battlemage":
 				return MobileTypes.Battlemage;
-				break;
 			case "Sorcerer":
 				return MobileTypes.Sorcerer;
-				break;
 			case "Bard":
 				return MobileTypes.Bard;
-				break;
 			case "Mage":
 				return MobileTypes.Mage;
-				break;
 			case "Healer":
 				return MobileTypes.Healer;
-				break;
 			case "Nightblade":
 				return MobileTypes.Nightblade;
-				break;
 			case "Burglar":
 				return MobileTypes.Burglar;
-				break;
 			case "Acrobat":
 				return MobileTypes.Acrobat;
-				break;
 			case "Rogue":
 				return MobileTypes.Rogue;
-				break;
 			case "Assassin":
 				return MobileTypes.Assassin;
-				break;
 			case "Archer":
 				return MobileTypes.Archer;
-				break;
 			case "Ranger":
 				return MobileTypes.Ranger;
-				break;
 			case "Monk":
 				return MobileTypes.Monk;
-				break;
 			case "Barbarian":
 				return MobileTypes.Barbarian;
-				break;
 			case "Knight":
 				return MobileTypes.Knight;
-				break;
-			
 		}
 		return MobileTypes.Thief;
 	}

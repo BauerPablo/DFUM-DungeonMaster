@@ -16,6 +16,8 @@ using DaggerfallWorkshop.Game.Serialization;
 using DaggerfallWorkshop.Game.Entity;
 using DaggerfallWorkshop.Game.UserInterfaceWindows;
 using DaggerfallWorkshop.Game.Questing;
+using DaggerfallWorkshop.Game.Networking;
+using Mirror;
 
 namespace DaggerfallWorkshop.Game
 {
@@ -121,6 +123,33 @@ namespace DaggerfallWorkshop.Game
             // Many quests will stash a reward in enemy inventory for player to find
             // This will be in addition to normal random loot table generation
             loot.Items.TransferAll(entityBehaviour.Entity.Items);
+
+            // Server: broadcast authoritative death to all clients with corpse loot and items
+            if (NetworkSession.IsServer && NetworkServer.active)
+            {
+                NativeNetworkEntity netEnt = GetComponent<NativeNetworkEntity>();
+                if (netEnt != null)
+                {
+                    string itemsJson = string.Empty;
+                    if (loot != null && loot.Items != null)
+                    {
+                        ItemData_v1[] itemArray = loot.Items.SerializeItems();
+                        itemsJson = SaveLoadManager.Serialize(typeof(ItemData_v1[]), itemArray, false);
+                    }
+
+                    MsgEntityDeath deathMsg = new MsgEntityDeath
+                    {
+                        entityId = netEnt.EntityId,
+                        corpseTexture = corpseTexture,
+                        position = transform.position,
+                        yaw = transform.eulerAngles.y,
+                        lootLoadID = loot != null ? loot.LoadID : 0,
+                        itemsJson = itemsJson
+                    };
+                    NetworkServer.SendToAll(deathMsg);
+                    DFUNetworkRegistry.Unregister(netEnt.EntityId);
+                }
+            }
 
             // Play body collapse sound
             if (DaggerfallUI.Instance.DaggerfallAudioSource)

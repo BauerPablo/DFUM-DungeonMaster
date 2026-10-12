@@ -1684,6 +1684,22 @@ PrefabInstance:
       propertyPath: m_LocalEulerAnglesHint.z
       value: 0
       objectReference: {fileID: 0}
+    - target: {fileID: 2800712056572462715, guid: 36c7108778dfa7f4eac90d13f075af88,
+        type: 3}
+      propertyPath: onlineScene
+      value: Assets/Scenes/DaggerfallUnityGame.unity
+      objectReference: {fileID: 0}
+    - target: {fileID: 2800712056572462715, guid: 36c7108778dfa7f4eac90d13f075af88,
+        type: 3}
+      propertyPath: playerPrefab
+      value: 
+      objectReference: {fileID: 4012101602302766543, guid: 48bdadde2b9d153419eaea43cd7a1e64,
+        type: 3}
+    - target: {fileID: 2800712056572462715, guid: 36c7108778dfa7f4eac90d13f075af88,
+        type: 3}
+      propertyPath: spawnPrefabs.Array.size
+      value: 0
+      objectReference: {fileID: 0}
     - target: {fileID: 2800712056572462726, guid: 36c7108778dfa7f4eac90d13f075af88,
         type: 3}
       propertyPath: m_Name
@@ -1692,7 +1708,7 @@ PrefabInstance:
     - target: {fileID: 2800712056572462726, guid: 36c7108778dfa7f4eac90d13f075af88,
         type: 3}
       propertyPath: m_IsActive
-      value: 0
+      value: 1
       objectReference: {fileID: 0}
     m_RemovedComponents: []
   m_SourcePrefab: {fileID: 100100000, guid: 36c7108778dfa7f4eac90d13f075af88, type: 3}
@@ -2328,8 +2344,18 @@ PrefabInstance:
     - target: {fileID: 9219638976092485223, guid: a392256f77ef89d468247e7154d999ad,
         type: 3}
       propertyPath: m_IsActive
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 9219638976092485272, guid: a392256f77ef89d468247e7154d999ad,
+        type: 3}
+      propertyPath: m_Enabled
       value: 1
       objectReference: {fileID: 0}
+    - target: {fileID: 9219638976092485274, guid: a392256f77ef89d468247e7154d999ad,
+        type: 3}
+      propertyPath: transport
+      value: 
+      objectReference: {fileID: 1673071964}
     - target: {fileID: 9219638976092485275, guid: a392256f77ef89d468247e7154d999ad,
         type: 3}
       propertyPath: m_RootOrder
@@ -2549,6 +2575,18 @@ Transform:
   m_Father: {fileID: 1402597}
   m_RootOrder: 1
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &1673071964 stripped
+MonoBehaviour:
+  m_CorrespondingSourceObject: {fileID: 2800712056572462712, guid: 36c7108778dfa7f4eac90d13f075af88,
+    type: 3}
+  m_PrefabInstance: {fileID: 1298423776}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 6b0fecffa3f624585964b0d0eb21b18e, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
 --- !u!1 &1769263313
 GameObject:
   m_ObjectHideFlags: 0

@@ -23,6 +23,7 @@ using DaggerfallWorkshop.Utility;
 using DaggerfallWorkshop.Utility.AssetInjection;
 using DaggerfallWorkshop.Game.Questing;
 using DaggerfallWorkshop.Game.Items;
+using DaggerfallWorkshop.Game.Networking;
 
 namespace DaggerfallWorkshop.Utility
 {
@@ -446,6 +447,10 @@ namespace DaggerfallWorkshop.Utility
             if (!dfUnity.IsReady)
                 return;
 
+            // Network authority check: pure clients must never spawn enemies autonomously
+            if (!NetworkSession.ShouldHandleSpawns)
+                return;
+
             // Must have import enabled and prefab set
             if (!dfUnity.Option_ImportEnemyPrefabs || dfUnity.Option_EnemyPrefab == null)
                 return;
@@ -492,6 +497,10 @@ namespace DaggerfallWorkshop.Utility
 
             DaggerfallUnity dfUnity = DaggerfallUnity.Instance;
             if (!dfUnity.IsReady)
+                return;
+
+            // Network authority check: pure clients must never spawn enemies autonomously
+            if (!NetworkSession.ShouldHandleSpawns)
                 return;
 
             // Must have import enabled and prefab set

@@ -1,21 +1,42 @@
-﻿using System.Collections;
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using DaggerfallWorkshop.Game;
 using DaggerfallWorkshop.Game.Weather;
 using Mirror;
 
-public class WeatherCatcher : NetworkBehaviour
+using DaggerfallWorkshop.Game.Network;
+
+public class WeatherCatcher : DFUBridgeComponent
 {
 	WeatherManager weatherManager;
 	PlayerWeather playerWeather;
 	WeatherType lastWeather;
 	string weatherName;
 	
+	public override byte[] GetState()
+	{
+		byte[] data = System.Text.Encoding.UTF8.GetBytes(playerWeather.WeatherType.ToString());
+		Debug.Log($"[DFU Native Sync] WeatherCatcher.GetState: {playerWeather.WeatherType}");
+		return data;
+	}
+
+	public override void ApplyState(byte[] state)
+	{
+		string weather = System.Text.Encoding.UTF8.GetString(state);
+		Debug.Log($"[DFU Native Sync] WeatherCatcher.ApplyState: {weather}");
+		weatherName = weather;
+		setWeather();
+	}
+
+	// Removed OnEnable/OnDisable debugs.
+
 	void Start()
 	{
 		init();
 	}
+	
+	// Removed Update() debug logic.
 	
 	void init()
 	{
@@ -38,6 +59,10 @@ public class WeatherCatcher : NetworkBehaviour
 				if (isServer){//Weather is controlled by the host to avoid apocalyptic weather change from every clients
 					print("WEATHER SEND " + playerWeather.WeatherType.ToString());
 					rpcSendWeather(playerWeather.WeatherType.ToString());
+					
+					// Native Sync Engine update
+					SendStateUpdate(System.Text.Encoding.UTF8.GetBytes(playerWeather.WeatherType.ToString()));
+					
 					lastWeather = playerWeather.WeatherType;
 				}else{
 					cmdReceiveWeather();
@@ -80,32 +105,22 @@ public class WeatherCatcher : NetworkBehaviour
 		switch (s) {
 			case "Sunny":
 				return WeatherType.Sunny;
-				break;
 			case "Cloudy":
 				return WeatherType.Cloudy;
-				break;
 			case "Overcast":
 				return WeatherType.Overcast;
-				break;
 			case "Fog":
 				return WeatherType.Fog;
-				break;
 			case "Rain":
 				return WeatherType.Rain;
-				break;
 			case "Rain_Normal":
 				return WeatherType.Rain;
-				break;
 			case "Snow":
 				return WeatherType.Snow;
-				break;
 			case "Snow_Normal":
 				return WeatherType.Snow;
-				break;
 			case "Thunder":
 				return WeatherType.Thunder;
-				break;
-			
 		}
 		return WeatherType.Sunny;
 	}

@@ -5,11 +5,40 @@ using DaggerfallWorkshop;
 using Mirror;
 using DaggerfallConnect;
 
-public class DoorsCatcher : NetworkBehaviour
+using DaggerfallWorkshop.Game.Network;
+
+public class DoorsCatcher : DFUBridgeComponent
 {
 	Transform cam;
 	public List<MonoBehaviour> doorsOpened = new List<MonoBehaviour>();
 	public LayerMask layerMask;
+
+	public override byte[] GetState()
+	{
+		return new byte[0]; // No usado para polling
+	}
+
+	public override void ApplyState(byte[] state)
+	{
+		// Los eventos de puerta se manejan en rpcToggleDoorOn para compatibilidad Mirror
+	}
+
+	// Método auxiliar para el puente nativo
+	public void SendDoorUpdate(float x, float y, float z, bool isOpen, bool isDoor)
+	{
+		using (System.IO.MemoryStream ms = new System.IO.MemoryStream())
+		{
+			using (System.IO.BinaryWriter writer = new System.IO.BinaryWriter(ms))
+			{
+				writer.Write(x);
+				writer.Write(y);
+				writer.Write(z);
+				writer.Write(isOpen);
+				writer.Write(isDoor);
+			}
+			SendStateUpdate(ms.ToArray());
+		}
+	}
 	
 	void Start()
 	{
@@ -80,6 +109,8 @@ public class DoorsCatcher : NetworkBehaviour
 	void cmdToggleDoorOn(float x, float y, float z, bool isOpen, bool isDoor)
 	{
 		rpcToggleDoorOn(x, y, z, isOpen, isDoor);
+		// Native Sync Engine update
+		SendDoorUpdate(x, y, z, isOpen, isDoor);
 	}
 	
 	[ClientRpc]
