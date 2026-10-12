@@ -1473,9 +1473,9 @@ namespace DaggerfallWorkshop.Utility
                                     DaggerfallWorkshop.Game.Questing.Foe f = fRes as DaggerfallWorkshop.Game.Questing.Foe;
                                     if (f != null && f.FoeType == msg.mobileType)
                                     {
-                                        DaggerfallWorkshop.Game.Questing.Components.QuestResourceBehaviour qrb = go.GetComponent<DaggerfallWorkshop.Game.Questing.Components.QuestResourceBehaviour>();
+                                        QuestResourceBehaviour qrb = go.GetComponent<QuestResourceBehaviour>();
                                         if (qrb == null)
-                                            qrb = go.AddComponent<DaggerfallWorkshop.Game.Questing.Components.QuestResourceBehaviour>();
+                                            qrb = go.AddComponent<QuestResourceBehaviour>();
                                         qrb.AssignResource(f);
                                         f.QuestResourceBehaviour = qrb;
                                         break;
