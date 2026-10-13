@@ -329,14 +329,14 @@ namespace DaggerfallWorkshop.Game
                 if (targetController != null)
                     bloodPos.y += targetController.height / 8;
 
-                if (blood && targetEntity != null && targetEntity.MobileEnemy != null)
+                if (blood && targetEntity != null)
                 {
                     blood.ShowBloodSplash(targetEntity.MobileEnemy.BloodIndex, bloodPos);
                 }
 
                 // Knock back enemy based on damage and enemy weight
                 if (targetMotor && (targetMotor.KnockbackSpeed <= (5 / (PlayerSpeedChanger.classicToUnitySpeedUnitRatio / 10))
-                        && (entityBehaviour.EntityType == EntityTypes.EnemyClass || (targetEntity != null && targetEntity.MobileEnemy != null && targetEntity.MobileEnemy.Weight > 0))))
+                        && (entityBehaviour.EntityType == EntityTypes.EnemyClass || (targetEntity != null && targetEntity.MobileEnemy.Weight > 0))))
                 {
                     float enemyWeight = targetEntity != null ? targetEntity.GetWeightInClassicUnits() : 100f;
                     float tenTimesDamage = damage * 10;

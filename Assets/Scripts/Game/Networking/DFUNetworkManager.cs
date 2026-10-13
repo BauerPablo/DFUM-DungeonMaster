@@ -986,7 +986,7 @@ namespace DaggerfallWorkshop.Game.Networking
         #region Remote Player Replication & Transform Streaming
 
         private readonly Dictionary<int, MsgPlayerProfile> connectedPlayerProfiles = new Dictionary<int, MsgPlayerProfile>();
-        private readonly Dictionary<int, NativePlayerPuppet> remotePlayerPuppets = new Dictionary<int, NativePlayerPuppet>();
+        public readonly Dictionary<int, NativePlayerPuppet> remotePlayerPuppets = new Dictionary<int, NativePlayerPuppet>();
 
         private float playerStreamTimer = 0f;
         private Vector3 lastLocalPlayerPos;
@@ -1875,7 +1875,7 @@ namespace DaggerfallWorkshop.Game.Networking
             return true;
         }
 
-        private void HandleOnPreTransition(PlayerEnterExit.TransitionType type, StaticDoor door)
+        private void HandleOnPreTransition(PlayerEnterExit.TransitionEventArgs args)
         {
             foreach (var kvp in remotePlayerPuppets)
             {
