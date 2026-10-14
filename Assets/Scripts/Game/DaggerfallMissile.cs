@@ -197,13 +197,13 @@ namespace DaggerfallWorkshop.Game
                 caster = payload.CasterEntityBehaviour;
                 targetType = payload.Settings.TargetType;
                 elementType = payload.Settings.ElementType;
+            }
 
-                // Set spell billboard anims automatically from payload for mobile missiles
-                if (targetType == TargetTypes.SingleTargetAtRange ||
-                    targetType == TargetTypes.AreaAtRange)
-                {
-                    UseSpellBillboardAnims();
-                }
+            // Set spell billboard anims automatically from payload or explicit properties for mobile missiles
+            if (targetType == TargetTypes.SingleTargetAtRange ||
+                targetType == TargetTypes.AreaAtRange)
+            {
+                UseSpellBillboardAnims();
             }
 
             // Setup senses
@@ -250,7 +250,18 @@ namespace DaggerfallWorkshop.Game
 
             // Ignore missile collision with caster (this is a different check to AOE targets)
             if (caster)
-                Physics.IgnoreCollision(caster.GetComponent<Collider>(), this.GetComponent<Collider>());
+            {
+                Collider[] casterColliders = caster.GetComponentsInChildren<Collider>();
+                Collider myCol = GetComponent<Collider>();
+                if (myCol != null && casterColliders != null)
+                {
+                    for (int i = 0; i < casterColliders.Length; i++)
+                    {
+                        if (casterColliders[i] != null)
+                            Physics.IgnoreCollision(casterColliders[i], myCol);
+                    }
+                }
+            }
         }
 
         private void Update()
@@ -347,7 +358,8 @@ namespace DaggerfallWorkshop.Game
             if (elementType != ElementTypes.None && targetType != TargetTypes.ByTouch)
             {
                 UseSpellBillboardAnims(1, true);
-                myBillboard.FramesPerSecond = ImpactBillboardFramesPerSecond;
+                if (myBillboard != null)
+                    myBillboard.FramesPerSecond = ImpactBillboardFramesPerSecond;
                 impactDetected = true;
             }
 
@@ -475,13 +487,16 @@ namespace DaggerfallWorkshop.Game
 
             // Aim position is from eye level for player or origin for other mobile
             // Player must aim from camera position or it feels out of alignment
-            Vector3 aimPosition = caster.transform.position;
-            if (caster == GameManager.Instance.PlayerEntityBehaviour)
+            if (caster == GameManager.Instance.PlayerEntityBehaviour && GameManager.Instance.MainCamera != null)
             {
-                aimPosition = GameManager.Instance.MainCamera.transform.position;
+                return GameManager.Instance.MainCamera.transform.position;
+            }
+            else if (caster != null)
+            {
+                return caster.transform.position + Vector3.up * 1.5f;
             }
 
-            return aimPosition;
+            return transform.position;
         }
 
         // Get missile aim direction from player or enemy mobile
@@ -578,6 +593,9 @@ namespace DaggerfallWorkshop.Game
             foreach (DaggerfallEntityBehaviour entityBehaviour in targetEntities)
             {
                 if (entityBehaviour == null)
+                    continue;
+
+                if (entityBehaviour == caster)
                     continue;
 
                 // In multiplayer, route spell to remote party member puppet

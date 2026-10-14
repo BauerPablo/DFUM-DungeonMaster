@@ -245,8 +245,11 @@ namespace DaggerfallWorkshop
                 summary.StateAnimFrames = summary.Enemy.RangedAttackAnimFrames;
 
                 // Set to the first frame of this animation, and prepare frameIterator to start from the second frame when AnimateEnemy() next runs
-                currentFrame = summary.StateAnimFrames[0];
-                frameIterator = 1;
+                if (summary.StateAnimFrames != null && summary.StateAnimFrames.Length > 0)
+                {
+                    currentFrame = summary.StateAnimFrames[0];
+                    frameIterator = 1;
+                }
             }
 
             if (summary.EnemyState == MobileStates.Spell)
@@ -254,8 +257,17 @@ namespace DaggerfallWorkshop
                 summary.StateAnimFrames = summary.Enemy.SpellAnimFrames;
 
                 // Set to the first frame of this animation, and prepare frameIterator to start from the second frame when AnimateEnemy() next runs
-                currentFrame = summary.StateAnimFrames[0];
-                frameIterator = 1;
+                if (summary.StateAnimFrames != null && summary.StateAnimFrames.Length > 0)
+                {
+                    currentFrame = summary.StateAnimFrames[0];
+                    frameIterator = 1;
+                }
+                else if (summary.Enemy.PrimaryAttackAnimFrames != null && summary.Enemy.PrimaryAttackAnimFrames.Length > 0)
+                {
+                    summary.StateAnimFrames = summary.Enemy.PrimaryAttackAnimFrames;
+                    currentFrame = summary.StateAnimFrames[0];
+                    frameIterator = 1;
+                }
             }
 
             if (summary.EnemyState == MobileStates.SeducerTransform1)

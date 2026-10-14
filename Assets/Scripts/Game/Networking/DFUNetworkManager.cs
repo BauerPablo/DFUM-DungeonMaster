@@ -7205,63 +7205,87 @@ namespace DaggerfallWorkshop.Game.Networking
 
         private void OnServerReceiveCastSpell(NetworkConnection conn, MsgCastSpell msg)
         {
-            msg.casterConnectionId = conn.connectionId;
-            if (NetworkSession.IsHost)
+            try
             {
-                PlayRemoteSpellCastVisual(msg);
-            }
-
-            foreach (var kvp in NetworkServer.connections)
-            {
-                if (kvp.Key != conn.connectionId && kvp.Value != null && kvp.Value.isReady)
+                msg.casterConnectionId = conn.connectionId;
+                if (NetworkSession.IsHost)
                 {
-                    kvp.Value.Send(msg);
+                    PlayRemoteSpellCastVisual(msg);
                 }
+
+                foreach (var kvp in NetworkServer.connections)
+                {
+                    if (kvp.Key != conn.connectionId && kvp.Value != null && kvp.Value.isReady)
+                    {
+                        kvp.Value.Send(msg);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                LogNetwork($"[DFU Magic] Error in OnServerReceiveCastSpell: {ex.Message}");
             }
         }
 
         private void OnClientReceiveCastSpell(MsgCastSpell msg)
         {
-            if (NetworkSession.IsHost && msg.casterConnectionId == 0)
-                return;
-            if (!NetworkSession.IsHost && msg.casterConnectionId == localConnectionId)
-                return;
+            try
+            {
+                if (NetworkSession.IsHost && msg.casterConnectionId == 0)
+                    return;
+                if (!NetworkSession.IsHost && msg.casterConnectionId == localConnectionId)
+                    return;
 
-            PlayRemoteSpellCastVisual(msg);
+                PlayRemoteSpellCastVisual(msg);
+            }
+            catch (Exception ex)
+            {
+                LogNetwork($"[DFU Magic] Error in OnClientReceiveCastSpell: {ex.Message}");
+            }
         }
 
         private void PlayRemoteSpellCastVisual(MsgCastSpell msg)
         {
-            NativePlayerPuppet puppet = null;
-            if (remotePlayerPuppets.TryGetValue(msg.casterConnectionId, out NativePlayerPuppet p))
+            try
             {
-                puppet = p;
-            }
-
-            if (puppet != null)
-            {
-                puppet.TriggerCastAnimation();
-
-                if (GameManager.Instance.PlayerEffectManager != null && puppet.EntityBehaviour != null)
+                NativePlayerPuppet puppet = null;
+                if (remotePlayerPuppets.TryGetValue(msg.casterConnectionId, out NativePlayerPuppet p))
                 {
-                    int soundId = GameManager.Instance.PlayerEffectManager.GetCastSoundID(msg.elementType);
-                    GameManager.Instance.PlayerEffectManager.PlayCastSound(puppet.EntityBehaviour, soundId);
+                    puppet = p;
                 }
-            }
 
-            if (msg.targetType == TargetTypes.SingleTargetAtRange || msg.targetType == TargetTypes.AreaAtRange)
-            {
-                if (GameManager.Instance.PlayerEffectManager != null)
+                if (puppet != null)
                 {
-                    DaggerfallMissile missile = GameManager.Instance.PlayerEffectManager.InstantiateSpellMissile(msg.elementType);
-                    if (missile != null)
+                    puppet.TriggerCastAnimation();
+
+                    if (GameManager.Instance.PlayerEffectManager != null && puppet.EntityBehaviour != null)
                     {
-                        missile.transform.position = msg.origin;
-                        missile.CustomAimDirection = msg.direction;
-                        missile.Payload = null; // Visual only on remote peers
-                        missile.Caster = puppet != null ? puppet.EntityBehaviour : null;
+                        int soundId = GameManager.Instance.PlayerEffectManager.GetCastSoundID(msg.elementType);
+                        GameManager.Instance.PlayerEffectManager.PlayCastSound(puppet.EntityBehaviour, soundId);
                     }
                 }
+
+                if (msg.targetType == TargetTypes.SingleTargetAtRange || msg.targetType == TargetTypes.AreaAtRange)
+                {
+                    if (GameManager.Instance.PlayerEffectManager != null)
+                    {
+                        DaggerfallMissile missile = GameManager.Instance.PlayerEffectManager.InstantiateSpellMissile(msg.elementType);
+                        if (missile != null)
+                        {
+                            missile.TargetType = msg.targetType;
+                            missile.ElementType = msg.elementType;
+                            missile.CustomAimPosition = msg.origin;
+                            missile.CustomAimDirection = msg.direction;
+                            missile.transform.position = msg.origin;
+                            missile.Payload = null; // Visual only on remote peers
+                            missile.Caster = puppet != null ? puppet.EntityBehaviour : null;
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                LogNetwork($"[DFU Magic] Error in PlayRemoteSpellCastVisual: {ex.Message}");
             }
         }
 
@@ -7311,27 +7335,41 @@ namespace DaggerfallWorkshop.Game.Networking
 
         private void OnServerReceiveApplySpellBundle(NetworkConnection conn, MsgApplySpellBundle msg)
         {
-            msg.casterConnectionId = conn.connectionId;
-            if (msg.isHarmful && !isPvpAllowed)
-                return;
+            try
+            {
+                msg.casterConnectionId = conn.connectionId;
+                if (msg.isHarmful && !isPvpAllowed)
+                    return;
 
-            if (msg.targetConnectionId == 0)
-            {
-                ApplyReceivedSpellBundle(msg);
+                if (msg.targetConnectionId == 0)
+                {
+                    ApplyReceivedSpellBundle(msg);
+                }
+                else if (NetworkServer.connections.TryGetValue(msg.targetConnectionId, out NetworkConnectionToClient targetConn) && targetConn != null && targetConn.isReady)
+                {
+                    targetConn.Send(msg);
+                }
             }
-            else if (NetworkServer.connections.TryGetValue(msg.targetConnectionId, out NetworkConnectionToClient targetConn) && targetConn != null && targetConn.isReady)
+            catch (Exception ex)
             {
-                targetConn.Send(msg);
+                LogNetwork($"[DFU Magic] Error in OnServerReceiveApplySpellBundle: {ex.Message}");
             }
         }
 
         private void OnClientReceiveApplySpellBundle(MsgApplySpellBundle msg)
         {
-            int myId = NetworkSession.IsHost ? 0 : localConnectionId;
-            if (msg.targetConnectionId != myId)
-                return;
+            try
+            {
+                int myId = NetworkSession.IsHost ? 0 : localConnectionId;
+                if (msg.targetConnectionId != myId)
+                    return;
 
-            ApplyReceivedSpellBundle(msg);
+                ApplyReceivedSpellBundle(msg);
+            }
+            catch (Exception ex)
+            {
+                LogNetwork($"[DFU Magic] Error in OnClientReceiveApplySpellBundle: {ex.Message}");
+            }
         }
 
         private void ApplyReceivedSpellBundle(MsgApplySpellBundle msg)

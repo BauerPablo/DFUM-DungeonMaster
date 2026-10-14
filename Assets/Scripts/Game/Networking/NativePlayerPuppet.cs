@@ -37,6 +37,7 @@ namespace DaggerfallWorkshop.Game.Networking
         private int weaponType;
         private bool lastAttacking;
         private CapsuleCollider capsuleCollider;
+        private float castAnimTimer = 0f;
 
         private MobileUnit mobileUnit;
         private GameObject nameTagObject;
@@ -247,6 +248,16 @@ namespace DaggerfallWorkshop.Game.Networking
             // Attack and motion animations
             if (mobileUnit != null && mobileUnit.gameObject.activeSelf)
             {
+                if (castAnimTimer > 0f)
+                {
+                    castAnimTimer -= Time.deltaTime;
+                    if (castAnimTimer <= 0f && !isAttacking)
+                    {
+                        bool moving = isMoving || (Vector3.Distance(transform.position, targetPosition) > 0.04f);
+                        mobileUnit.ChangeEnemyState(moving ? MobileStates.Move : MobileStates.Idle);
+                    }
+                }
+
                 if (isAttacking)
                 {
                     MobileStates attackState = (weaponType == (int)WeaponTypes.Bow) ? MobileStates.RangedAttack1 : MobileStates.PrimaryAttack;
@@ -261,14 +272,14 @@ namespace DaggerfallWorkshop.Game.Networking
                         }
                     }
                 }
-                else
+                else if (castAnimTimer <= 0f)
                 {
                     bool actuallyMoving = isMoving || (Vector3.Distance(transform.position, targetPosition) > 0.04f);
-                    if (actuallyMoving && mobileUnit.EnemyState != MobileStates.Move && mobileUnit.EnemyState != MobileStates.PrimaryAttack && mobileUnit.EnemyState != MobileStates.RangedAttack1)
+                    if (actuallyMoving && mobileUnit.EnemyState != MobileStates.Move && mobileUnit.EnemyState != MobileStates.PrimaryAttack && mobileUnit.EnemyState != MobileStates.RangedAttack1 && mobileUnit.EnemyState != MobileStates.Spell)
                     {
                         mobileUnit.ChangeEnemyState(MobileStates.Move);
                     }
-                    else if (!actuallyMoving && mobileUnit.EnemyState == MobileStates.Move)
+                    else if (!actuallyMoving && (mobileUnit.EnemyState == MobileStates.Move || mobileUnit.EnemyState == MobileStates.PrimaryAttack || mobileUnit.EnemyState == MobileStates.Spell || mobileUnit.EnemyState == MobileStates.RangedAttack1))
                     {
                         mobileUnit.ChangeEnemyState(MobileStates.Idle);
                     }
@@ -345,7 +356,23 @@ namespace DaggerfallWorkshop.Game.Networking
         {
             if (mobileUnit != null && mobileUnit.gameObject.activeSelf)
             {
-                mobileUnit.ChangeEnemyState(MobileStates.Spell);
+                try
+                {
+                    var summary = mobileUnit.Summary;
+                    if (summary.Enemy.HasSpellAnimation && summary.Enemy.SpellAnimFrames != null && summary.Enemy.SpellAnimFrames.Length > 0)
+                    {
+                        mobileUnit.ChangeEnemyState(MobileStates.Spell);
+                    }
+                    else
+                    {
+                        mobileUnit.ChangeEnemyState(MobileStates.PrimaryAttack);
+                    }
+                    castAnimTimer = 0.5f;
+                }
+                catch (System.Exception ex)
+                {
+                    UnityEngine.Debug.LogWarning($"[DFU Magic] Failed to trigger cast animation on puppet: {ex.Message}");
+                }
             }
         }
     }
