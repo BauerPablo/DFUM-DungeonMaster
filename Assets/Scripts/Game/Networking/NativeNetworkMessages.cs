@@ -555,6 +555,98 @@ namespace DaggerfallWorkshop.Game.Networking
     {
         public List<SharedLocationItem> locations = new List<SharedLocationItem>();
     }
+
+    #region Bilateral Trading System
+
+    /// <summary>
+    /// Lightweight DTO for previewing an offered item in the bilateral trade window.
+    /// </summary>
+    [Serializable]
+    public class TradeItemDTO
+    {
+        public ulong uid;
+        public string name;
+        public float weight;
+        public int stackCount;
+        public int value;
+    }
+
+    /// <summary>
+    /// Serialized bundle of offered items for visual synchronization during trade.
+    /// </summary>
+    [Serializable]
+    public class TradeOfferBundle
+    {
+        public List<TradeItemDTO> items = new List<TradeItemDTO>();
+    }
+
+    /// <summary>
+    /// Sent to invite a partner to a trade session.
+    /// </summary>
+    public struct MsgTradeInvite : NetworkMessage
+    {
+        public int senderConnectionId;
+        public string senderName;
+        public int targetConnectionId;
+    }
+
+    /// <summary>
+    /// Response to a trade invite (accept / decline).
+    /// </summary>
+    public struct MsgTradeInviteResponse : NetworkMessage
+    {
+        public int senderConnectionId;
+        public string senderName;
+        public int targetConnectionId;
+        public bool accepted;
+    }
+
+    /// <summary>
+    /// Synchronizes changes to a player's trade offer (gold, items preview, locked, accepted).
+    /// </summary>
+    public struct MsgTradeStateSync : NetworkMessage
+    {
+        public int senderConnectionId;
+        public int targetConnectionId;
+        public int gold;
+        public string offerItemsJson; // Serialized TradeOfferBundle
+        public bool isLocked;
+        public bool isAccepted;
+    }
+
+    /// <summary>
+    /// Sent when either player or server cancels the trade.
+    /// </summary>
+    public struct MsgTradeCancel : NetworkMessage
+    {
+        public int senderConnectionId;
+        public int targetConnectionId;
+        public string reason;
+    }
+
+    /// <summary>
+    /// Sent by players to server upon confirming trade with full serialized items.
+    /// </summary>
+    public struct MsgTradeCommit : NetworkMessage
+    {
+        public int senderConnectionId;
+        public int targetConnectionId;
+        public int offeredGold;
+        public string offeredItemsJson; // Serialized ItemData_v1[]
+    }
+
+    /// <summary>
+    /// Sent by server to both players when trade executes or fails.
+    /// </summary>
+    public struct MsgTradeCompleted : NetworkMessage
+    {
+        public bool success;
+        public string message;
+        public string receivedItemsJson; // Serialized ItemData_v1[] of items transferred to this player
+        public int receivedGold; // Gold transferred to this player
+    }
+
+    #endregion
 }
 
 

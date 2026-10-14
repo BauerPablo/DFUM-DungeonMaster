@@ -108,10 +108,41 @@ namespace DaggerfallWorkshop.Game.Networking
         private int selectedRepPlayerIndex = 0;
         private readonly Dictionary<int, Dictionary<int, int>> remotePlayerReputations = new Dictionary<int, Dictionary<int, int>>();
 
+        // Bilateral Trading System State
+        public bool showTradeWindow = false;
+        public bool showTradeInvitePrompt = false;
+        private Rect tradeWindowRect = new Rect((Screen.width - 640) * 0.5f, (Screen.height - 480) * 0.5f, 640, 480);
+        private Rect tradeInviteRect = new Rect((Screen.width - 340) * 0.5f, 120, 340, 150);
+        private int activeTradePartnerConnId = -1;
+        private string activeTradePartnerName = "";
+        private NativePlayerPuppet activeTradePartnerPuppet = null;
+        private float tradeInviteTimeout = 0f;
+        private int pendingTradeInviteSenderConnId = -1;
+        private string pendingTradeInviteSenderName = "";
+
+        // Local trade offer state
+        private int localTradeGold = 0;
+        private readonly List<DaggerfallUnityItem> localTradeItems = new List<DaggerfallUnityItem>();
+        private bool localTradeLocked = false;
+        private bool localTradeAccepted = false;
+        private Vector2 localOfferScrollPos;
+        private Vector2 inventoryPickerScrollPos;
+        private bool showInventoryPicker = false;
+
+        // Remote partner trade offer state
+        private int remoteTradeGold = 0;
+        private readonly List<TradeItemDTO> remoteTradeItems = new List<TradeItemDTO>();
+        private bool remoteTradeLocked = false;
+        private bool remoteTradeAccepted = false;
+        private Vector2 remoteOfferScrollPos;
+
+        // Server authoritative pending commits
+        private readonly Dictionary<int, MsgTradeCommit> serverPendingTradeCommits = new Dictionary<int, MsgTradeCommit>();
+
         /// <summary>
-        /// True if any network, DM, loot, quest, or player interaction debug overlay is open.
+        /// True if any network, DM, loot, quest, player interaction, or trade debug overlay is open.
         /// </summary>
-        public bool IsAnyGuiOpen => showDebugGui || showDmGui || showLootGui || showQuestGui || showPlayerInteractionWindow;
+        public bool IsAnyGuiOpen => showDebugGui || showDmGui || showLootGui || showQuestGui || showPlayerInteractionWindow || showTradeWindow || showTradeInvitePrompt;
 
         private KcpTransport kcpTransport;
 
@@ -251,10 +282,36 @@ namespace DaggerfallWorkshop.Game.Networking
                     FreeCamController.Instance.ToggleFreeCam();
             }
 
-            if (showDebugGui || showDmGui || showLootGui || showQuestGui || showPlayerInteractionWindow)
+            if (showDebugGui || showDmGui || showLootGui || showQuestGui || showPlayerInteractionWindow || showTradeWindow || showTradeInvitePrompt)
             {
                 Cursor.lockState = CursorLockMode.None;
                 Cursor.visible = true;
+            }
+
+            if (showTradeInvitePrompt)
+            {
+                tradeInviteTimeout -= Time.deltaTime;
+                if (tradeInviteTimeout <= 0f)
+                {
+                    showTradeInvitePrompt = false;
+                    DaggerfallUI.AddHUDText("[Comercio] La solicitud de comercio ha expirado.");
+                }
+            }
+
+            if (showTradeWindow)
+            {
+                if (Input.GetKeyDown(KeyCode.Escape))
+                {
+                    CancelTrade("Comercio cancelado por el jugador.");
+                }
+                else if (activeTradePartnerPuppet != null && activeTradePartnerPuppet.gameObject != null && GameManager.Instance.PlayerObject != null)
+                {
+                    float dist = Vector3.Distance(GameManager.Instance.PlayerObject.transform.position, activeTradePartnerPuppet.transform.position);
+                    if (dist > 6.0f)
+                    {
+                        CancelTrade("Cancelado: El compañero se alejó demasiado.");
+                    }
+                }
             }
 
             if (showPlayerInteractionWindow)
@@ -450,6 +507,11 @@ namespace DaggerfallWorkshop.Game.Networking
             NetworkServer.RegisterHandler<MsgDialogueEnded>(OnServerReceiveDialogueEnded);
             NetworkServer.RegisterHandler<MsgShareMapData>(OnServerReceiveShareMapData);
             NetworkServer.RegisterHandler<MsgClientReputationReport>(OnServerReceiveClientReputationReport);
+            NetworkServer.RegisterHandler<MsgTradeInvite>(OnServerReceiveTradeInvite);
+            NetworkServer.RegisterHandler<MsgTradeInviteResponse>(OnServerReceiveTradeInviteResponse);
+            NetworkServer.RegisterHandler<MsgTradeStateSync>(OnServerReceiveTradeStateSync);
+            NetworkServer.RegisterHandler<MsgTradeCancel>(OnServerReceiveTradeCancel);
+            NetworkServer.RegisterHandler<MsgTradeCommit>(OnServerReceiveTradeCommit);
             GameManager.OnEnemySpawn += OnServerEnemySpawned;
             WeatherManager.OnWeatherChange += OnServerWeatherChanged;
             worldTimeSyncTimer = 0f;
@@ -485,12 +547,21 @@ namespace DaggerfallWorkshop.Game.Networking
             NetworkServer.UnregisterHandler<MsgDialogueEnded>();
             NetworkServer.UnregisterHandler<MsgShareMapData>();
             NetworkServer.UnregisterHandler<MsgClientReputationReport>();
+            NetworkServer.UnregisterHandler<MsgTradeInvite>();
+            NetworkServer.UnregisterHandler<MsgTradeInviteResponse>();
+            NetworkServer.UnregisterHandler<MsgTradeStateSync>();
+            NetworkServer.UnregisterHandler<MsgTradeCancel>();
+            NetworkServer.UnregisterHandler<MsgTradeCommit>();
+            serverPendingTradeCommits.Clear();
             activeDialogueBubbles.Clear();
             remotePlayerReputations.Clear();
             isVoteActive = false;
             currentVoteApprovedClients.Clear();
             currentVoteMemberStatuses.Clear();
             ClosePartyVoteWindow();
+            showTradeWindow = false;
+            showTradeInvitePrompt = false;
+            ResetTradeOfferState();
             DestroyAllRemotePlayerPuppets();
             ClearPlayerEntities();
             DFUNetworkRegistry.Clear();
@@ -644,6 +715,11 @@ namespace DaggerfallWorkshop.Game.Networking
             NetworkClient.RegisterHandler<MsgDialogueSpeech>(OnClientReceiveDialogueSpeech);
             NetworkClient.RegisterHandler<MsgDialogueEnded>(OnClientReceiveDialogueEnded);
             NetworkClient.RegisterHandler<MsgPlayerDamaged>(OnClientReceivePlayerDamaged);
+            NetworkClient.RegisterHandler<MsgTradeInvite>(OnClientReceiveTradeInvite);
+            NetworkClient.RegisterHandler<MsgTradeInviteResponse>(OnClientReceiveTradeInviteResponse);
+            NetworkClient.RegisterHandler<MsgTradeStateSync>(OnClientReceiveTradeStateSync);
+            NetworkClient.RegisterHandler<MsgTradeCancel>(OnClientReceiveTradeCancel);
+            NetworkClient.RegisterHandler<MsgTradeCompleted>(OnClientReceiveTradeCompleted);
         }
 
         public override void OnStopClient()
@@ -678,10 +754,18 @@ namespace DaggerfallWorkshop.Game.Networking
             NetworkClient.UnregisterHandler<MsgShareMapData>();
             NetworkClient.UnregisterHandler<MsgDialogueSpeech>();
             NetworkClient.UnregisterHandler<MsgDialogueEnded>();
+            NetworkClient.UnregisterHandler<MsgTradeInvite>();
+            NetworkClient.UnregisterHandler<MsgTradeInviteResponse>();
+            NetworkClient.UnregisterHandler<MsgTradeStateSync>();
+            NetworkClient.UnregisterHandler<MsgTradeCancel>();
+            NetworkClient.UnregisterHandler<MsgTradeCompleted>();
             activeDialogueBubbles.Clear();
             ClosePartyVoteWindow();
             showPlayerInteractionWindow = false;
             interactionTargetPuppet = null;
+            showTradeWindow = false;
+            showTradeInvitePrompt = false;
+            ResetTradeOfferState();
             remotePlayerReputations.Clear();
             selectedRepPlayerIndex = 0;
             isPartyRestingBlackout = false;
@@ -2443,6 +2527,18 @@ namespace DaggerfallWorkshop.Game.Networking
             {
                 GUI.depth = -1000;
                 playerInteractionWindowRect = GUI.Window(987658, playerInteractionWindowRect, DrawPlayerInteractionWindow, $"Player: {interactionTargetPuppet.playerName}");
+            }
+
+            if (showTradeInvitePrompt)
+            {
+                GUI.depth = -1001;
+                tradeInviteRect = GUI.Window(987659, tradeInviteRect, DrawTradeInvitePromptWindow, "Solicitud de Comercio");
+            }
+
+            if (showTradeWindow)
+            {
+                GUI.depth = -1000;
+                tradeWindowRect = GUI.Window(987660, tradeWindowRect, DrawTradeWindow, $"Comercio con {activeTradePartnerName}");
             }
 
             GUI.depth = -999;
@@ -5318,9 +5414,10 @@ namespace DaggerfallWorkshop.Game.Networking
             }
 
             GUILayout.Space(4);
-            GUI.enabled = false;
-            GUILayout.Button("Transferir Objetos / Trade [Próximamente]", GUILayout.Height(28));
-            GUI.enabled = true;
+            if (GUILayout.Button("Iniciar Comercio Bilateral (Trade)", GUILayout.Height(34)))
+            {
+                InitiateTradeInvite(interactionTargetPuppet);
+            }
 
             GUILayout.Space(10);
             if (GUILayout.Button("Cerrar", GUILayout.Height(24)))
@@ -5544,6 +5641,797 @@ namespace DaggerfallWorkshop.Game.Networking
             {
                 LogNetwork($"[DFU Map] Error applying shared map data: {ex.Message}");
             }
+        }
+
+        #endregion
+
+        #region P2P Bilateral Trading System
+
+        private void DrawTradeInvitePromptWindow(int windowId)
+        {
+            GUILayout.Space(8);
+            GUILayout.Label($"<b><color=#FFD700>{pendingTradeInviteSenderName}</color></b> desea iniciar un intercambio comercial contigo.", GUILayout.ExpandWidth(true));
+            GUILayout.Space(4);
+            GUILayout.Label($"<size=11>Tiempo restante: <b>{Mathf.CeilToInt(tradeInviteTimeout)}s</b></size>");
+            GUILayout.Space(12);
+
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("Aceptar", GUILayout.Height(30)))
+            {
+                showTradeInvitePrompt = false;
+                RespondToTradeInvite(pendingTradeInviteSenderConnId, true);
+            }
+            if (GUILayout.Button("Rechazar", GUILayout.Height(30)))
+            {
+                showTradeInvitePrompt = false;
+                RespondToTradeInvite(pendingTradeInviteSenderConnId, false);
+            }
+            GUILayout.EndHorizontal();
+
+            GUI.DragWindow(new Rect(0, 0, 10000, 20));
+        }
+
+        private void DrawTradeWindow(int windowId)
+        {
+            var playerEntity = GameManager.Instance.PlayerEntity;
+            if (playerEntity == null)
+            {
+                CancelTrade("Error de entidad de jugador.");
+                return;
+            }
+
+            int playerGold = playerEntity.GoldPieces;
+
+            GUILayout.Space(6);
+            GUILayout.Label($"<b>COMERCIO BILATERAL</b> — Compañero: <color=#ADD8E6>{activeTradePartnerName}</color>", GUILayout.ExpandWidth(true));
+            GUILayout.Space(6);
+
+            GUILayout.BeginHorizontal();
+
+            // ==========================================
+            // LEFT COLUMN: TU OFERTA (305px)
+            // ==========================================
+            GUILayout.BeginVertical(GUI.skin.box, GUILayout.Width(305));
+            GUILayout.Label("<b>--- TU OFERTA ---</b>");
+
+            // Gold offer
+            GUILayout.Label($"Oro ofrecido: <color=#FFD700>{localTradeGold} gp</color> <size=10>(Tienes: {playerGold} gp)</size>");
+            if (!localTradeLocked)
+            {
+                GUILayout.BeginHorizontal();
+                if (GUILayout.Button("+10", GUILayout.Width(38), GUILayout.Height(20))) AddLocalTradeGold(10, playerGold);
+                if (GUILayout.Button("+100", GUILayout.Width(44), GUILayout.Height(20))) AddLocalTradeGold(100, playerGold);
+                if (GUILayout.Button("+1000", GUILayout.Width(50), GUILayout.Height(20))) AddLocalTradeGold(1000, playerGold);
+                if (GUILayout.Button("Max", GUILayout.Width(40), GUILayout.Height(20))) SetLocalTradeGold(playerGold, playerGold);
+                if (GUILayout.Button("0", GUILayout.Width(25), GUILayout.Height(20))) SetLocalTradeGold(0, playerGold);
+                GUILayout.EndHorizontal();
+            }
+
+            GUILayout.Space(6);
+            float totalLocalWeight = 0f;
+            foreach (var itm in localTradeItems) if (itm != null) totalLocalWeight += itm.weightInKG;
+            GUILayout.Label($"<b>Ítems Ofertados:</b> {localTradeItems.Count} ({totalLocalWeight:F1} kg)");
+
+            localOfferScrollPos = GUILayout.BeginScrollView(localOfferScrollPos, GUILayout.Height(130));
+            if (localTradeItems.Count == 0)
+            {
+                GUILayout.Label("<color=#888888><i>Sin ítems ofrecidos</i></color>");
+            }
+            else
+            {
+                for (int i = 0; i < localTradeItems.Count; i++)
+                {
+                    var itm = localTradeItems[i];
+                    if (itm == null) continue;
+
+                    GUILayout.BeginHorizontal();
+                    string itmTitle = itm.stackCount > 1 ? $"{itm.ItemName} x{itm.stackCount}" : itm.ItemName;
+                    GUILayout.Label($"• {itmTitle} ({itm.weightInKG:F1}kg)", GUILayout.ExpandWidth(true));
+                    if (!localTradeLocked && GUILayout.Button("X", GUILayout.Width(22), GUILayout.Height(18)))
+                    {
+                        localTradeItems.RemoveAt(i);
+                        localTradeLocked = false;
+                        localTradeAccepted = false;
+                        SyncLocalTradeStateToPartner();
+                        break;
+                    }
+                    GUILayout.EndHorizontal();
+                }
+            }
+            GUILayout.EndScrollView();
+
+            if (!localTradeLocked)
+            {
+                if (GUILayout.Button(showInventoryPicker ? "▲ Ocultar Inventario" : "▼ + Agregar Ítems del Inventario", GUILayout.Height(24)))
+                {
+                    showInventoryPicker = !showInventoryPicker;
+                }
+
+                if (showInventoryPicker)
+                {
+                    inventoryPickerScrollPos = GUILayout.BeginScrollView(inventoryPickerScrollPos, GUILayout.Height(100));
+                    var inv = playerEntity.Items;
+                    int addedAny = 0;
+                    if (inv != null)
+                    {
+                        foreach (DaggerfallUnityItem itm in inv)
+                        {
+                            if (itm != null && !itm.IsEquipped && !itm.IsQuestItem && !localTradeItems.Contains(itm))
+                            {
+                                addedAny++;
+                                GUILayout.BeginHorizontal();
+                                string itmTitle = itm.stackCount > 1 ? $"{itm.ItemName} x{itm.stackCount}" : itm.ItemName;
+                                if (GUILayout.Button($"+ {itmTitle} ({itm.weightInKG:F1}kg)", GUILayout.Height(20)))
+                                {
+                                    localTradeItems.Add(itm);
+                                    localTradeLocked = false;
+                                    localTradeAccepted = false;
+                                    SyncLocalTradeStateToPartner();
+                                }
+                                GUILayout.EndHorizontal();
+                            }
+                        }
+                    }
+                    if (addedAny == 0)
+                    {
+                        GUILayout.Label("<color=#AAAAAA><i>No tienes más ítems transferibles.</i></color>");
+                    }
+                    GUILayout.EndScrollView();
+                }
+            }
+
+            GUILayout.Space(6);
+            string myLockStr = localTradeLocked 
+                ? "<color=#88FF88><b>[x] OFERTA BLOQUEADA</b></color>" 
+                : "<color=#FFDD44><b>[ ] MODIFICANDO OFERTA...</b></color>";
+            GUILayout.Label(myLockStr);
+            if (localTradeAccepted)
+            {
+                GUILayout.Label("<color=#44FF44><b>[v] HAS ACEPTADO EL INTERCAMBIO</b></color>");
+            }
+            GUILayout.EndVertical();
+
+            GUILayout.Space(10);
+
+            // ==========================================
+            // RIGHT COLUMN: OFERTA DEL COMPAÑERO (305px)
+            // ==========================================
+            GUILayout.BeginVertical(GUI.skin.box, GUILayout.Width(305));
+            GUILayout.Label($"<b>--- OFERTA DE {activeTradePartnerName.ToUpper()} ---</b>");
+
+            // Remote gold
+            GUILayout.Label($"Oro a recibir: <color=#FFD700>{remoteTradeGold} gp</color>");
+            GUILayout.Space(26);
+
+            float totalRemoteWeight = 0f;
+            foreach (var itm in remoteTradeItems) if (itm != null) totalRemoteWeight += itm.weight;
+            GUILayout.Label($"<b>Ítems Ofertados:</b> {remoteTradeItems.Count} ({totalRemoteWeight:F1} kg)");
+
+            remoteOfferScrollPos = GUILayout.BeginScrollView(remoteOfferScrollPos, GUILayout.Height(130));
+            if (remoteTradeItems.Count == 0)
+            {
+                GUILayout.Label("<color=#888888><i>El compañero no ha ofrecido ítems</i></color>");
+            }
+            else
+            {
+                foreach (var itm in remoteTradeItems)
+                {
+                    if (itm == null) continue;
+                    string itmTitle = itm.stackCount > 1 ? $"{itm.name} x{itm.stackCount}" : itm.name;
+                    GUILayout.Label($"• {itmTitle} ({itm.weight:F1}kg)");
+                }
+            }
+            GUILayout.EndScrollView();
+
+            GUILayout.Space(104);
+
+            GUILayout.Space(6);
+            string theirLockStr = remoteTradeLocked 
+                ? "<color=#88FF88><b>[x] OFERTA BLOQUEADA</b></color>" 
+                : "<color=#FF8888><b>[ ] MODIFICANDO OFERTA...</b></color>";
+            GUILayout.Label(theirLockStr);
+            if (remoteTradeAccepted)
+            {
+                GUILayout.Label("<color=#44FF44><b>[v] COMPAÑERO LISTO PARA INTERCAMBIAR</b></color>");
+            }
+            else
+            {
+                GUILayout.Label("<color=#AAAAAA><i>Esperando confirmación...</i></color>");
+            }
+            GUILayout.EndVertical();
+
+            GUILayout.EndHorizontal();
+
+            GUILayout.Space(10);
+
+            // ==========================================
+            // BOTTOM ACTION BAR
+            // ==========================================
+            GUILayout.BeginHorizontal();
+
+            if (!localTradeLocked)
+            {
+                if (GUILayout.Button("Bloquear Oferta", GUILayout.Height(32)))
+                {
+                    localTradeLocked = true;
+                    localTradeAccepted = false;
+                    SyncLocalTradeStateToPartner();
+                }
+            }
+            else if (!localTradeAccepted)
+            {
+                if (GUILayout.Button("Desbloquear Oferta", GUILayout.Height(32)))
+                {
+                    localTradeLocked = false;
+                    localTradeAccepted = false;
+                    SyncLocalTradeStateToPartner();
+                }
+            }
+
+            GUI.enabled = (localTradeLocked && remoteTradeLocked && !localTradeAccepted);
+            string acceptBtnText = localTradeAccepted ? "Esperando al Compañero..." : "Aceptar Intercambio";
+            if (GUILayout.Button(acceptBtnText, GUILayout.Height(32)))
+            {
+                AcceptLocalTrade();
+            }
+            GUI.enabled = true;
+
+            if (GUILayout.Button("Cancelar Comercio", GUILayout.Height(32), GUILayout.Width(140)))
+            {
+                CancelTrade("Comercio cancelado por el jugador.");
+            }
+
+            GUILayout.EndHorizontal();
+
+            GUI.DragWindow(new Rect(0, 0, 10000, 20));
+        }
+
+        private void AddLocalTradeGold(int amount, int maxGold)
+        {
+            localTradeGold = Mathf.Clamp(localTradeGold + amount, 0, maxGold);
+            localTradeLocked = false;
+            localTradeAccepted = false;
+            SyncLocalTradeStateToPartner();
+        }
+
+        private void SetLocalTradeGold(int amount, int maxGold)
+        {
+            localTradeGold = Mathf.Clamp(amount, 0, maxGold);
+            localTradeLocked = false;
+            localTradeAccepted = false;
+            SyncLocalTradeStateToPartner();
+        }
+
+        private void ResetTradeOfferState()
+        {
+            localTradeGold = 0;
+            localTradeItems.Clear();
+            localTradeLocked = false;
+            localTradeAccepted = false;
+            showInventoryPicker = false;
+
+            remoteTradeGold = 0;
+            remoteTradeItems.Clear();
+            remoteTradeLocked = false;
+            remoteTradeAccepted = false;
+
+            activeTradePartnerConnId = -1;
+            activeTradePartnerName = "";
+            activeTradePartnerPuppet = null;
+        }
+
+        public void InitiateTradeInvite(NativePlayerPuppet targetPuppet)
+        {
+            if (targetPuppet == null)
+                return;
+
+            showPlayerInteractionWindow = false;
+
+            activeTradePartnerConnId = targetPuppet.connectionId;
+            activeTradePartnerName = targetPuppet.playerName;
+            activeTradePartnerPuppet = targetPuppet;
+
+            string myName = (GameManager.Instance.PlayerEntity != null) ? GameManager.Instance.PlayerEntity.Name : "Jugador";
+
+            MsgTradeInvite msg = new MsgTradeInvite
+            {
+                senderConnectionId = localConnectionId,
+                senderName = myName,
+                targetConnectionId = targetPuppet.connectionId
+            };
+
+            if (NetworkSession.IsHost)
+            {
+                if (connectedClients != null)
+                {
+                    foreach (NetworkConnectionToClient conn in connectedClients)
+                    {
+                        if (conn != null && conn.connectionId == targetPuppet.connectionId)
+                        {
+                            conn.Send(msg);
+                            break;
+                        }
+                    }
+                }
+            }
+            else if (NetworkClient.isConnected)
+            {
+                NetworkClient.Send(msg);
+            }
+
+            DaggerfallUI.AddHUDText($"[Comercio] Solicitud enviada a {targetPuppet.playerName}. Esperando respuesta...");
+        }
+
+        public void RespondToTradeInvite(int senderConnId, bool accepted)
+        {
+            string myName = (GameManager.Instance.PlayerEntity != null) ? GameManager.Instance.PlayerEntity.Name : "Jugador";
+
+            MsgTradeInviteResponse resp = new MsgTradeInviteResponse
+            {
+                senderConnectionId = localConnectionId,
+                senderName = myName,
+                targetConnectionId = senderConnId,
+                accepted = accepted
+            };
+
+            if (NetworkSession.IsHost)
+            {
+                if (connectedClients != null)
+                {
+                    foreach (NetworkConnectionToClient conn in connectedClients)
+                    {
+                        if (conn != null && conn.connectionId == senderConnId)
+                        {
+                            conn.Send(resp);
+                            break;
+                        }
+                    }
+                }
+            }
+            else if (NetworkClient.isConnected)
+            {
+                NetworkClient.Send(resp);
+            }
+
+            if (accepted)
+            {
+                ResetTradeOfferState();
+                activeTradePartnerConnId = senderConnId;
+                activeTradePartnerName = pendingTradeInviteSenderName;
+                remotePlayerPuppets.TryGetValue(senderConnId, out activeTradePartnerPuppet);
+
+                showTradeWindow = true;
+                tradeWindowRect.x = (Screen.width - tradeWindowRect.width) * 0.5f;
+                tradeWindowRect.y = (Screen.height - tradeWindowRect.height) * 0.5f;
+
+                DaggerfallUI.AddHUDText($"[Comercio] Iniciando comercio con {activeTradePartnerName}.");
+            }
+            else
+            {
+                DaggerfallUI.AddHUDText("[Comercio] Solicitud rechazada.");
+            }
+        }
+
+        public void SyncLocalTradeStateToPartner()
+        {
+            TradeOfferBundle bundle = new TradeOfferBundle();
+            foreach (var itm in localTradeItems)
+            {
+                if (itm != null)
+                {
+                    bundle.items.Add(new TradeItemDTO
+                    {
+                        uid = itm.UID,
+                        name = itm.ItemName,
+                        weight = itm.weightInKG,
+                        stackCount = itm.stackCount,
+                        value = itm.value
+                    });
+                }
+            }
+
+            string json = JsonUtility.ToJson(bundle);
+
+            MsgTradeStateSync msg = new MsgTradeStateSync
+            {
+                senderConnectionId = localConnectionId,
+                targetConnectionId = activeTradePartnerConnId,
+                gold = localTradeGold,
+                offerItemsJson = json,
+                isLocked = localTradeLocked,
+                isAccepted = localTradeAccepted
+            };
+
+            if (NetworkSession.IsHost)
+            {
+                if (activeTradePartnerConnId != 0 && connectedClients != null)
+                {
+                    foreach (NetworkConnectionToClient conn in connectedClients)
+                    {
+                        if (conn != null && conn.connectionId == activeTradePartnerConnId)
+                        {
+                            conn.Send(msg);
+                            break;
+                        }
+                    }
+                }
+            }
+            else if (NetworkClient.isConnected)
+            {
+                NetworkClient.Send(msg);
+            }
+        }
+
+        public void AcceptLocalTrade()
+        {
+            localTradeAccepted = true;
+            SyncLocalTradeStateToPartner();
+
+            ItemData_v1[] itemArray = new ItemData_v1[localTradeItems.Count];
+            for (int i = 0; i < localTradeItems.Count; i++)
+            {
+                itemArray[i] = localTradeItems[i].GetSaveData();
+            }
+            string itemsJson = SaveLoadManager.Serialize(typeof(ItemData_v1[]), itemArray, false);
+
+            MsgTradeCommit commit = new MsgTradeCommit
+            {
+                senderConnectionId = localConnectionId,
+                targetConnectionId = activeTradePartnerConnId,
+                offeredGold = localTradeGold,
+                offeredItemsJson = itemsJson
+            };
+
+            if (NetworkSession.IsHost)
+            {
+                OnServerReceiveTradeCommit(null, commit);
+            }
+            else if (NetworkClient.isConnected)
+            {
+                NetworkClient.Send(commit);
+            }
+
+            DaggerfallUI.AddHUDText("[Comercio] Has aceptado el intercambio. Esperando confirmación del servidor...");
+        }
+
+        public void CancelTrade(string reason)
+        {
+            MsgTradeCancel msg = new MsgTradeCancel
+            {
+                senderConnectionId = localConnectionId,
+                targetConnectionId = activeTradePartnerConnId,
+                reason = reason
+            };
+
+            if (NetworkSession.IsHost)
+            {
+                OnServerReceiveTradeCancel(null, msg);
+            }
+            else if (NetworkClient.isConnected)
+            {
+                NetworkClient.Send(msg);
+            }
+
+            showTradeWindow = false;
+            showTradeInvitePrompt = false;
+            ResetTradeOfferState();
+            DaggerfallUI.AddHUDText($"[Comercio] {reason}");
+        }
+
+        private void OnServerReceiveTradeInvite(NetworkConnection conn, MsgTradeInvite msg)
+        {
+            if (!NetworkSession.IsHost) return;
+
+            int senderId = (conn != null) ? conn.connectionId : msg.senderConnectionId;
+            msg.senderConnectionId = senderId;
+
+            if (msg.targetConnectionId == 0)
+            {
+                OnClientReceiveTradeInvite(msg);
+            }
+            else
+            {
+                SendToConnection(msg.targetConnectionId, msg);
+            }
+        }
+
+        private void OnServerReceiveTradeInviteResponse(NetworkConnection conn, MsgTradeInviteResponse msg)
+        {
+            if (!NetworkSession.IsHost) return;
+
+            int senderId = (conn != null) ? conn.connectionId : msg.senderConnectionId;
+            msg.senderConnectionId = senderId;
+
+            if (msg.targetConnectionId == 0)
+            {
+                OnClientReceiveTradeInviteResponse(msg);
+            }
+            else
+            {
+                SendToConnection(msg.targetConnectionId, msg);
+            }
+        }
+
+        private void OnServerReceiveTradeStateSync(NetworkConnection conn, MsgTradeStateSync msg)
+        {
+            if (!NetworkSession.IsHost) return;
+
+            int senderId = (conn != null) ? conn.connectionId : msg.senderConnectionId;
+            msg.senderConnectionId = senderId;
+
+            if (msg.targetConnectionId == 0)
+            {
+                OnClientReceiveTradeStateSync(msg);
+            }
+            else
+            {
+                SendToConnection(msg.targetConnectionId, msg);
+            }
+        }
+
+        private void OnServerReceiveTradeCancel(NetworkConnection conn, MsgTradeCancel msg)
+        {
+            if (!NetworkSession.IsHost) return;
+
+            int senderId = (conn != null) ? conn.connectionId : msg.senderConnectionId;
+            msg.senderConnectionId = senderId;
+
+            serverPendingTradeCommits.Remove(senderId);
+            serverPendingTradeCommits.Remove(msg.targetConnectionId);
+
+            if (msg.targetConnectionId == 0)
+            {
+                OnClientReceiveTradeCancel(msg);
+            }
+            else
+            {
+                SendToConnection(msg.targetConnectionId, msg);
+            }
+        }
+
+        private void OnServerReceiveTradeCommit(NetworkConnection conn, MsgTradeCommit msg)
+        {
+            if (!NetworkSession.IsHost)
+                return;
+
+            int senderId = (conn != null) ? conn.connectionId : msg.senderConnectionId;
+            msg.senderConnectionId = senderId;
+            serverPendingTradeCommits[senderId] = msg;
+
+            LogNetwork($"[DFU Trade] Server received trade commit from conn {senderId} (target conn {msg.targetConnectionId}, gold {msg.offeredGold}).");
+
+            if (serverPendingTradeCommits.TryGetValue(msg.targetConnectionId, out MsgTradeCommit partnerCommit))
+            {
+                if (partnerCommit.targetConnectionId == senderId)
+                {
+                    ServerExecuteTrade(msg, partnerCommit);
+                    serverPendingTradeCommits.Remove(senderId);
+                    serverPendingTradeCommits.Remove(msg.targetConnectionId);
+                }
+            }
+        }
+
+        private void ServerExecuteTrade(MsgTradeCommit commitA, MsgTradeCommit commitB)
+        {
+            LogNetwork($"[DFU Trade] Executing authoritative trade between conn {commitA.senderConnectionId} and conn {commitB.senderConnectionId}.");
+
+            if (commitA.senderConnectionId == 0)
+            {
+                ApplyTradeToLocalPlayer(commitA.offeredGold, commitA.offeredItemsJson, commitB.offeredGold, commitB.offeredItemsJson);
+            }
+            else
+            {
+                MsgTradeCompleted compA = new MsgTradeCompleted
+                {
+                    success = true,
+                    message = "¡Intercambio completado con éxito!",
+                    receivedGold = commitB.offeredGold,
+                    receivedItemsJson = commitB.offeredItemsJson
+                };
+                SendToConnection(commitA.senderConnectionId, compA);
+            }
+
+            if (commitB.senderConnectionId == 0)
+            {
+                ApplyTradeToLocalPlayer(commitB.offeredGold, commitB.offeredItemsJson, commitA.offeredGold, commitA.offeredItemsJson);
+            }
+            else
+            {
+                MsgTradeCompleted compB = new MsgTradeCompleted
+                {
+                    success = true,
+                    message = "¡Intercambio completado con éxito!",
+                    receivedGold = commitA.offeredGold,
+                    receivedItemsJson = commitA.offeredItemsJson
+                };
+                SendToConnection(commitB.senderConnectionId, compB);
+            }
+        }
+
+        private void ApplyTradeToLocalPlayer(int goldGiven, string itemsGivenJson, int goldReceived, string itemsReceivedJson)
+        {
+            var playerEntity = GameManager.Instance.PlayerEntity;
+            if (playerEntity == null)
+                return;
+
+            playerEntity.GoldPieces = Mathf.Max(0, playerEntity.GoldPieces - goldGiven);
+
+            if (!string.IsNullOrEmpty(itemsGivenJson))
+            {
+                ItemData_v1[] givenArray = (ItemData_v1[])SaveLoadManager.Deserialize(typeof(ItemData_v1[]), itemsGivenJson);
+                if (givenArray != null)
+                {
+                    foreach (var itmData in givenArray)
+                    {
+                        var itm = playerEntity.Items.GetItem(itmData.uid);
+                        if (itm != null)
+                        {
+                            playerEntity.Items.RemoveItem(itm);
+                        }
+                    }
+                }
+            }
+
+            playerEntity.GoldPieces += goldReceived;
+
+            if (!string.IsNullOrEmpty(itemsReceivedJson))
+            {
+                ItemData_v1[] receivedArray = (ItemData_v1[])SaveLoadManager.Deserialize(typeof(ItemData_v1[]), itemsReceivedJson);
+                if (receivedArray != null)
+                {
+                    foreach (var itmData in receivedArray)
+                    {
+                        DaggerfallUnityItem newItem = new DaggerfallUnityItem(itmData);
+                        if (playerEntity.Items.Contains(newItem.UID))
+                        {
+                            newItem = newItem.Clone();
+                        }
+                        playerEntity.Items.AddItem(newItem);
+                    }
+                }
+            }
+
+            DaggerfallUI.AddHUDText("[Comercio] ¡Intercambio completado con éxito!");
+            showTradeWindow = false;
+            ResetTradeOfferState();
+        }
+
+        private void SendToConnection<T>(int connectionId, T msg) where T : struct, NetworkMessage
+        {
+            if (connectedClients != null)
+            {
+                foreach (NetworkConnectionToClient conn in connectedClients)
+                {
+                    if (conn != null && conn.connectionId == connectionId)
+                    {
+                        conn.Send(msg);
+                        break;
+                    }
+                }
+            }
+        }
+
+        private void OnClientReceiveTradeInvite(MsgTradeInvite msg)
+        {
+            pendingTradeInviteSenderConnId = msg.senderConnectionId;
+            pendingTradeInviteSenderName = msg.senderName;
+            tradeInviteTimeout = 25f;
+            showTradeInvitePrompt = true;
+            tradeInviteRect.x = (Screen.width - tradeInviteRect.width) * 0.5f;
+            tradeInviteRect.y = 120;
+            DaggerfallUI.AddHUDText($"[Comercio] Solicitud de intercambio recibida de {msg.senderName}.");
+        }
+
+        private void OnClientReceiveTradeInviteResponse(MsgTradeInviteResponse msg)
+        {
+            if (msg.accepted)
+            {
+                ResetTradeOfferState();
+                activeTradePartnerConnId = msg.senderConnectionId;
+                activeTradePartnerName = msg.senderName;
+                remotePlayerPuppets.TryGetValue(msg.senderConnectionId, out activeTradePartnerPuppet);
+
+                showTradeWindow = true;
+                tradeWindowRect.x = (Screen.width - tradeWindowRect.width) * 0.5f;
+                tradeWindowRect.y = (Screen.height - tradeWindowRect.height) * 0.5f;
+
+                DaggerfallUI.AddHUDText($"[Comercio] ¡{msg.senderName} aceptó la solicitud de comercio!");
+            }
+            else
+            {
+                showTradeWindow = false;
+                ResetTradeOfferState();
+                DaggerfallUI.AddHUDText($"[Comercio] {msg.senderName} rechazó la solicitud de intercambio.");
+            }
+        }
+
+        private void OnClientReceiveTradeStateSync(MsgTradeStateSync msg)
+        {
+            if (!showTradeWindow || msg.senderConnectionId != activeTradePartnerConnId)
+                return;
+
+            remoteTradeGold = msg.gold;
+            remoteTradeLocked = msg.isLocked;
+            remoteTradeAccepted = msg.isAccepted;
+
+            remoteTradeItems.Clear();
+            if (!string.IsNullOrEmpty(msg.offerItemsJson))
+            {
+                try
+                {
+                    TradeOfferBundle bundle = JsonUtility.FromJson<TradeOfferBundle>(msg.offerItemsJson);
+                    if (bundle != null && bundle.items != null)
+                    {
+                        remoteTradeItems.AddRange(bundle.items);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    LogNetwork($"[DFU Trade] Error parsing remote trade items: {ex.Message}");
+                }
+            }
+
+            if (!remoteTradeLocked)
+            {
+                localTradeAccepted = false;
+            }
+        }
+
+        private void OnClientReceiveTradeCancel(MsgTradeCancel msg)
+        {
+            showTradeWindow = false;
+            showTradeInvitePrompt = false;
+            ResetTradeOfferState();
+            DaggerfallUI.AddHUDText($"[Comercio] El compañero canceló el intercambio: {msg.reason}");
+        }
+
+        private void OnClientReceiveTradeCompleted(MsgTradeCompleted msg)
+        {
+            if (NetworkSession.IsHost && localConnectionId == 0)
+                return;
+
+            if (msg.success)
+            {
+                var playerEntity = GameManager.Instance.PlayerEntity;
+                if (playerEntity != null)
+                {
+                    playerEntity.GoldPieces = Mathf.Max(0, playerEntity.GoldPieces - localTradeGold);
+
+                    foreach (var itm in localTradeItems)
+                    {
+                        if (itm != null)
+                            playerEntity.Items.RemoveItem(itm);
+                    }
+
+                    playerEntity.GoldPieces += msg.receivedGold;
+
+                    if (!string.IsNullOrEmpty(msg.receivedItemsJson))
+                    {
+                        ItemData_v1[] receivedArray = (ItemData_v1[])SaveLoadManager.Deserialize(typeof(ItemData_v1[]), msg.receivedItemsJson);
+                        if (receivedArray != null)
+                        {
+                            foreach (var itmData in receivedArray)
+                            {
+                                DaggerfallUnityItem newItem = new DaggerfallUnityItem(itmData);
+                                if (playerEntity.Items.Contains(newItem.UID))
+                                {
+                                    newItem = newItem.Clone();
+                                }
+                                playerEntity.Items.AddItem(newItem);
+                            }
+                        }
+                    }
+                }
+
+                DaggerfallUI.AddHUDText("[Comercio] ¡Intercambio completado con éxito!");
+            }
+            else
+            {
+                DaggerfallUI.AddHUDText($"[Comercio] Falló el intercambio: {msg.message}");
+            }
+
+            showTradeWindow = false;
+            ResetTradeOfferState();
         }
 
         #endregion
