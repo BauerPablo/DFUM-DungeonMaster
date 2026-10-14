@@ -417,7 +417,14 @@ namespace DaggerfallWorkshop.Game
                         missile.IsArrow = true;
                         missile.IsArrowSummoned = isArrowSummoned;
 
-                        lastBowUsed = usingRightHand ? currentRightHandWeapon : currentLeftHandWeapon;;
+                        lastBowUsed = usingRightHand ? currentRightHandWeapon : currentLeftHandWeapon;
+
+                        if (DFUNetworkManager.Instance != null && NetworkSession.IsActive)
+                        {
+                            Vector3 origin = GameManager.Instance.MainCamera != null ? GameManager.Instance.MainCamera.transform.position : transform.position;
+                            Vector3 dir = GameManager.Instance.MainCamera != null ? GameManager.Instance.MainCamera.transform.forward : transform.forward;
+                            DFUNetworkManager.Instance.BroadcastArrowShot(origin, dir, isArrowSummoned ? 1 : 0);
+                        }
                     }
                 }
 

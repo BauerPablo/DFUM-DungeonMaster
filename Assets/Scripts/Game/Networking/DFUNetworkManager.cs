@@ -103,7 +103,7 @@ namespace DaggerfallWorkshop.Game.Networking
 
         // P2P Interactive Player Menu & Map Sharing
         public bool showPlayerInteractionWindow = false;
-        private Rect playerInteractionWindowRect = new Rect(Screen.width / 2 - 160, Screen.height / 2 - 110, 320, 220);
+        private Rect playerInteractionWindowRect = new Rect((Screen.width - 380) * 0.5f, (Screen.height - 270) * 0.5f, 380, 270);
         private NativePlayerPuppet interactionTargetPuppet = null;
 
         // Party Reputation Inspector state
@@ -113,14 +113,19 @@ namespace DaggerfallWorkshop.Game.Networking
         // Bilateral Trading System State
         public bool showTradeWindow = false;
         public bool showTradeInvitePrompt = false;
-        private Rect tradeWindowRect = new Rect((Screen.width - 640) * 0.5f, (Screen.height - 480) * 0.5f, 640, 480);
-        private Rect tradeInviteRect = new Rect((Screen.width - 340) * 0.5f, 120, 340, 150);
+        private Rect tradeWindowRect = new Rect((Screen.width - 720) * 0.5f, (Screen.height - 560) * 0.5f, 720, 560);
+        private Rect tradeInviteRect = new Rect((Screen.width - 420) * 0.5f, 120, 420, 185);
         private int activeTradePartnerConnId = -1;
         private string activeTradePartnerName = "";
         private NativePlayerPuppet activeTradePartnerPuppet = null;
         private float tradeInviteTimeout = 0f;
         private int pendingTradeInviteSenderConnId = -1;
         private string pendingTradeInviteSenderName = "";
+
+        // DM Spell Teaching State
+        private int selectedDmSpellTargetIndex = 0;
+        private string dmSpellFilter = "";
+        private Vector2 dmSpellListScrollPos;
 
         // Local trade offer state
         private int localTradeGold = 0;
@@ -528,6 +533,7 @@ namespace DaggerfallWorkshop.Game.Networking
             NetworkServer.RegisterHandler<MsgTradeCommit>(OnServerReceiveTradeCommit);
             NetworkServer.RegisterHandler<MsgCastSpell>(OnServerReceiveCastSpell);
             NetworkServer.RegisterHandler<MsgApplySpellBundle>(OnServerReceiveApplySpellBundle);
+            NetworkServer.RegisterHandler<MsgArrowShot>(OnServerReceiveArrowShot);
             GameManager.OnEnemySpawn += OnServerEnemySpawned;
             WeatherManager.OnWeatherChange += OnServerWeatherChanged;
             worldTimeSyncTimer = 0f;
@@ -570,6 +576,7 @@ namespace DaggerfallWorkshop.Game.Networking
             NetworkServer.UnregisterHandler<MsgTradeCommit>();
             NetworkServer.UnregisterHandler<MsgCastSpell>();
             NetworkServer.UnregisterHandler<MsgApplySpellBundle>();
+            NetworkServer.UnregisterHandler<MsgArrowShot>();
             serverPendingTradeCommits.Clear();
             activeDialogueBubbles.Clear();
             remotePlayerReputations.Clear();
@@ -744,6 +751,8 @@ namespace DaggerfallWorkshop.Game.Networking
             NetworkClient.RegisterHandler<MsgCastSpell>(OnClientReceiveCastSpell);
             NetworkClient.RegisterHandler<MsgApplySpellBundle>(OnClientReceiveApplySpellBundle);
             NetworkClient.RegisterHandler<MsgPvpStateSync>(OnClientReceivePvpStateSync);
+            NetworkClient.RegisterHandler<MsgArrowShot>(OnClientReceiveArrowShot);
+            NetworkClient.RegisterHandler<MsgTeachSpell>(OnClientReceiveTeachSpell);
         }
 
         public override void OnStopClient()
@@ -787,6 +796,8 @@ namespace DaggerfallWorkshop.Game.Networking
             NetworkClient.UnregisterHandler<MsgCastSpell>();
             NetworkClient.UnregisterHandler<MsgApplySpellBundle>();
             NetworkClient.UnregisterHandler<MsgPvpStateSync>();
+            NetworkClient.UnregisterHandler<MsgArrowShot>();
+            NetworkClient.UnregisterHandler<MsgTeachSpell>();
             activeDialogueBubbles.Clear();
             ClosePartyVoteWindow();
             showPlayerInteractionWindow = false;
@@ -3045,6 +3056,88 @@ namespace DaggerfallWorkshop.Game.Networking
                 if (newPvp != isPvpAllowed)
                 {
                     SetPvpAllowed(newPvp);
+                }
+
+                GUILayout.Space(8);
+                GUILayout.Label("<b>--- Grant / Teach Spells ---</b>");
+                GUILayout.Label("Teach spells to yourself or connected party members:");
+
+                List<int> targetOptions = new List<int> { 0 };
+                List<string> targetNames = new List<string> { "Self (Host/DM)" };
+                foreach (var kvp in connectedPlayerProfiles)
+                {
+                    if (kvp.Key != 0)
+                    {
+                        targetOptions.Add(kvp.Key);
+                        targetNames.Add($"{kvp.Value.playerName} (ID {kvp.Key})");
+                    }
+                }
+
+                GUILayout.BeginHorizontal();
+                GUILayout.Label("Target:", GUILayout.Width(45));
+                if (GUILayout.Button("<", GUILayout.Width(24)) && selectedDmSpellTargetIndex > 0)
+                    selectedDmSpellTargetIndex--;
+                selectedDmSpellTargetIndex = Mathf.Clamp(selectedDmSpellTargetIndex, 0, targetOptions.Count - 1);
+                GUILayout.Label($"<b>{targetNames[selectedDmSpellTargetIndex]}</b>", GUILayout.ExpandWidth(true));
+                if (GUILayout.Button(">", GUILayout.Width(24)) && selectedDmSpellTargetIndex < targetOptions.Count - 1)
+                    selectedDmSpellTargetIndex++;
+                GUILayout.EndHorizontal();
+
+                int targetConnId = targetOptions[selectedDmSpellTargetIndex];
+
+                GUILayout.Space(4);
+                GUILayout.Label("Quick Spells:");
+                GUILayout.BeginHorizontal();
+                if (GUILayout.Button("Fireball")) TeachDmSpellToTarget(targetConnId, "Fireball");
+                if (GUILayout.Button("Wizard's Fire")) TeachDmSpellToTarget(targetConnId, "Wizard's Fire");
+                if (GUILayout.Button("Shock")) TeachDmSpellToTarget(targetConnId, "Shock");
+                GUILayout.EndHorizontal();
+
+                GUILayout.BeginHorizontal();
+                if (GUILayout.Button("Ice Storm")) TeachDmSpellToTarget(targetConnId, "Ice Storm");
+                if (GUILayout.Button("Toxic Cloud")) TeachDmSpellToTarget(targetConnId, "Toxic Cloud");
+                if (GUILayout.Button("Levitate")) TeachDmSpellToTarget(targetConnId, "Levitate");
+                GUILayout.EndHorizontal();
+
+                GUILayout.BeginHorizontal();
+                if (GUILayout.Button("Free Action")) TeachDmSpellToTarget(targetConnId, "Free Action");
+                if (GUILayout.Button("Heal")) TeachDmSpellToTarget(targetConnId, "Heal");
+                if (GUILayout.Button("Invisibility")) TeachDmSpellToTarget(targetConnId, "Invisibility (Normal)");
+                GUILayout.EndHorizontal();
+
+                GUILayout.BeginHorizontal();
+                if (GUILayout.Button("Cure Poison")) TeachDmSpellToTarget(targetConnId, "Cure Poison");
+                if (GUILayout.Button("Light")) TeachDmSpellToTarget(targetConnId, "Light");
+                if (GUILayout.Button("Open")) TeachDmSpellToTarget(targetConnId, "Open");
+                GUILayout.EndHorizontal();
+
+                GUILayout.Space(4);
+                GUILayout.BeginHorizontal();
+                GUILayout.Label("Search:", GUILayout.Width(50));
+                dmSpellFilter = GUILayout.TextField(dmSpellFilter ?? "", GUILayout.ExpandWidth(true));
+                if (GUILayout.Button("X", GUILayout.Width(22))) dmSpellFilter = "";
+                GUILayout.EndHorizontal();
+
+                if (!string.IsNullOrEmpty(dmSpellFilter) && dmSpellFilter.Length >= 2 && GameManager.Instance.EntityEffectBroker != null)
+                {
+                    dmSpellListScrollPos = GUILayout.BeginScrollView(dmSpellListScrollPos, GUILayout.Height(100));
+                    int matches = 0;
+                    foreach (var s in GameManager.Instance.EntityEffectBroker.StandardSpells)
+                    {
+                        if (!string.IsNullOrEmpty(s.spellName) && !s.spellName.StartsWith("!") &&
+                            s.spellName.IndexOf(dmSpellFilter, StringComparison.OrdinalIgnoreCase) >= 0)
+                        {
+                            matches++;
+                            if (GUILayout.Button($"Teach: {s.spellName}"))
+                            {
+                                TeachDmSpellToTarget(targetConnId, s.spellName, s.index);
+                            }
+                            if (matches >= 20) break;
+                        }
+                    }
+                    if (matches == 0)
+                        GUILayout.Label("<color=#888888><i>No matching spells found.</i></color>");
+                    GUILayout.EndScrollView();
                 }
             }
 
@@ -5424,6 +5517,8 @@ namespace DaggerfallWorkshop.Game.Networking
 
             interactionTargetPuppet = puppet;
             showPlayerInteractionWindow = true;
+            playerInteractionWindowRect.width = 380;
+            playerInteractionWindowRect.height = 270;
             playerInteractionWindowRect.x = (Screen.width - playerInteractionWindowRect.width) * 0.5f;
             playerInteractionWindowRect.y = (Screen.height - playerInteractionWindowRect.height) * 0.5f;
         }
@@ -5726,9 +5821,9 @@ namespace DaggerfallWorkshop.Game.Networking
             GUILayout.BeginHorizontal();
 
             // ==========================================
-            // LEFT COLUMN: TU OFERTA (305px)
+            // LEFT COLUMN: TU OFERTA (345px)
             // ==========================================
-            GUILayout.BeginVertical(GUI.skin.box, GUILayout.Width(305));
+            GUILayout.BeginVertical(GUI.skin.box, GUILayout.Width(345));
             GUILayout.Label("<b>--- TU OFERTA ---</b>");
 
             // Gold offer
@@ -5832,9 +5927,9 @@ namespace DaggerfallWorkshop.Game.Networking
             GUILayout.Space(10);
 
             // ==========================================
-            // RIGHT COLUMN: OFERTA DEL COMPAÑERO (305px)
+            // RIGHT COLUMN: OFERTA DEL COMPAÑERO (345px)
             // ==========================================
-            GUILayout.BeginVertical(GUI.skin.box, GUILayout.Width(305));
+            GUILayout.BeginVertical(GUI.skin.box, GUILayout.Width(345));
             GUILayout.Label($"<b>--- OFERTA DE {activeTradePartnerName.ToUpper()} ---</b>");
 
             // Remote gold
@@ -5861,7 +5956,7 @@ namespace DaggerfallWorkshop.Game.Networking
             }
             GUILayout.EndScrollView();
 
-            GUILayout.Space(104);
+            GUILayout.FlexibleSpace();
 
             GUILayout.Space(6);
             string theirLockStr = remoteTradeLocked 
@@ -5880,7 +5975,7 @@ namespace DaggerfallWorkshop.Game.Networking
 
             GUILayout.EndHorizontal();
 
-            GUILayout.Space(10);
+            GUILayout.FlexibleSpace();
 
             // ==========================================
             // BOTTOM ACTION BAR
@@ -6039,6 +6134,8 @@ namespace DaggerfallWorkshop.Game.Networking
                 remotePlayerPuppets.TryGetValue(senderConnId, out activeTradePartnerPuppet);
 
                 showTradeWindow = true;
+                tradeWindowRect.width = 720;
+                tradeWindowRect.height = 560;
                 tradeWindowRect.x = (Screen.width - tradeWindowRect.width) * 0.5f;
                 tradeWindowRect.y = (Screen.height - tradeWindowRect.height) * 0.5f;
 
@@ -6355,6 +6452,8 @@ namespace DaggerfallWorkshop.Game.Networking
             pendingTradeInviteSenderName = msg.senderName;
             tradeInviteTimeout = 25f;
             showTradeInvitePrompt = true;
+            tradeInviteRect.width = 420;
+            tradeInviteRect.height = 185;
             tradeInviteRect.x = (Screen.width - tradeInviteRect.width) * 0.5f;
             tradeInviteRect.y = 120;
             DaggerfallUI.AddHUDText($"[Comercio] Solicitud de intercambio recibida de {msg.senderName}.");
@@ -6370,6 +6469,8 @@ namespace DaggerfallWorkshop.Game.Networking
                 remotePlayerPuppets.TryGetValue(msg.senderConnectionId, out activeTradePartnerPuppet);
 
                 showTradeWindow = true;
+                tradeWindowRect.width = 720;
+                tradeWindowRect.height = 560;
                 tradeWindowRect.x = (Screen.width - tradeWindowRect.width) * 0.5f;
                 tradeWindowRect.y = (Screen.height - tradeWindowRect.height) * 0.5f;
 
@@ -7063,17 +7164,23 @@ namespace DaggerfallWorkshop.Game.Networking
                         poolItem.active = true;
                         poolItem.scheduleEnable = false;
                         poolItem.scheduleRecycle = false;
-                        if (poolItem.npc.Motor != null)
-                        {
-                            poolItem.npc.Motor.isClientProxy = true;
-                        }
-                        poolItem.npc.ApplyNetworkPerson((Races)civ.race, (Genders)civ.gender, civ.outfitVariant, civ.isGuard, civ.faceRecordId, civ.nameNPC);
                     }
 
                     if (poolItem.npc.Motor != null)
                     {
                         poolItem.npc.Motor.isClientProxy = true;
                         poolItem.npc.Motor.SetNetworkTarget(civ.position, civ.isIdle, civ.moveCount);
+                    }
+
+                    // Synchronize identity and appearance whenever any attribute differs
+                    if (poolItem.npc.NameNPC != civ.nameNPC ||
+                        poolItem.npc.PersonFaceRecordId != civ.faceRecordId ||
+                        poolItem.npc.Gender != (Genders)civ.gender ||
+                        poolItem.npc.Race != (Races)civ.race ||
+                        poolItem.npc.PersonOutfitVariant != civ.outfitVariant ||
+                        poolItem.npc.IsGuard != civ.isGuard)
+                    {
+                        poolItem.npc.ApplyNetworkPerson((Races)civ.race, (Genders)civ.gender, civ.outfitVariant, civ.isGuard, civ.faceRecordId, civ.nameNPC);
                     }
 
                     if (poolItem.npc.Asset != null)
@@ -7274,11 +7381,35 @@ namespace DaggerfallWorkshop.Game.Networking
                         {
                             missile.TargetType = msg.targetType;
                             missile.ElementType = msg.elementType;
-                            missile.CustomAimPosition = msg.origin;
+
+                            Vector3 spawnPos = msg.origin + msg.direction * 0.6f;
+                            missile.CustomAimPosition = spawnPos;
                             missile.CustomAimDirection = msg.direction;
-                            missile.transform.position = msg.origin;
+                            missile.transform.position = spawnPos;
                             missile.Payload = null; // Visual only on remote peers
                             missile.Caster = puppet != null ? puppet.EntityBehaviour : null;
+
+                            Collider col = missile.GetComponent<Collider>();
+                            if (col != null)
+                            {
+                                col.isTrigger = true;
+                                if (puppet != null)
+                                {
+                                    foreach (var c in puppet.GetComponentsInChildren<Collider>())
+                                        if (c != null) Physics.IgnoreCollision(col, c, true);
+                                }
+                                if (GameManager.Instance.PlayerObject != null)
+                                {
+                                    foreach (var c in GameManager.Instance.PlayerObject.GetComponentsInChildren<Collider>())
+                                        if (c != null) Physics.IgnoreCollision(col, c, true);
+                                }
+                            }
+
+                            Rigidbody rb = missile.GetComponent<Rigidbody>();
+                            if (rb != null)
+                            {
+                                rb.isKinematic = true;
+                            }
                         }
                     }
                 }
@@ -7288,6 +7419,255 @@ namespace DaggerfallWorkshop.Game.Networking
                 LogNetwork($"[DFU Magic] Error in PlayRemoteSpellCastVisual: {ex.Message}");
             }
         }
+
+        #region Arrow Projectile Synchronization
+
+        public void BroadcastArrowShot(Vector3 origin, Vector3 direction, int arrowType)
+        {
+            if (!NetworkSession.IsActive)
+                return;
+
+            MsgArrowShot msg = new MsgArrowShot
+            {
+                shooterConnectionId = NetworkSession.IsHost ? 0 : localConnectionId,
+                origin = origin,
+                direction = direction,
+                arrowType = arrowType
+            };
+
+            if (NetworkServer.active)
+            {
+                foreach (var kvp in NetworkServer.connections)
+                {
+                    if (kvp.Value != null && kvp.Value.isReady)
+                    {
+                        kvp.Value.Send(msg);
+                    }
+                }
+            }
+            else if (NetworkClient.isConnected)
+            {
+                NetworkClient.Send(msg);
+            }
+        }
+
+        public void BroadcastEnemyArrowShot(Vector3 origin, Vector3 direction)
+        {
+            if (!NetworkServer.active)
+                return;
+
+            MsgArrowShot msg = new MsgArrowShot
+            {
+                shooterConnectionId = -1,
+                origin = origin,
+                direction = direction,
+                arrowType = 0
+            };
+
+            foreach (var kvp in NetworkServer.connections)
+            {
+                if (kvp.Value != null && kvp.Value.isReady)
+                {
+                    kvp.Value.Send(msg);
+                }
+            }
+        }
+
+        private void OnServerReceiveArrowShot(NetworkConnection conn, MsgArrowShot msg)
+        {
+            try
+            {
+                msg.shooterConnectionId = conn.connectionId;
+                if (NetworkSession.IsHost)
+                {
+                    PlayRemoteArrowShotVisual(msg);
+                }
+
+                foreach (var kvp in NetworkServer.connections)
+                {
+                    if (kvp.Key != conn.connectionId && kvp.Value != null && kvp.Value.isReady)
+                    {
+                        kvp.Value.Send(msg);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                LogNetwork($"[DFU Arrow] Error in OnServerReceiveArrowShot: {ex.Message}");
+            }
+        }
+
+        private void OnClientReceiveArrowShot(MsgArrowShot msg)
+        {
+            try
+            {
+                if (msg.shooterConnectionId == localConnectionId)
+                    return;
+
+                PlayRemoteArrowShotVisual(msg);
+            }
+            catch (Exception ex)
+            {
+                LogNetwork($"[DFU Arrow] Error in OnClientReceiveArrowShot: {ex.Message}");
+            }
+        }
+
+        private void PlayRemoteArrowShotVisual(MsgArrowShot msg)
+        {
+            try
+            {
+                NativePlayerPuppet puppet = null;
+                if (msg.shooterConnectionId >= 0 && remotePlayerPuppets.TryGetValue(msg.shooterConnectionId, out NativePlayerPuppet p))
+                {
+                    puppet = p;
+                }
+
+                if (puppet != null)
+                {
+                    puppet.TriggerAttackAnimation();
+                }
+
+                if (GameManager.Instance.WeaponManager != null && GameManager.Instance.WeaponManager.ArrowMissilePrefab != null)
+                {
+                    DaggerfallMissile arrow = Instantiate(GameManager.Instance.WeaponManager.ArrowMissilePrefab);
+                    if (arrow != null)
+                    {
+                        Vector3 spawnPos = msg.origin + msg.direction * 0.6f;
+                        arrow.CustomAimPosition = spawnPos;
+                        arrow.CustomAimDirection = msg.direction;
+                        arrow.transform.position = spawnPos;
+                        arrow.TargetType = TargetTypes.SingleTargetAtRange;
+                        arrow.ElementType = ElementTypes.None;
+                        arrow.IsArrow = true;
+                        arrow.IsArrowSummoned = (msg.arrowType == 1);
+                        arrow.Payload = null;
+                        arrow.Caster = puppet != null ? puppet.EntityBehaviour : null;
+
+                        Collider col = arrow.GetComponent<Collider>();
+                        if (col != null)
+                        {
+                            col.isTrigger = true;
+                            if (puppet != null)
+                            {
+                                foreach (var c in puppet.GetComponentsInChildren<Collider>())
+                                    if (c != null) Physics.IgnoreCollision(col, c, true);
+                            }
+                            if (GameManager.Instance.PlayerObject != null)
+                            {
+                                foreach (var c in GameManager.Instance.PlayerObject.GetComponentsInChildren<Collider>())
+                                    if (c != null) Physics.IgnoreCollision(col, c, true);
+                            }
+                        }
+
+                        Rigidbody rb = arrow.GetComponent<Rigidbody>();
+                        if (rb != null)
+                        {
+                            rb.isKinematic = true;
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                LogNetwork($"[DFU Arrow] Error in PlayRemoteArrowShotVisual: {ex.Message}");
+            }
+        }
+
+        #endregion
+
+        #region DM Spell Teaching System
+
+        public void TeachDmSpellToTarget(int targetConnId, string spellName, int spellId = -1)
+        {
+            if (GameManager.Instance.EntityEffectBroker == null)
+            {
+                DaggerfallUI.AddHUDText("[DM Spell] EntityEffectBroker no disponible.");
+                return;
+            }
+
+            SpellRecord.SpellRecordData spellData = new SpellRecord.SpellRecordData();
+            bool found = false;
+
+            if (spellId >= 0 && GameManager.Instance.EntityEffectBroker.GetClassicSpellRecord(spellId, out spellData))
+            {
+                found = true;
+            }
+            else
+            {
+                foreach (var s in GameManager.Instance.EntityEffectBroker.StandardSpells)
+                {
+                    if (string.Equals(s.spellName, spellName, StringComparison.OrdinalIgnoreCase) ||
+                        s.spellName.IndexOf(spellName, StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        spellData = s;
+                        found = true;
+                        break;
+                    }
+                }
+            }
+
+            if (!found)
+            {
+                DaggerfallUI.AddHUDText($"[DM Spell] Hechizo '{spellName}' no encontrado.");
+                return;
+            }
+
+            EffectBundleSettings bundle;
+            if (!GameManager.Instance.EntityEffectBroker.ClassicSpellRecordDataToEffectBundleSettings(spellData, BundleTypes.Spell, out bundle))
+            {
+                DaggerfallUI.AddHUDText($"[DM Spell] Error al crear bundle para '{spellName}'.");
+                return;
+            }
+
+            if (targetConnId == 0 || targetConnId == localConnectionId)
+            {
+                if (GameManager.Instance.PlayerEntity != null)
+                {
+                    GameManager.Instance.ItemHelper.AddSpellbookItem(GameManager.Instance.PlayerEntity);
+                    GameManager.Instance.PlayerEntity.AddSpell(bundle);
+                    DaggerfallUI.AddHUDText($"[DM Spell] Aprendiste '{bundle.Name}'. ¡Abre tu Spellbook (B)!");
+                }
+            }
+            else
+            {
+                string json = SaveLoadManager.Serialize(typeof(EffectBundleSettings), bundle, false);
+                MsgTeachSpell msg = new MsgTeachSpell
+                {
+                    targetConnectionId = targetConnId,
+                    spellBundleJson = json
+                };
+
+                if (NetworkServer.active && NetworkServer.connections.TryGetValue(targetConnId, out NetworkConnection conn) && conn != null)
+                {
+                    conn.Send(msg);
+                    string targetName = connectedPlayerProfiles.TryGetValue(targetConnId, out MsgPlayerProfile prof) ? prof.playerName : $"ID {targetConnId}";
+                    DaggerfallUI.AddHUDText($"[DM Spell] Hechizo '{bundle.Name}' otorgado a {targetName}.");
+                }
+            }
+        }
+
+        private void OnClientReceiveTeachSpell(MsgTeachSpell msg)
+        {
+            try
+            {
+                if (GameManager.Instance.PlayerEntity == null)
+                    return;
+
+                EffectBundleSettings bundle = (EffectBundleSettings)SaveLoadManager.Deserialize(typeof(EffectBundleSettings), msg.spellBundleJson);
+                if (bundle.Effects == null || bundle.Effects.Length == 0)
+                    return;
+
+                GameManager.Instance.ItemHelper.AddSpellbookItem(GameManager.Instance.PlayerEntity);
+                GameManager.Instance.PlayerEntity.AddSpell(bundle);
+                DaggerfallUI.AddHUDText($"[DM Magic] ¡El Dungeon Master te ha enseñado '{bundle.Name}'! (Pulsa 'B' para abrir tu Spellbook)");
+            }
+            catch (Exception ex)
+            {
+                LogNetwork($"[DFU Magic] Error in OnClientReceiveTeachSpell: {ex.Message}");
+            }
+        }
+
+        #endregion
 
         /// <summary>
         /// Sends a spell payload bundle to another player (beneficial or harmful if PvP enabled).

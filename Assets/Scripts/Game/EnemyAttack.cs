@@ -16,6 +16,7 @@ using DaggerfallWorkshop.Game.Formulas;
 using DaggerfallWorkshop.Game.UserInterfaceWindows;
 using DaggerfallWorkshop.Game.MagicAndEffects;
 using DaggerfallWorkshop.Game.Utility;
+using DaggerfallWorkshop.Game.Networking;
 
 namespace DaggerfallWorkshop.Game
 {
@@ -238,6 +239,13 @@ namespace DaggerfallWorkshop.Game
                     missile.TargetType = TargetTypes.SingleTargetAtRange;
                     missile.ElementType = ElementTypes.None;
                     missile.IsArrow = true;
+
+                    if (DFUNetworkManager.Instance != null && NetworkSession.IsActive && NetworkSession.IsHost)
+                    {
+                        Vector3 origin = entityBehaviour.transform.position + Vector3.up * 1.2f;
+                        Vector3 dir = enemySenses != null && enemySenses.Target != null ? (enemySenses.LastKnownTargetPos - origin).normalized : entityBehaviour.transform.forward;
+                        DFUNetworkManager.Instance.BroadcastEnemyArrowShot(origin, dir);
+                    }
                 }
             }
         }

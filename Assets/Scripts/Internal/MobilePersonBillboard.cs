@@ -290,6 +290,11 @@ namespace DaggerfallWorkshop
 
         void SetIdle(bool idle)
         {
+            if (idle && currentAnimState == AnimStates.Idle)
+                return;
+            if (!idle && currentAnimState == AnimStates.Move)
+                return;
+
             if (idle)
             {
                 // Switch animation state to idle

@@ -717,6 +717,26 @@ namespace DaggerfallWorkshop.Game.Networking
         public bool isPvpAllowed;
     }
 
+    /// <summary>
+    /// Broadcast when a player or enemy shoots an arrow, replicating visual arrow flight on peers.
+    /// </summary>
+    public struct MsgArrowShot : NetworkMessage
+    {
+        public int shooterConnectionId;
+        public Vector3 origin;
+        public Vector3 direction;
+        public int arrowType;
+    }
+
+    /// <summary>
+    /// Sent by the DM/Host to teach a spell to a remote player.
+    /// </summary>
+    public struct MsgTeachSpell : NetworkMessage
+    {
+        public int targetConnectionId;
+        public string spellBundleJson;
+    }
+
     #endregion
 
     #endregion

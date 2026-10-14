@@ -209,7 +209,7 @@ namespace DaggerfallWorkshop.Game
                 {
                     transform.position = Vector3.Lerp(transform.position, netTargetPosition, Time.deltaTime * 6f);
                 }
-                if (mobileAsset != null)
+                if (mobileAsset != null && mobileAsset.IsIdle != netIsIdle)
                 {
                     mobileAsset.IsIdle = netIsIdle;
                 }

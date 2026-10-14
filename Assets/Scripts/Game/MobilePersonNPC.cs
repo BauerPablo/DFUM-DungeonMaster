@@ -112,10 +112,21 @@ namespace DaggerfallWorkshop.Game
         /// </summary>
         public bool IsGuard { get; set; }
 
+        private MobilePersonAsset asset;
+
         /// <summary>
         /// Billboard or custom asset for npc.
         /// </summary>
-        public MobilePersonAsset Asset { get; set; }
+        public MobilePersonAsset Asset
+        {
+            get
+            {
+                if (asset == null)
+                    asset = GetComponentInChildren<MobilePersonAsset>();
+                return asset;
+            }
+            set { asset = value; }
+        }
 
         public MobilePersonMotor Motor
         {
