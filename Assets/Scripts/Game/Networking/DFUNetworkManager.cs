@@ -104,6 +104,10 @@ namespace DaggerfallWorkshop.Game.Networking
         private Rect playerInteractionWindowRect = new Rect(Screen.width / 2 - 160, Screen.height / 2 - 110, 320, 220);
         private NativePlayerPuppet interactionTargetPuppet = null;
 
+        // Party Reputation Inspector state
+        private int selectedRepPlayerIndex = 0;
+        private readonly Dictionary<int, Dictionary<int, int>> remotePlayerReputations = new Dictionary<int, Dictionary<int, int>>();
+
         /// <summary>
         /// True if any network, DM, loot, quest, or player interaction debug overlay is open.
         /// </summary>
@@ -445,6 +449,7 @@ namespace DaggerfallWorkshop.Game.Networking
             NetworkServer.RegisterHandler<MsgDialogueSpeech>(OnServerReceiveDialogueSpeech);
             NetworkServer.RegisterHandler<MsgDialogueEnded>(OnServerReceiveDialogueEnded);
             NetworkServer.RegisterHandler<MsgShareMapData>(OnServerReceiveShareMapData);
+            NetworkServer.RegisterHandler<MsgClientReputationReport>(OnServerReceiveClientReputationReport);
             GameManager.OnEnemySpawn += OnServerEnemySpawned;
             WeatherManager.OnWeatherChange += OnServerWeatherChanged;
             worldTimeSyncTimer = 0f;
@@ -478,7 +483,10 @@ namespace DaggerfallWorkshop.Game.Networking
             NetworkServer.UnregisterHandler<MsgPlayerCrime>();
             NetworkServer.UnregisterHandler<MsgDialogueSpeech>();
             NetworkServer.UnregisterHandler<MsgDialogueEnded>();
+            NetworkServer.UnregisterHandler<MsgShareMapData>();
+            NetworkServer.UnregisterHandler<MsgClientReputationReport>();
             activeDialogueBubbles.Clear();
+            remotePlayerReputations.Clear();
             isVoteActive = false;
             currentVoteApprovedClients.Clear();
             currentVoteMemberStatuses.Clear();
@@ -631,6 +639,7 @@ namespace DaggerfallWorkshop.Game.Networking
             NetworkClient.RegisterHandler<MsgPartyQuestStart>(OnClientReceivePartyQuestStart);
             NetworkClient.RegisterHandler<MsgPartyQuestComplete>(OnClientReceivePartyQuestComplete);
             NetworkClient.RegisterHandler<MsgFactionRepSync>(OnClientReceiveFactionRepSync);
+            NetworkClient.RegisterHandler<MsgRequestReputationReport>(OnClientReceiveRequestReputationReport);
             NetworkClient.RegisterHandler<MsgShareMapData>(OnClientReceiveShareMapData);
             NetworkClient.RegisterHandler<MsgDialogueSpeech>(OnClientReceiveDialogueSpeech);
             NetworkClient.RegisterHandler<MsgDialogueEnded>(OnClientReceiveDialogueEnded);
@@ -665,6 +674,7 @@ namespace DaggerfallWorkshop.Game.Networking
             NetworkClient.UnregisterHandler<MsgPartyQuestStart>();
             NetworkClient.UnregisterHandler<MsgPartyQuestComplete>();
             NetworkClient.UnregisterHandler<MsgFactionRepSync>();
+            NetworkClient.UnregisterHandler<MsgRequestReputationReport>();
             NetworkClient.UnregisterHandler<MsgShareMapData>();
             NetworkClient.UnregisterHandler<MsgDialogueSpeech>();
             NetworkClient.UnregisterHandler<MsgDialogueEnded>();
@@ -672,6 +682,8 @@ namespace DaggerfallWorkshop.Game.Networking
             ClosePartyVoteWindow();
             showPlayerInteractionWindow = false;
             interactionTargetPuppet = null;
+            remotePlayerReputations.Clear();
+            selectedRepPlayerIndex = 0;
             isPartyRestingBlackout = false;
             partyRestHours = 0;
             DestroyClientProxies();
@@ -1325,6 +1337,7 @@ namespace DaggerfallWorkshop.Game.Networking
         {
             localConnectionId = msg.assignedConnectionId;
             LogEntity($"[DFU Player] Assigned local connection ID: {localConnectionId}");
+            SendReputationReportToHost();
         }
 
         private void OnClientReceivePlayerProfile(MsgPlayerProfile msg)
@@ -3351,7 +3364,10 @@ namespace DaggerfallWorkshop.Game.Networking
                     {
                         string qName = q.QuestName;
                         int fId = q.FactionId;
+                        q.QuestSuccess = false;
                         q.EndQuest();
+                        if (QuestMachine.Instance != null)
+                            QuestMachine.Instance.TombstoneQuest(q);
                         expandedQuestDetails.Remove(uid);
                         DaggerfallUI.AddHUDText($"[Quest] Canceled '{qName}'.");
                         BroadcastPartyQuestComplete(qName, fId, false);
@@ -3374,6 +3390,8 @@ namespace DaggerfallWorkshop.Game.Networking
                         int fId = q.FactionId;
                         q.QuestSuccess = true;
                         q.EndQuest();
+                        if (QuestMachine.Instance != null)
+                            QuestMachine.Instance.TombstoneQuest(q);
                         expandedQuestDetails.Remove(uid);
                         DaggerfallUI.AddHUDText($"[DM] Completed '{qName}' successfully!");
                         BroadcastPartyQuestComplete(qName, fId, true);
@@ -3518,46 +3536,106 @@ namespace DaggerfallWorkshop.Game.Networking
             GUILayout.Space(8);
             GUILayout.Label("<b>--- 5. Guild & Faction Reputation ---</b>");
 
-            if (GameManager.Instance.PlayerEntity != null && GameManager.Instance.PlayerEntity.FactionData != null)
+            // Build list of connected party members
+            List<int> repPartyIds = new List<int>();
+            if (NetworkSession.IsHost || connectedPlayerProfiles.ContainsKey(0))
+                repPartyIds.Add(0); // Host
+
+            foreach (var kvp in connectedPlayerProfiles)
             {
-                var fData = GameManager.Instance.PlayerEntity.FactionData;
+                if (kvp.Key != 0 && !repPartyIds.Contains(kvp.Key))
+                    repPartyIds.Add(kvp.Key);
+            }
 
-                var factionList = new (string name, int id)[]
+            if (repPartyIds.Count == 0)
+                repPartyIds.Add(0);
+
+            if (selectedRepPlayerIndex >= repPartyIds.Count)
+                selectedRepPlayerIndex = repPartyIds.Count - 1;
+            if (selectedRepPlayerIndex < 0)
+                selectedRepPlayerIndex = 0;
+
+            int targetConnId = repPartyIds[selectedRepPlayerIndex];
+            string targetPlayerName = "Host / Local";
+            if (targetConnId == 0)
+            {
+                targetPlayerName = (GameManager.Instance.PlayerEntity != null) ? $"{GameManager.Instance.PlayerEntity.Name} (Host)" : "Host";
+            }
+            else if (connectedPlayerProfiles.TryGetValue(targetConnId, out var prof))
+            {
+                targetPlayerName = $"{prof.playerName} (Conn {targetConnId})";
+            }
+
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("<", GUILayout.Width(30), GUILayout.Height(24)))
+            {
+                selectedRepPlayerIndex = (selectedRepPlayerIndex - 1 + repPartyIds.Count) % repPartyIds.Count;
+            }
+            GUILayout.Label($"<b>Personaje:</b> <color=#ADD8E6>{targetPlayerName}</color> [{selectedRepPlayerIndex + 1}/{repPartyIds.Count}]", GUILayout.ExpandWidth(true));
+            if (GUILayout.Button(">", GUILayout.Width(30), GUILayout.Height(24)))
+            {
+                selectedRepPlayerIndex = (selectedRepPlayerIndex + 1) % repPartyIds.Count;
+            }
+            if (NetworkSession.IsHost && GUILayout.Button("Sync", GUILayout.Width(45), GUILayout.Height(24)))
+            {
+                RequestPartyReputations();
+            }
+            GUILayout.EndHorizontal();
+
+            var factionList = new (string name, int id)[]
+            {
+                ("Fighters Guild", 41),
+                ("Mages Guild", 40),
+                ("Thieves Guild", 42),
+                ("Dark Brotherhood", 67),
+                ("Temples (Generic)", 88),
+                ("Nobility (Generic)", 82),
+                ("Commoners (Generic)", 0)
+            };
+
+            foreach (var fac in factionList)
+            {
+                int curRep = 0;
+                if (targetConnId == 0 || targetConnId == localConnectionId)
                 {
-                    ("Fighters Guild", 41),
-                    ("Mages Guild", 40),
-                    ("Thieves Guild", 42),
-                    ("Dark Brotherhood", 67),
-                    ("Temples (Generic)", 88),
-                    ("Nobility (Generic)", 82),
-                    ("Commoners (Generic)", 0)
-                };
-
-                foreach (var fac in factionList)
-                {
-                    int curRep = fData.GetReputation(fac.id);
-                    string colorTag = curRep > 0 ? "#88FF88" : (curRep < 0 ? "#FF8888" : "#FFFFFF");
-
-                    GUILayout.BeginHorizontal();
-                    GUILayout.Label($"<b>{fac.name}:</b> <color={colorTag}>{curRep}</color>", GUILayout.Width(170));
-
-                    if (NetworkSession.IsHost)
-                    {
-                        if (GUILayout.Button("-5", GUILayout.Width(35), GUILayout.Height(22)))
-                        {
-                            AdjustFactionReputation(fac.id, fac.name, -5);
-                        }
-                        if (GUILayout.Button("+5", GUILayout.Width(35), GUILayout.Height(22)))
-                        {
-                            AdjustFactionReputation(fac.id, fac.name, 5);
-                        }
-                        if (GUILayout.Button("+10", GUILayout.Width(38), GUILayout.Height(22)))
-                        {
-                            AdjustFactionReputation(fac.id, fac.name, 10);
-                        }
-                    }
-                    GUILayout.EndHorizontal();
+                    if (GameManager.Instance.PlayerEntity != null && GameManager.Instance.PlayerEntity.FactionData != null)
+                        curRep = GameManager.Instance.PlayerEntity.FactionData.GetReputation(fac.id);
                 }
+                else
+                {
+                    if (remotePlayerReputations.TryGetValue(targetConnId, out var facDict) && facDict.TryGetValue(fac.id, out int r))
+                        curRep = r;
+                }
+
+                string colorTag = curRep > 0 ? "#88FF88" : (curRep < 0 ? "#FF8888" : "#FFFFFF");
+
+                GUILayout.BeginHorizontal();
+                GUILayout.Label($"<b>{fac.name}:</b> <color={colorTag}>{curRep}</color>", GUILayout.Width(150));
+
+                if (NetworkSession.IsHost)
+                {
+                    if (GUILayout.Button("-5", GUILayout.Width(30), GUILayout.Height(22)))
+                    {
+                        AdjustPlayerFactionReputation(targetConnId, fac.id, fac.name, -5);
+                    }
+                    if (GUILayout.Button("-1", GUILayout.Width(30), GUILayout.Height(22)))
+                    {
+                        AdjustPlayerFactionReputation(targetConnId, fac.id, fac.name, -1);
+                    }
+                    if (GUILayout.Button("+1", GUILayout.Width(30), GUILayout.Height(22)))
+                    {
+                        AdjustPlayerFactionReputation(targetConnId, fac.id, fac.name, 1);
+                    }
+                    if (GUILayout.Button("+5", GUILayout.Width(30), GUILayout.Height(22)))
+                    {
+                        AdjustPlayerFactionReputation(targetConnId, fac.id, fac.name, 5);
+                    }
+                    if (GUILayout.Button("+10", GUILayout.Width(35), GUILayout.Height(22)))
+                    {
+                        AdjustPlayerFactionReputation(targetConnId, fac.id, fac.name, 10);
+                    }
+                }
+                GUILayout.EndHorizontal();
             }
 
             GUILayout.Space(8);
@@ -4978,6 +5056,7 @@ namespace DaggerfallWorkshop.Game.Networking
 
             try
             {
+                bool questFound = false;
                 ulong[] activeQuests = QuestMachine.Instance != null ? QuestMachine.Instance.GetAllActiveQuests() : null;
                 if (activeQuests != null)
                 {
@@ -4986,11 +5065,19 @@ namespace DaggerfallWorkshop.Game.Networking
                         Quest q = QuestMachine.Instance.GetQuest(uid);
                         if (q != null && string.Equals(q.QuestName, msg.questName, StringComparison.OrdinalIgnoreCase))
                         {
+                            questFound = true;
                             q.QuestSuccess = msg.success;
                             q.EndQuest();
+                            if (QuestMachine.Instance != null)
+                                QuestMachine.Instance.TombstoneQuest(q);
+
                             expandedQuestDetails.Remove(uid);
                             if (msg.success)
                             {
+                                if (msg.factionId > 0 && q.FactionId == 0 && GameManager.Instance.PlayerEntity != null && GameManager.Instance.PlayerEntity.FactionData != null)
+                                {
+                                    GameManager.Instance.PlayerEntity.FactionData.ChangeReputation(msg.factionId, 5, true);
+                                }
                                 DaggerfallUI.AddHUDText($"[Party Quest] '{msg.questName}' completada con éxito (+reputación gremial).");
                                 LogNetwork($"[DFU Quest] Client successfully completed party quest '{msg.questName}'.");
                             }
@@ -4999,11 +5086,16 @@ namespace DaggerfallWorkshop.Game.Networking
                                 DaggerfallUI.AddHUDText($"[Party Quest] Misión '{msg.questName}' cancelada.");
                                 LogNetwork($"[DFU Quest] Client canceled party quest '{msg.questName}'.");
                             }
-                            return;
                         }
                     }
                 }
-                LogNetwork($"[DFU Quest] Received MsgPartyQuestComplete for '{msg.questName}', but quest not found in active list.");
+
+                if (!questFound)
+                {
+                    LogNetwork($"[DFU Quest] Received MsgPartyQuestComplete for '{msg.questName}', but quest not found in active list.");
+                }
+
+                SendReputationReportToHost();
             }
             catch (Exception ex)
             {
@@ -5011,42 +5103,168 @@ namespace DaggerfallWorkshop.Game.Networking
             }
         }
 
-        public void AdjustFactionReputation(int factionId, string factionName, int delta)
+        public void AdjustPlayerFactionReputation(int targetConnId, int factionId, string factionName, int delta)
         {
-            if (GameManager.Instance.PlayerEntity == null || GameManager.Instance.PlayerEntity.FactionData == null)
+            if (!NetworkSession.IsHost)
                 return;
 
-            var fData = GameManager.Instance.PlayerEntity.FactionData;
-            int oldRep = fData.GetReputation(factionId);
-            fData.ChangeReputation(factionId, delta, true);
-            int newRep = fData.GetReputation(factionId);
-
-            DaggerfallUI.AddHUDText($"[Reputación] {factionName}: {oldRep} -> {newRep} ({(delta >= 0 ? "+" : "")}{delta})");
-            LogNetwork($"[DFU Rep] Host adjusted reputation for {factionName} (ID {factionId}): {oldRep} -> {newRep}");
-
-            if (NetworkSession.IsHost && connectedClients != null)
+            if (targetConnId == 0 || targetConnId == localConnectionId)
             {
-                MsgFactionRepSync msg = new MsgFactionRepSync
+                if (GameManager.Instance.PlayerEntity != null && GameManager.Instance.PlayerEntity.FactionData != null)
                 {
-                    factionId = factionId,
-                    repValue = newRep,
-                    delta = delta,
-                    factionName = factionName
-                };
+                    var fData = GameManager.Instance.PlayerEntity.FactionData;
+                    int oldRep = fData.GetReputation(factionId);
+                    fData.ChangeReputation(factionId, delta, true);
+                    int newRep = fData.GetReputation(factionId);
 
-                foreach (NetworkConnectionToClient conn in connectedClients)
+                    DaggerfallUI.AddHUDText($"[Reputación Host] {factionName}: {oldRep} -> {newRep} ({(delta >= 0 ? "+" : "")}{delta})");
+                    LogNetwork($"[DFU Rep] Host adjusted local reputation for {factionName} (ID {factionId}): {oldRep} -> {newRep}");
+                }
+            }
+            else
+            {
+                string pName = $"Conn {targetConnId}";
+                if (connectedPlayerProfiles.TryGetValue(targetConnId, out var prof))
+                    pName = prof.playerName;
+
+                if (!remotePlayerReputations.ContainsKey(targetConnId))
+                    remotePlayerReputations[targetConnId] = new Dictionary<int, int>();
+
+                int curVal = 0;
+                if (remotePlayerReputations[targetConnId].TryGetValue(factionId, out int val))
+                    curVal = val;
+                int nextVal = curVal + delta;
+                remotePlayerReputations[targetConnId][factionId] = nextVal;
+
+                DaggerfallUI.AddHUDText($"[Reputación {pName}] {factionName}: {curVal} -> {nextVal} ({(delta >= 0 ? "+" : "")}{delta})");
+                LogNetwork($"[DFU Rep] Host adjusted remote reputation for {pName} (conn {targetConnId}) {factionName} (ID {factionId}): {curVal} -> {nextVal}");
+
+                if (connectedClients != null)
                 {
-                    if (conn != null && conn.connectionId != localConnectionId)
+                    MsgFactionRepSync syncMsg = new MsgFactionRepSync
                     {
-                        conn.Send(msg);
+                        targetConnectionId = targetConnId,
+                        factionId = factionId,
+                        repValue = nextVal,
+                        delta = delta,
+                        factionName = factionName
+                    };
+
+                    foreach (NetworkConnectionToClient conn in connectedClients)
+                    {
+                        if (conn != null && conn.connectionId == targetConnId)
+                        {
+                            conn.Send(syncMsg);
+                            break;
+                        }
                     }
                 }
             }
         }
 
+        public void AdjustFactionReputation(int factionId, string factionName, int delta)
+        {
+            AdjustPlayerFactionReputation(0, factionId, factionName, delta);
+        }
+
+        public void RequestPartyReputations()
+        {
+            if (!NetworkSession.IsHost || connectedClients == null)
+                return;
+
+            MsgRequestReputationReport msg = new MsgRequestReputationReport();
+            foreach (NetworkConnectionToClient conn in connectedClients)
+            {
+                if (conn != null && conn.connectionId != localConnectionId)
+                {
+                    conn.Send(msg);
+                }
+            }
+            LogNetwork("[DFU Rep] Host requested reputation reports from all party members.");
+        }
+
+        public void SendReputationReportToHost()
+        {
+            if (NetworkSession.IsHost && !NetworkClient.isConnected)
+                return;
+
+            if (GameManager.Instance.PlayerEntity == null || GameManager.Instance.PlayerEntity.FactionData == null)
+                return;
+
+            var fData = GameManager.Instance.PlayerEntity.FactionData;
+            int[] keyFactionIds = new int[] { 41, 40, 42, 67, 88, 82, 0 };
+
+            FactionRepSnapshot snapshot = new FactionRepSnapshot();
+            foreach (int fid in keyFactionIds)
+            {
+                snapshot.items.Add(new FactionRepPair
+                {
+                    factionId = fid,
+                    rep = fData.GetReputation(fid)
+                });
+            }
+
+            string json = SaveLoadManager.Serialize(typeof(FactionRepSnapshot), snapshot, false);
+            string pName = GameManager.Instance.PlayerEntity.Name;
+
+            MsgClientReputationReport msg = new MsgClientReputationReport
+            {
+                connectionId = localConnectionId,
+                playerName = pName,
+                reputationsJson = json
+            };
+
+            if (NetworkClient.isConnected)
+            {
+                NetworkClient.Send(msg);
+                LogNetwork($"[DFU Rep] Sent reputation report to host (conn {localConnectionId}, player '{pName}').");
+            }
+        }
+
+        private void OnServerReceiveClientReputationReport(NetworkConnection conn, MsgClientReputationReport msg)
+        {
+            if (!NetworkSession.IsHost)
+                return;
+
+            try
+            {
+                int connId = conn != null ? conn.connectionId : msg.connectionId;
+                if (!string.IsNullOrEmpty(msg.reputationsJson))
+                {
+                    FactionRepSnapshot snapshot = (FactionRepSnapshot)SaveLoadManager.Deserialize(typeof(FactionRepSnapshot), msg.reputationsJson);
+                    if (snapshot != null && snapshot.items != null)
+                    {
+                        if (!remotePlayerReputations.ContainsKey(connId))
+                            remotePlayerReputations[connId] = new Dictionary<int, int>();
+
+                        foreach (var item in snapshot.items)
+                        {
+                            remotePlayerReputations[connId][item.factionId] = item.rep;
+                        }
+                        LogNetwork($"[DFU Rep] Received reputation report from '{msg.playerName}' (conn {connId}) with {snapshot.items.Count} entries.");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                LogNetwork($"[DFU Rep] Error processing MsgClientReputationReport: {ex.Message}");
+            }
+        }
+
+        private void OnClientReceiveRequestReputationReport(MsgRequestReputationReport msg)
+        {
+            if (NetworkSession.IsHost)
+                return;
+
+            SendReputationReportToHost();
+        }
+
         private void OnClientReceiveFactionRepSync(MsgFactionRepSync msg)
         {
             if (NetworkSession.IsHost)
+                return;
+
+            if (msg.targetConnectionId != -1 && msg.targetConnectionId != localConnectionId)
                 return;
 
             if (GameManager.Instance.PlayerEntity != null && GameManager.Instance.PlayerEntity.FactionData != null)
@@ -5057,6 +5275,8 @@ namespace DaggerfallWorkshop.Game.Networking
                 int newRep = fData.GetReputation(msg.factionId);
                 DaggerfallUI.AddHUDText($"[Reputación Party] {msg.factionName}: {oldRep} -> {newRep} ({(msg.delta >= 0 ? "+" : "")}{msg.delta})");
                 LogNetwork($"[DFU Rep] Client synced reputation for {msg.factionName} (ID {msg.factionId}): {oldRep} -> {newRep}");
+
+                SendReputationReportToHost();
             }
         }
 

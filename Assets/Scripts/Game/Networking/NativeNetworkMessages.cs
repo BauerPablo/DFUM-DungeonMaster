@@ -463,10 +463,47 @@ namespace DaggerfallWorkshop.Game.Networking
     /// </summary>
     public struct MsgFactionRepSync : NetworkMessage
     {
+        public int targetConnectionId; // -1 for all party, or specific connectionId
         public int factionId;
         public int repValue;
         public int delta;
         public string factionName;
+    }
+
+    /// <summary>
+    /// Sent from Host to Clients to request their character's reputation profile snapshot.
+    /// </summary>
+    public struct MsgRequestReputationReport : NetworkMessage
+    {
+    }
+
+    /// <summary>
+    /// Sent from Client to Host with full snapshot of character's guild reputations.
+    /// </summary>
+    public struct MsgClientReputationReport : NetworkMessage
+    {
+        public int connectionId;
+        public string playerName;
+        public string reputationsJson;
+    }
+
+    /// <summary>
+    /// Serialized pair of faction ID and current reputation value.
+    /// </summary>
+    [Serializable]
+    public struct FactionRepPair
+    {
+        public int factionId;
+        public int rep;
+    }
+
+    /// <summary>
+    /// Snapshot bundle of key faction reputations for a character.
+    /// </summary>
+    [Serializable]
+    public class FactionRepSnapshot
+    {
+        public List<FactionRepPair> items = new List<FactionRepPair>();
     }
 
     /// <summary>
