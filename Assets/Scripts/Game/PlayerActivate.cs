@@ -448,9 +448,9 @@ namespace DaggerfallWorkshop.Game
                         }
                     }
 
-                    // Check for custom activation
-                    var playerActivable = hit.transform.GetComponent<IPlayerActivable>();
-                    if (playerActivable != null)
+                    // Check for custom activation (including networked player puppets)
+                    var playerActivable = hit.transform.GetComponent<IPlayerActivable>() ?? hit.transform.GetComponentInParent<IPlayerActivable>();
+                    if (playerActivable != null && hit.distance <= 4.0f)
                         playerActivable.Activate(hit);
 
                     // Debug for identifying interior furniture model ids.

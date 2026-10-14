@@ -9,8 +9,8 @@ This testing guide covers the **Quest Creator / Debug Menu**, multiplayer **Opt-
 
 | Status | Total Cases | Cases |
 | :--- | :---: | :--- |
-| **PASSED / VERIFIED** | **15** | Cases 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 15, 16, 17 |
-| **PENDING VERIFICATION (FIXED)** | **2** | Cases 13 (Quest Monsters Replication), 14 (FreeCam Controls & Scroll) |
+| **PASSED / VERIFIED** | **16** | Cases 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14, 15, 16, 17 |
+| **PENDING VERIFICATION (FIXED)** | **1** | Case 13 (Quest Monsters Replication) |
 
 - **Vote Timeout:** Configured to `60s` (previously 15s).
 - **Dialogue Text:** Only overhead 3D bubbles appear; top HUD yellow notices removed.
@@ -163,20 +163,20 @@ This testing guide covers the **Quest Creator / Debug Menu**, multiplayer **Opt-
 
 ---
 
-### [ ] Case 14: Eagle Eye / FreeCam Flight & 3rd-Person Puppet View (Fix Verification)
+### [x] Case 14: Eagle Eye / FreeCam Flight & 3rd-Person Puppet View (Fix Verification)
 - **Goal:** Verify full 6-DOF flight controls and character puppet visibility.
-- [ ] Press **`Ctrl + F8`** (or execute **`dm_freecam`** in console).
-- [ ] **Camera Movement & Controls:**
-  - [ ] Camera decouples smoothly from current eye position without falling underground.
-  - [ ] First-person weapon model is hidden.
-  - [ ] Mouse look moves freely (pitch up/down, yaw left/right).
-  - [ ] **`W`**, **`A`**, **`S`**, **`D`** fly forward, left, backward, right.
-  - [ ] **`Space`** flies up, **`C`** flies down (**`Ctrl`** removed to prevent shortcut conflicts), **`Shift`** sprints.
-  - [ ] Mouse scroll wheel smoothly scales flight speed (`2` to `150` m/s) with HUD notification: `[FreeCam] Speed: <X> m/s`.
-- [ ] **Puppet Rendering:**
-  - [ ] You see your own character puppet standing at the original position with tag `[YourName] (You)`.
-- [ ] **Deactivation:**
-  - [ ] Press **`Ctrl + F8`** again: Camera snaps smoothly back to first-person inside player.
+- [x] Press **`Ctrl + F8`** (or execute **`dm_freecam`** in console).
+- [x] **Camera Movement & Controls:**
+  - [x] Camera decouples smoothly from current eye position without falling underground.
+  - [x] First-person weapon model is hidden.
+  - [x] Mouse look moves freely (pitch up/down, yaw left/right).
+  - [x] **`W`**, **`A`**, **`S`**, **`D`** fly forward, left, backward, right.
+  - [x] **`Space`** flies up, **`C`** flies down (**`Ctrl`** removed to prevent shortcut conflicts), **`Shift`** sprints.
+  - [x] Mouse scroll wheel smoothly scales flight speed (`2` to `150` m/s) with HUD notification: `[FreeCam] Speed: <X> m/s`.
+- [x] **Puppet Rendering:**
+  - [x] You see your own character puppet standing at the original position with tag `[YourName] (You)`.
+- [x] **Deactivation:**
+  - [x] Press **`Ctrl + F8`** again: Camera snaps smoothly back to first-person inside player.
 
 ---
 

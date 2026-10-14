@@ -99,10 +99,15 @@ namespace DaggerfallWorkshop.Game.Networking
             MobileTypes.Knight_CityWatch
         };
 
+        // P2P Interactive Player Menu & Map Sharing
+        public bool showPlayerInteractionWindow = false;
+        private Rect playerInteractionWindowRect = new Rect(Screen.width / 2 - 160, Screen.height / 2 - 110, 320, 220);
+        private NativePlayerPuppet interactionTargetPuppet = null;
+
         /// <summary>
-        /// True if any network, DM, loot, or quest debug overlay is open.
+        /// True if any network, DM, loot, quest, or player interaction debug overlay is open.
         /// </summary>
-        public bool IsAnyGuiOpen => showDebugGui || showDmGui || showLootGui || showQuestGui;
+        public bool IsAnyGuiOpen => showDebugGui || showDmGui || showLootGui || showQuestGui || showPlayerInteractionWindow;
 
         private KcpTransport kcpTransport;
 
@@ -242,10 +247,27 @@ namespace DaggerfallWorkshop.Game.Networking
                     FreeCamController.Instance.ToggleFreeCam();
             }
 
-            if (showDebugGui || showDmGui || showLootGui || showQuestGui)
+            if (showDebugGui || showDmGui || showLootGui || showQuestGui || showPlayerInteractionWindow)
             {
                 Cursor.lockState = CursorLockMode.None;
                 Cursor.visible = true;
+            }
+
+            if (showPlayerInteractionWindow)
+            {
+                if (Input.GetKeyDown(KeyCode.Escape))
+                {
+                    showPlayerInteractionWindow = false;
+                }
+                else if (interactionTargetPuppet == null || interactionTargetPuppet.gameObject == null)
+                {
+                    showPlayerInteractionWindow = false;
+                }
+                else if (GameManager.Instance.PlayerObject != null &&
+                         Vector3.Distance(GameManager.Instance.PlayerObject.transform.position, interactionTargetPuppet.transform.position) > 4.5f)
+                {
+                    showPlayerInteractionWindow = false;
+                }
             }
 
             UpdateDialogueBubbles(Time.deltaTime);
@@ -422,6 +444,7 @@ namespace DaggerfallWorkshop.Game.Networking
             NetworkServer.RegisterHandler<MsgPlayerCrime>(OnServerReceivePlayerCrime);
             NetworkServer.RegisterHandler<MsgDialogueSpeech>(OnServerReceiveDialogueSpeech);
             NetworkServer.RegisterHandler<MsgDialogueEnded>(OnServerReceiveDialogueEnded);
+            NetworkServer.RegisterHandler<MsgShareMapData>(OnServerReceiveShareMapData);
             GameManager.OnEnemySpawn += OnServerEnemySpawned;
             WeatherManager.OnWeatherChange += OnServerWeatherChanged;
             worldTimeSyncTimer = 0f;
@@ -606,6 +629,9 @@ namespace DaggerfallWorkshop.Game.Networking
             NetworkClient.RegisterHandler<MsgPartyVoteResult>(OnClientReceivePartyVoteResult);
             NetworkClient.RegisterHandler<MsgPartyTravelExecute>(OnClientReceivePartyTravelExecute);
             NetworkClient.RegisterHandler<MsgPartyQuestStart>(OnClientReceivePartyQuestStart);
+            NetworkClient.RegisterHandler<MsgPartyQuestComplete>(OnClientReceivePartyQuestComplete);
+            NetworkClient.RegisterHandler<MsgFactionRepSync>(OnClientReceiveFactionRepSync);
+            NetworkClient.RegisterHandler<MsgShareMapData>(OnClientReceiveShareMapData);
             NetworkClient.RegisterHandler<MsgDialogueSpeech>(OnClientReceiveDialogueSpeech);
             NetworkClient.RegisterHandler<MsgDialogueEnded>(OnClientReceiveDialogueEnded);
             NetworkClient.RegisterHandler<MsgPlayerDamaged>(OnClientReceivePlayerDamaged);
@@ -637,10 +663,15 @@ namespace DaggerfallWorkshop.Game.Networking
             NetworkClient.UnregisterHandler<MsgPartyVoteResult>();
             NetworkClient.UnregisterHandler<MsgPartyTravelExecute>();
             NetworkClient.UnregisterHandler<MsgPartyQuestStart>();
+            NetworkClient.UnregisterHandler<MsgPartyQuestComplete>();
+            NetworkClient.UnregisterHandler<MsgFactionRepSync>();
+            NetworkClient.UnregisterHandler<MsgShareMapData>();
             NetworkClient.UnregisterHandler<MsgDialogueSpeech>();
             NetworkClient.UnregisterHandler<MsgDialogueEnded>();
             activeDialogueBubbles.Clear();
             ClosePartyVoteWindow();
+            showPlayerInteractionWindow = false;
+            interactionTargetPuppet = null;
             isPartyRestingBlackout = false;
             partyRestHours = 0;
             DestroyClientProxies();
@@ -2395,6 +2426,12 @@ namespace DaggerfallWorkshop.Game.Networking
                 questWindowRect = GUI.Window(987657, questWindowRect, DrawQuestWindow, "Quest Creator / Test Menu (Ctrl+F7)");
             }
 
+            if (showPlayerInteractionWindow && interactionTargetPuppet != null && interactionTargetPuppet.gameObject != null)
+            {
+                GUI.depth = -1000;
+                playerInteractionWindowRect = GUI.Window(987658, playerInteractionWindowRect, DrawPlayerInteractionWindow, $"Player: {interactionTargetPuppet.playerName}");
+            }
+
             GUI.depth = -999;
             DrawDialogueBubbles();
         }
@@ -3312,9 +3349,12 @@ namespace DaggerfallWorkshop.Game.Networking
                     }
                     if (GUILayout.Button("Cancel", GUILayout.Width(50), GUILayout.Height(28)))
                     {
+                        string qName = q.QuestName;
+                        int fId = q.FactionId;
                         q.EndQuest();
                         expandedQuestDetails.Remove(uid);
-                        DaggerfallUI.AddHUDText($"[Quest] Canceled '{q.QuestName}'.");
+                        DaggerfallUI.AddHUDText($"[Quest] Canceled '{qName}'.");
+                        BroadcastPartyQuestComplete(qName, fId, false);
                     }
                     if (GUILayout.Button("Complete", GUILayout.Width(65), GUILayout.Height(28)))
                     {
@@ -3330,10 +3370,13 @@ namespace DaggerfallWorkshop.Game.Networking
                                 }
                             }
                         }
+                        string qName = q.QuestName;
+                        int fId = q.FactionId;
                         q.QuestSuccess = true;
                         q.EndQuest();
                         expandedQuestDetails.Remove(uid);
-                        DaggerfallUI.AddHUDText($"[DM] Completed '{q.QuestName}' successfully!");
+                        DaggerfallUI.AddHUDText($"[DM] Completed '{qName}' successfully!");
+                        BroadcastPartyQuestComplete(qName, fId, true);
                     }
                     GUILayout.EndHorizontal();
 
@@ -3468,6 +3511,52 @@ namespace DaggerfallWorkshop.Game.Networking
                     }
                     expandedQuestDetails.Clear();
                     DaggerfallUI.AddHUDText("[Quest] Ended all active quests.");
+                }
+            }
+
+            // Section 5: Guild & Faction Reputation
+            GUILayout.Space(8);
+            GUILayout.Label("<b>--- 5. Guild & Faction Reputation ---</b>");
+
+            if (GameManager.Instance.PlayerEntity != null && GameManager.Instance.PlayerEntity.FactionData != null)
+            {
+                var fData = GameManager.Instance.PlayerEntity.FactionData;
+
+                var factionList = new (string name, int id)[]
+                {
+                    ("Fighters Guild", 41),
+                    ("Mages Guild", 40),
+                    ("Thieves Guild", 42),
+                    ("Dark Brotherhood", 67),
+                    ("Temples (Generic)", 88),
+                    ("Nobility (Generic)", 82),
+                    ("Commoners (Generic)", 0)
+                };
+
+                foreach (var fac in factionList)
+                {
+                    int curRep = fData.GetReputation(fac.id);
+                    string colorTag = curRep > 0 ? "#88FF88" : (curRep < 0 ? "#FF8888" : "#FFFFFF");
+
+                    GUILayout.BeginHorizontal();
+                    GUILayout.Label($"<b>{fac.name}:</b> <color={colorTag}>{curRep}</color>", GUILayout.Width(170));
+
+                    if (NetworkSession.IsHost)
+                    {
+                        if (GUILayout.Button("-5", GUILayout.Width(35), GUILayout.Height(22)))
+                        {
+                            AdjustFactionReputation(fac.id, fac.name, -5);
+                        }
+                        if (GUILayout.Button("+5", GUILayout.Width(35), GUILayout.Height(22)))
+                        {
+                            AdjustFactionReputation(fac.id, fac.name, 5);
+                        }
+                        if (GUILayout.Button("+10", GUILayout.Width(38), GUILayout.Height(22)))
+                        {
+                            AdjustFactionReputation(fac.id, fac.name, 10);
+                        }
+                    }
+                    GUILayout.EndHorizontal();
                 }
             }
 
@@ -4857,6 +4946,387 @@ namespace DaggerfallWorkshop.Game.Networking
                 LogNetwork($"[DFU Quest] Failed to start quest '{msg.questName}': {ex.Message}");
             }
         }
+
+        #region Party Quest Completion & Reputation Sync
+
+        public void BroadcastPartyQuestComplete(string questName, int factionId, bool success)
+        {
+            if (!NetworkSession.IsHost || connectedClients == null)
+                return;
+
+            MsgPartyQuestComplete msg = new MsgPartyQuestComplete
+            {
+                questName = questName,
+                factionId = factionId,
+                success = success
+            };
+
+            foreach (NetworkConnectionToClient conn in connectedClients)
+            {
+                if (conn != null && conn.connectionId != localConnectionId)
+                {
+                    conn.Send(msg);
+                    LogNetwork($"[DFU Quest] Broadcast MsgPartyQuestComplete for '{questName}' (success={success}) to conn {conn.connectionId}");
+                }
+            }
+        }
+
+        private void OnClientReceivePartyQuestComplete(MsgPartyQuestComplete msg)
+        {
+            if (NetworkSession.IsHost)
+                return;
+
+            try
+            {
+                ulong[] activeQuests = QuestMachine.Instance != null ? QuestMachine.Instance.GetAllActiveQuests() : null;
+                if (activeQuests != null)
+                {
+                    foreach (ulong uid in activeQuests)
+                    {
+                        Quest q = QuestMachine.Instance.GetQuest(uid);
+                        if (q != null && string.Equals(q.QuestName, msg.questName, StringComparison.OrdinalIgnoreCase))
+                        {
+                            q.QuestSuccess = msg.success;
+                            q.EndQuest();
+                            expandedQuestDetails.Remove(uid);
+                            if (msg.success)
+                            {
+                                DaggerfallUI.AddHUDText($"[Party Quest] '{msg.questName}' completada con éxito (+reputación gremial).");
+                                LogNetwork($"[DFU Quest] Client successfully completed party quest '{msg.questName}'.");
+                            }
+                            else
+                            {
+                                DaggerfallUI.AddHUDText($"[Party Quest] Misión '{msg.questName}' cancelada.");
+                                LogNetwork($"[DFU Quest] Client canceled party quest '{msg.questName}'.");
+                            }
+                            return;
+                        }
+                    }
+                }
+                LogNetwork($"[DFU Quest] Received MsgPartyQuestComplete for '{msg.questName}', but quest not found in active list.");
+            }
+            catch (Exception ex)
+            {
+                LogNetwork($"[DFU Quest] Error processing MsgPartyQuestComplete: {ex.Message}");
+            }
+        }
+
+        public void AdjustFactionReputation(int factionId, string factionName, int delta)
+        {
+            if (GameManager.Instance.PlayerEntity == null || GameManager.Instance.PlayerEntity.FactionData == null)
+                return;
+
+            var fData = GameManager.Instance.PlayerEntity.FactionData;
+            int oldRep = fData.GetReputation(factionId);
+            fData.ChangeReputation(factionId, delta, true);
+            int newRep = fData.GetReputation(factionId);
+
+            DaggerfallUI.AddHUDText($"[Reputación] {factionName}: {oldRep} -> {newRep} ({(delta >= 0 ? "+" : "")}{delta})");
+            LogNetwork($"[DFU Rep] Host adjusted reputation for {factionName} (ID {factionId}): {oldRep} -> {newRep}");
+
+            if (NetworkSession.IsHost && connectedClients != null)
+            {
+                MsgFactionRepSync msg = new MsgFactionRepSync
+                {
+                    factionId = factionId,
+                    repValue = newRep,
+                    delta = delta,
+                    factionName = factionName
+                };
+
+                foreach (NetworkConnectionToClient conn in connectedClients)
+                {
+                    if (conn != null && conn.connectionId != localConnectionId)
+                    {
+                        conn.Send(msg);
+                    }
+                }
+            }
+        }
+
+        private void OnClientReceiveFactionRepSync(MsgFactionRepSync msg)
+        {
+            if (NetworkSession.IsHost)
+                return;
+
+            if (GameManager.Instance.PlayerEntity != null && GameManager.Instance.PlayerEntity.FactionData != null)
+            {
+                var fData = GameManager.Instance.PlayerEntity.FactionData;
+                int oldRep = fData.GetReputation(msg.factionId);
+                fData.ChangeReputation(msg.factionId, msg.delta, true);
+                int newRep = fData.GetReputation(msg.factionId);
+                DaggerfallUI.AddHUDText($"[Reputación Party] {msg.factionName}: {oldRep} -> {newRep} ({(msg.delta >= 0 ? "+" : "")}{msg.delta})");
+                LogNetwork($"[DFU Rep] Client synced reputation for {msg.factionName} (ID {msg.factionId}): {oldRep} -> {newRep}");
+            }
+        }
+
+        #endregion
+
+        #region P2P Interactive Player Menu & Map Sharing
+
+        public void OpenPlayerInteractionMenu(NativePlayerPuppet puppet)
+        {
+            if (puppet == null)
+                return;
+
+            interactionTargetPuppet = puppet;
+            showPlayerInteractionWindow = true;
+            playerInteractionWindowRect.x = (Screen.width - playerInteractionWindowRect.width) * 0.5f;
+            playerInteractionWindowRect.y = (Screen.height - playerInteractionWindowRect.height) * 0.5f;
+        }
+
+        private void DrawPlayerInteractionWindow(int windowId)
+        {
+            if (interactionTargetPuppet == null || interactionTargetPuppet.gameObject == null)
+            {
+                showPlayerInteractionWindow = false;
+                return;
+            }
+
+            float dist = 0f;
+            if (GameManager.Instance.PlayerObject != null)
+                dist = Vector3.Distance(GameManager.Instance.PlayerObject.transform.position, interactionTargetPuppet.transform.position);
+
+            GUILayout.Space(6);
+            GUILayout.Label($"<b>Jugador:</b> {interactionTargetPuppet.playerName}", GUILayout.ExpandWidth(true));
+            GUILayout.Label($"<size=11>Clase: <b>{interactionTargetPuppet.careerName}</b> | Distancia: <b>{dist:F1}m</b></size>");
+            GUILayout.Space(10);
+
+            if (GUILayout.Button("Compartir Mapa y Descubrimientos", GUILayout.Height(34)))
+            {
+                SendMapDiscoveriesToTarget(interactionTargetPuppet);
+            }
+
+            GUILayout.Space(4);
+            GUI.enabled = false;
+            GUILayout.Button("Transferir Objetos / Trade [Próximamente]", GUILayout.Height(28));
+            GUI.enabled = true;
+
+            GUILayout.Space(10);
+            if (GUILayout.Button("Cerrar", GUILayout.Height(24)))
+            {
+                showPlayerInteractionWindow = false;
+            }
+
+            GUI.DragWindow(new Rect(0, 0, 10000, 20));
+        }
+
+        public void SendMapDiscoveriesToTarget(NativePlayerPuppet target)
+        {
+            if (target == null)
+                return;
+
+            showPlayerInteractionWindow = false;
+
+            PlayerGPS gps = GameManager.Instance.PlayerGPS;
+            if (gps == null)
+            {
+                DaggerfallUI.AddHUDText("[Mapa] Error: PlayerGPS no disponible.");
+                return;
+            }
+
+            var discDict = gps.GetDiscoverySaveData();
+            SharedMapBundle bundle = new SharedMapBundle();
+
+            int totalBuildings = 0;
+            if (discDict != null)
+            {
+                foreach (var kvp in discDict)
+                {
+                    var dl = kvp.Value;
+                    var locItem = new SharedLocationItem
+                    {
+                        mapID = dl.mapID,
+                        mapPixelID = dl.mapPixelID,
+                        regionName = dl.regionName,
+                        locationName = dl.locationName
+                    };
+
+                    if (dl.discoveredBuildings != null)
+                    {
+                        foreach (var bKvp in dl.discoveredBuildings)
+                        {
+                            var db = bKvp.Value;
+                            locItem.buildings.Add(new SharedBuildingItem
+                            {
+                                buildingKey = db.buildingKey,
+                                displayName = db.displayName,
+                                oldDisplayName = db.oldDisplayName,
+                                isOverrideName = db.isOverrideName,
+                                factionID = db.factionID,
+                                quality = db.quality,
+                                buildingType = (int)db.buildingType
+                            });
+                            totalBuildings++;
+                        }
+                    }
+                    bundle.locations.Add(locItem);
+                }
+            }
+
+            string json = JsonUtility.ToJson(bundle);
+            string myName = (GameManager.Instance.PlayerEntity != null) ? GameManager.Instance.PlayerEntity.Name : "Jugador";
+
+            MsgShareMapData msg = new MsgShareMapData
+            {
+                senderConnectionId = localConnectionId,
+                senderName = myName,
+                targetConnectionId = target.connectionId,
+                discoveryDataJson = json,
+                locationCount = bundle.locations.Count,
+                buildingCount = totalBuildings
+            };
+
+            if (NetworkSession.IsHost)
+            {
+                if (target.connectionId == 0 || target.connectionId == localConnectionId)
+                {
+                    ApplySharedMapData(msg);
+                }
+                else if (connectedClients != null)
+                {
+                    foreach (NetworkConnectionToClient conn in connectedClients)
+                    {
+                        if (conn != null && conn.connectionId == target.connectionId)
+                        {
+                            conn.Send(msg);
+                            LogNetwork($"[DFU Map] Host sent MsgShareMapData directly to conn {target.connectionId}");
+                            break;
+                        }
+                    }
+                }
+            }
+            else
+            {
+                if (NetworkClient.active)
+                {
+                    NetworkClient.Send(msg);
+                    LogNetwork($"[DFU Map] Client sent MsgShareMapData to server for target {target.connectionId}");
+                }
+            }
+
+            DaggerfallUI.AddHUDText($"[Mapa] Compartiste tus descubrimientos ({bundle.locations.Count} locaciones, {totalBuildings} edificios) con {target.playerName}.");
+        }
+
+        private void OnServerReceiveShareMapData(NetworkConnection conn, MsgShareMapData msg)
+        {
+            if (msg.targetConnectionId == 0 || msg.targetConnectionId == localConnectionId)
+            {
+                ApplySharedMapData(msg);
+            }
+            else
+            {
+                if (connectedClients != null)
+                {
+                    foreach (NetworkConnectionToClient clientConn in connectedClients)
+                    {
+                        if (clientConn != null && clientConn.connectionId == msg.targetConnectionId)
+                        {
+                            clientConn.Send(msg);
+                            LogNetwork($"[DFU Map] Forwarded MsgShareMapData from conn {conn.connectionId} to target conn {msg.targetConnectionId}");
+                            return;
+                        }
+                    }
+                }
+                LogNetwork($"[DFU Map] Target conn {msg.targetConnectionId} not found to deliver MsgShareMapData.");
+            }
+        }
+
+        private void OnClientReceiveShareMapData(MsgShareMapData msg)
+        {
+            if (NetworkSession.IsHost && msg.targetConnectionId == localConnectionId)
+                return;
+
+            ApplySharedMapData(msg);
+        }
+
+        private void ApplySharedMapData(MsgShareMapData msg)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(msg.discoveryDataJson))
+                    return;
+
+                SharedMapBundle bundle = JsonUtility.FromJson<SharedMapBundle>(msg.discoveryDataJson);
+                if (bundle == null || bundle.locations == null)
+                    return;
+
+                PlayerGPS gps = GameManager.Instance.PlayerGPS;
+                if (gps == null)
+                    return;
+
+                var currentDisc = gps.GetDiscoverySaveData();
+                if (currentDisc == null)
+                    currentDisc = new Dictionary<int, PlayerGPS.DiscoveredLocation>();
+
+                int newLocations = 0;
+                int newBuildings = 0;
+
+                foreach (var loc in bundle.locations)
+                {
+                    if (!currentDisc.TryGetValue(loc.mapPixelID, out PlayerGPS.DiscoveredLocation dl))
+                    {
+                        dl = new PlayerGPS.DiscoveredLocation
+                        {
+                            mapID = loc.mapID,
+                            mapPixelID = loc.mapPixelID,
+                            regionName = loc.regionName,
+                            locationName = loc.locationName,
+                            discoveredBuildings = new Dictionary<int, PlayerGPS.DiscoveredBuilding>()
+                        };
+                        currentDisc[loc.mapPixelID] = dl;
+                        newLocations++;
+                    }
+
+                    if (dl.discoveredBuildings == null)
+                        dl.discoveredBuildings = new Dictionary<int, PlayerGPS.DiscoveredBuilding>();
+
+                    if (loc.buildings != null)
+                    {
+                        foreach (var b in loc.buildings)
+                        {
+                            if (!dl.discoveredBuildings.ContainsKey(b.buildingKey))
+                            {
+                                dl.discoveredBuildings[b.buildingKey] = new PlayerGPS.DiscoveredBuilding
+                                {
+                                    buildingKey = b.buildingKey,
+                                    displayName = b.displayName,
+                                    oldDisplayName = b.oldDisplayName,
+                                    isOverrideName = b.isOverrideName,
+                                    factionID = b.factionID,
+                                    quality = b.quality,
+                                    buildingType = (DFLocation.BuildingTypes)b.buildingType
+                                };
+                                newBuildings++;
+                            }
+                        }
+                    }
+
+                    if (!string.IsNullOrEmpty(loc.regionName) && !string.IsNullOrEmpty(loc.locationName))
+                    {
+                        try
+                        {
+                            if (!gps.HasDiscoveredLocation(loc.mapPixelID))
+                                gps.DiscoverLocation(loc.regionName, loc.locationName);
+                        }
+                        catch
+                        {
+                        }
+                    }
+                }
+
+                gps.RestoreDiscoveryData(currentDisc);
+
+                DaggerfallUI.AddHUDText($"[Mapa] ¡{msg.senderName} compartió sus mapas! (+{newLocations} locaciones, +{newBuildings} edificios descubiertos)");
+                LogNetwork($"[DFU Map] Applied shared map data from {msg.senderName}: +{newLocations} locs, +{newBuildings} buildings.");
+            }
+            catch (Exception ex)
+            {
+                LogNetwork($"[DFU Map] Error applying shared map data: {ex.Message}");
+            }
+        }
+
+        #endregion
 
         private void OnClientReceivePartyRestVoteUpdate(MsgPartyRestVoteUpdate msg)
         {

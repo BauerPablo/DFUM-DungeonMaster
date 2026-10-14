@@ -13,8 +13,9 @@ namespace DaggerfallWorkshop.Game.Networking
     /// <summary>
     /// Visual puppet representation for a connected party member in the game world.
     /// Handles billboard animations, overhead 3D name tag billboard, and smooth snapshot motion interpolation.
+    /// Implements IPlayerActivable for interactive character-click menus (map sharing, trade).
     /// </summary>
-    public class NativePlayerPuppet : MonoBehaviour
+    public class NativePlayerPuppet : MonoBehaviour, IPlayerActivable
     {
         [Header("Player Metadata")]
         public int connectionId;
@@ -317,6 +318,17 @@ namespace DaggerfallWorkshop.Game.Networking
             {
                 transform.position = pos;
                 transform.rotation = targetRotation;
+            }
+        }
+
+        /// <summary>
+        /// Triggered when local player clicks / activates this puppet in the game world within interaction range.
+        /// </summary>
+        public void Activate(RaycastHit hit)
+        {
+            if (DFUNetworkManager.Instance != null)
+            {
+                DFUNetworkManager.Instance.OpenPlayerInteractionMenu(this);
             }
         }
     }

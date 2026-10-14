@@ -5,6 +5,7 @@
 // Source Code:     https://github.com/Interkarma/daggerfall-unity
 
 using System;
+using System.Collections.Generic;
 using UnityEngine;
 using Mirror;
 
@@ -445,6 +446,77 @@ namespace DaggerfallWorkshop.Game.Networking
     {
         public int connectionId;
         public int damage;
+    }
+
+    /// <summary>
+    /// Broadcast from Server/Host to Clients when a quest is completed or canceled.
+    /// </summary>
+    public struct MsgPartyQuestComplete : NetworkMessage
+    {
+        public string questName;
+        public int factionId;
+        public bool success;
+    }
+
+    /// <summary>
+    /// Synchronizes a faction reputation change from Host to Clients.
+    /// </summary>
+    public struct MsgFactionRepSync : NetworkMessage
+    {
+        public int factionId;
+        public int repValue;
+        public int delta;
+        public string factionName;
+    }
+
+    /// <summary>
+    /// Sent between peers to share map exploration and discovered locations/buildings.
+    /// </summary>
+    public struct MsgShareMapData : NetworkMessage
+    {
+        public int senderConnectionId;
+        public string senderName;
+        public int targetConnectionId;
+        public string discoveryDataJson;
+        public int locationCount;
+        public int buildingCount;
+    }
+
+    /// <summary>
+    /// Lightweight DTO for serializing building discoveries over the network.
+    /// </summary>
+    [Serializable]
+    public class SharedBuildingItem
+    {
+        public int buildingKey;
+        public string displayName;
+        public string oldDisplayName;
+        public bool isOverrideName;
+        public int factionID;
+        public int quality;
+        public int buildingType;
+    }
+
+    /// <summary>
+    /// Lightweight DTO for serializing location and town discoveries over the network.
+    /// </summary>
+    [Serializable]
+    public class SharedLocationItem
+    {
+        public int mapID;
+        public int mapPixelID;
+        public string regionName;
+        public string locationName;
+        public List<SharedBuildingItem> buildings = new List<SharedBuildingItem>();
+    }
+
+    /// <summary>
+    /// Container bundle for all discovered locations and buildings shared between players.
+    /// </summary>
+    [Serializable]
+    public class SharedMapBundle
+    {
+        public List<SharedLocationItem> locations = new List<SharedLocationItem>();
     }
 }
 
