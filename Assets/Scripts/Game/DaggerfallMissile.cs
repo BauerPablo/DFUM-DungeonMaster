@@ -14,6 +14,7 @@ using System.Collections.Generic;
 using DaggerfallWorkshop.Utility;
 using DaggerfallWorkshop.Game.MagicAndEffects;
 using DaggerfallWorkshop.Game.Entity;
+using DaggerfallWorkshop.Game.Networking;
 
 namespace DaggerfallWorkshop.Game
 {
@@ -576,6 +577,20 @@ namespace DaggerfallWorkshop.Game
 
             foreach (DaggerfallEntityBehaviour entityBehaviour in targetEntities)
             {
+                if (entityBehaviour == null)
+                    continue;
+
+                // In multiplayer, route spell to remote party member puppet
+                NativePlayerPuppet puppet = entityBehaviour.GetComponent<NativePlayerPuppet>();
+                if (puppet != null && NetworkSession.IsActive)
+                {
+                    if (DFUNetworkManager.Instance != null)
+                    {
+                        DFUNetworkManager.Instance.SendSpellPayloadToPlayer(puppet.connectionId, payload);
+                    }
+                    continue;
+                }
+
                 // Target must have an effect manager component
                 EntityEffectManager effectManager = entityBehaviour.GetComponent<EntityEffectManager>();
                 if (!effectManager)

@@ -8,6 +8,7 @@ using System;
 using System.Collections.Generic;
 using UnityEngine;
 using Mirror;
+using DaggerfallWorkshop.Game.MagicAndEffects;
 
 namespace DaggerfallWorkshop.Game.Networking
 {
@@ -674,6 +675,46 @@ namespace DaggerfallWorkshop.Game.Networking
     {
         public int mapID;
         public CivilianStateDTO[] civilians;
+    }
+
+    #endregion
+
+    #region Magic & PvP Sync
+
+    /// <summary>
+    /// Broadcast from Server to Clients when a player casts a spell, for replicating visual missiles, audio, and particles.
+    /// </summary>
+    public struct MsgCastSpell : NetworkMessage
+    {
+        public int casterConnectionId;
+        public string casterName;
+        public string spellName;
+        public ElementTypes elementType;
+        public TargetTypes targetType;
+        public Vector3 origin;
+        public Vector3 direction;
+    }
+
+    /// <summary>
+    /// Routed between players (or via Server) to deliver a supportive or offensive spell bundle payload.
+    /// </summary>
+    public struct MsgApplySpellBundle : NetworkMessage
+    {
+        public int targetConnectionId;
+        public int casterConnectionId;
+        public string casterName;
+        public string spellName;
+        public ElementTypes elementType;
+        public string bundleSettingsJson;
+        public bool isHarmful;
+    }
+
+    /// <summary>
+    /// Synchronizes PvP friendly fire toggle state from Server to all Clients.
+    /// </summary>
+    public struct MsgPvpStateSync : NetworkMessage
+    {
+        public bool isPvpAllowed;
     }
 
     #endregion

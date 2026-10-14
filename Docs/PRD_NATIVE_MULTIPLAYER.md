@@ -403,10 +403,10 @@ flowchart LR
 **Goal:** Replicate visual magic effects, route supportive and offensive spells between party members, provide direct player-to-player interactions (bilateral trading and map discovery sharing), and synchronize wandering civilian town NPCs.
 
 #### Tasks:
-- [ ] **11.1 Spell Effect & Projectile Replication:**
+- [x] **11.1 Spell Effect & Projectile Replication:**
   - Replicate touch, target projectile (`DaggerfallMissile`), and area-of-effect (AOE) visual particles and casting/impact sound effects when players cast spells via `EntityEffectManager`.
   - Broadcast `MsgCastSpell` so remote puppets trigger casting animations, audio, and visual projectile spawning.
-- [ ] **11.2 Supportive & Offensive Magic Routing (PvP Toggle):**
+- [x] **11.2 Supportive & Offensive Magic Routing (PvP Toggle):**
   - Allow beneficial spells (healing, cure poison, water walking, levitation) to target and apply effect bundles to party members in range or by touch.
   - Configurable Host-authoritative Friendly Fire / PvP damage toggle in Host Network Settings (`net_pvp on/off` and DM overlay toggle).
 - [x] **11.3 Direct Player-to-Player Interaction & Bilateral Trading:**

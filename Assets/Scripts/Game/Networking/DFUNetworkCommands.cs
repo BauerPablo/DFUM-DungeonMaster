@@ -46,6 +46,7 @@ namespace DaggerfallWorkshop.Game.Networking
                 ConsoleCommandsDatabase.RegisterCommand(DmFreeCam.name, DmFreeCam.description, DmFreeCam.usage, DmFreeCam.Execute);
                 ConsoleCommandsDatabase.RegisterCommand("freecam", DmFreeCam.description, DmFreeCam.usage, DmFreeCam.Execute);
                 ConsoleCommandsDatabase.RegisterCommand(DmTeleport.name, DmTeleport.description, DmTeleport.usage, DmTeleport.Execute);
+                ConsoleCommandsDatabase.RegisterCommand(NetPvp.name, NetPvp.description, NetPvp.usage, NetPvp.Execute);
             }
             catch (Exception ex)
             {
@@ -815,6 +816,36 @@ namespace DaggerfallWorkshop.Game.Networking
                 mgr.ToggleDmGodMode();
                 bool isGod = GameManager.Instance.PlayerEntity != null && GameManager.Instance.PlayerEntity.GodMode;
                 return $"God Mode is now {(isGod ? "ENABLED" : "DISABLED")}.";
+            }
+        }
+
+        private static class NetPvp
+        {
+            public static readonly string name = "net_pvp";
+            public static readonly string description = "Toggles or sets friendly fire / PvP damage among party members (Host only).";
+            public static readonly string usage = "net_pvp [on|off]";
+
+            public static string Execute(params string[] args)
+            {
+                if (!NetworkSession.IsHost)
+                    return "Only the Host can configure PvP / Friendly Fire settings.";
+
+                DFUNetworkManager mgr = GameManager.Instance.NetworkManager;
+                if (mgr == null)
+                    return "DFUNetworkManager not available.";
+
+                bool targetState = !DFUNetworkManager.isPvpAllowed;
+                if (args != null && args.Length > 0)
+                {
+                    string sub = args[0].ToLowerInvariant();
+                    if (sub == "on" || sub == "true" || sub == "1")
+                        targetState = true;
+                    else if (sub == "off" || sub == "false" || sub == "0")
+                        targetState = false;
+                }
+
+                mgr.SetPvpAllowed(targetState);
+                return $"PvP / Friendly Fire is now {(targetState ? "ENABLED" : "DISABLED")}.";
             }
         }
     }

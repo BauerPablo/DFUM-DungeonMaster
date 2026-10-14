@@ -24,6 +24,7 @@ using DaggerfallWorkshop.Game.MagicAndEffects.MagicEffects;
 using DaggerfallWorkshop.Game.Formulas;
 using DaggerfallWorkshop.Game.Items;
 using FullSerializer;
+using DaggerfallWorkshop.Game.Networking;
 
 namespace DaggerfallWorkshop.Game.MagicAndEffects
 {
@@ -382,6 +383,12 @@ namespace DaggerfallWorkshop.Game.MagicAndEffects
 
             // Clear ready spell and reset casting - do not store last spell for no anim spells (prevent spamming)
             RaiseOnCastReadySpell(readySpell);
+
+            if (NetworkSession.IsActive && DFUNetworkManager.Instance != null && entityBehaviour == GameManager.Instance.PlayerEntityBehaviour)
+            {
+                DFUNetworkManager.Instance.BroadcastLocalSpellCast(readySpell);
+            }
+
             lastSpell = null;
             readySpell = null;
             readySpellCastingCost = 0;
@@ -2114,6 +2121,12 @@ namespace DaggerfallWorkshop.Game.MagicAndEffects
 
             // Clear ready spell and reset casting - do not update last spell if casting from item
             RaiseOnCastReadySpell(readySpell);
+
+            if (NetworkSession.IsActive && DFUNetworkManager.Instance != null && entityBehaviour == GameManager.Instance.PlayerEntityBehaviour)
+            {
+                DFUNetworkManager.Instance.BroadcastLocalSpellCast(readySpell);
+            }
+
             if (!readySpellDoesNotCostSpellPoints)
             {
                 lastSpell = readySpell;

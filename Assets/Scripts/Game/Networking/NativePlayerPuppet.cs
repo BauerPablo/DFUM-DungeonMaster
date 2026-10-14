@@ -331,5 +331,21 @@ namespace DaggerfallWorkshop.Game.Networking
                 DFUNetworkManager.Instance.OpenPlayerInteractionMenu(this);
             }
         }
+
+        /// <summary>
+        /// Gets the DaggerfallEntityBehaviour associated with this puppet.
+        /// </summary>
+        public DaggerfallEntityBehaviour EntityBehaviour => GetComponent<DaggerfallEntityBehaviour>();
+
+        /// <summary>
+        /// Triggers visual spellcasting billboard animation on this puppet.
+        /// </summary>
+        public void TriggerCastAnimation()
+        {
+            if (mobileUnit != null && mobileUnit.gameObject.activeSelf)
+            {
+                mobileUnit.ChangeEnemyState(MobileStates.Spell);
+            }
+        }
     }
 }

@@ -25,6 +25,7 @@ using DaggerfallConnect;
 using DaggerfallConnect.Arena2;
 using DaggerfallConnect.Utility;
 using DaggerfallWorkshop.Game.Utility;
+using DaggerfallWorkshop.Game.MagicAndEffects;
 
 namespace DaggerfallWorkshop.Game.Networking
 {
@@ -215,6 +216,9 @@ namespace DaggerfallWorkshop.Game.Networking
         [Header("Town Population Sync")]
         private float populationSyncTimer = 0f;
         private const float PopulationSyncInterval = 0.35f;
+
+        [Header("Magic & PvP Settings")]
+        public static bool isPvpAllowed = false;
 
         #endregion
 
@@ -522,6 +526,8 @@ namespace DaggerfallWorkshop.Game.Networking
             NetworkServer.RegisterHandler<MsgTradeStateSync>(OnServerReceiveTradeStateSync);
             NetworkServer.RegisterHandler<MsgTradeCancel>(OnServerReceiveTradeCancel);
             NetworkServer.RegisterHandler<MsgTradeCommit>(OnServerReceiveTradeCommit);
+            NetworkServer.RegisterHandler<MsgCastSpell>(OnServerReceiveCastSpell);
+            NetworkServer.RegisterHandler<MsgApplySpellBundle>(OnServerReceiveApplySpellBundle);
             GameManager.OnEnemySpawn += OnServerEnemySpawned;
             WeatherManager.OnWeatherChange += OnServerWeatherChanged;
             worldTimeSyncTimer = 0f;
@@ -562,6 +568,8 @@ namespace DaggerfallWorkshop.Game.Networking
             NetworkServer.UnregisterHandler<MsgTradeStateSync>();
             NetworkServer.UnregisterHandler<MsgTradeCancel>();
             NetworkServer.UnregisterHandler<MsgTradeCommit>();
+            NetworkServer.UnregisterHandler<MsgCastSpell>();
+            NetworkServer.UnregisterHandler<MsgApplySpellBundle>();
             serverPendingTradeCommits.Clear();
             activeDialogueBubbles.Clear();
             remotePlayerReputations.Clear();
@@ -658,6 +666,8 @@ namespace DaggerfallWorkshop.Game.Networking
             {
                 LogLoot($"[DFU Loot] Synchronized {syncedLootCount} spawned loot containers to client {conn.connectionId}.");
             }
+
+            conn.Send(new MsgPvpStateSync { isPvpAllowed = isPvpAllowed });
         }
 
         public override void OnServerDisconnect(NetworkConnection conn)
@@ -731,6 +741,9 @@ namespace DaggerfallWorkshop.Game.Networking
             NetworkClient.RegisterHandler<MsgTradeCancel>(OnClientReceiveTradeCancel);
             NetworkClient.RegisterHandler<MsgTradeCompleted>(OnClientReceiveTradeCompleted);
             NetworkClient.RegisterHandler<MsgPopulationSync>(OnClientReceivePopulationSync);
+            NetworkClient.RegisterHandler<MsgCastSpell>(OnClientReceiveCastSpell);
+            NetworkClient.RegisterHandler<MsgApplySpellBundle>(OnClientReceiveApplySpellBundle);
+            NetworkClient.RegisterHandler<MsgPvpStateSync>(OnClientReceivePvpStateSync);
         }
 
         public override void OnStopClient()
@@ -771,6 +784,9 @@ namespace DaggerfallWorkshop.Game.Networking
             NetworkClient.UnregisterHandler<MsgTradeCancel>();
             NetworkClient.UnregisterHandler<MsgTradeCompleted>();
             NetworkClient.UnregisterHandler<MsgPopulationSync>();
+            NetworkClient.UnregisterHandler<MsgCastSpell>();
+            NetworkClient.UnregisterHandler<MsgApplySpellBundle>();
+            NetworkClient.UnregisterHandler<MsgPvpStateSync>();
             activeDialogueBubbles.Clear();
             ClosePartyVoteWindow();
             showPlayerInteractionWindow = false;
@@ -3021,6 +3037,14 @@ namespace DaggerfallWorkshop.Game.Networking
                 {
                     if (FreeCamController.Instance != null)
                         FreeCamController.Instance.ToggleFreeCam();
+                }
+
+                GUILayout.Space(8);
+                GUILayout.Label("<b>--- PvP & Friendly Fire ---</b>");
+                bool newPvp = GUILayout.Toggle(isPvpAllowed, " Friendly Fire / PvP (net_pvp)");
+                if (newPvp != isPvpAllowed)
+                {
+                    SetPvpAllowed(newPvp);
                 }
             }
 
@@ -7074,6 +7098,286 @@ namespace DaggerfallWorkshop.Game.Networking
                     }
                 }
             }
+        }
+
+        #endregion
+
+        #region Magic & PvP Synchronization
+
+        /// <summary>
+        /// Configures PvP Friendly Fire permission and broadcasts state to all peers.
+        /// </summary>
+        public void SetPvpAllowed(bool allowed)
+        {
+            isPvpAllowed = allowed;
+            if (NetworkServer.active)
+            {
+                NetworkServer.SendToAll(new MsgPvpStateSync { isPvpAllowed = allowed });
+            }
+            DaggerfallUI.AddHUDText($"[PvP] Friendly Fire is now {(allowed ? "ENABLED" : "DISABLED")}.");
+        }
+
+        /// <summary>
+        /// Checks if a single effect key represents an offensive or harmful action.
+        /// </summary>
+        public static bool IsHarmfulEffect(string effectKey)
+        {
+            if (string.IsNullOrEmpty(effectKey))
+                return false;
+
+            if (effectKey.StartsWith("Damage") ||
+                effectKey.StartsWith("Drain") ||
+                effectKey.StartsWith("ContinuousDamage") ||
+                effectKey.StartsWith("Transfer") ||
+                effectKey.Equals("Paralyze", StringComparison.OrdinalIgnoreCase) ||
+                effectKey.Equals("Silence", StringComparison.OrdinalIgnoreCase) ||
+                effectKey.Equals("Disintegrate", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            if (GameManager.Instance != null && GameManager.Instance.EntityEffectBroker != null)
+            {
+                IEntityEffect template = GameManager.Instance.EntityEffectBroker.GetEffectTemplate(effectKey);
+                if (template != null && template.Properties.MagicSkill == DFCareer.MagicSkills.Destruction)
+                    return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Checks if any effect within the bundle is harmful.
+        /// </summary>
+        public static bool IsHarmfulBundle(EffectBundleSettings settings)
+        {
+            if (settings.Effects == null || settings.Effects.Length == 0)
+                return false;
+
+            for (int i = 0; i < settings.Effects.Length; i++)
+            {
+                if (IsHarmfulEffect(settings.Effects[i].Key))
+                    return true;
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// Broadcasts local player's spellcast to peers for projectile, audio, and animation replication.
+        /// </summary>
+        public void BroadcastLocalSpellCast(EntityEffectBundle readySpell)
+        {
+            if (readySpell == null || !NetworkSession.IsActive)
+                return;
+
+            Vector3 origin = GameManager.Instance.MainCamera != null
+                ? GameManager.Instance.MainCamera.transform.position
+                : (GameManager.Instance.PlayerObject != null ? GameManager.Instance.PlayerObject.transform.position + Vector3.up * 1.5f : Vector3.zero);
+            Vector3 dir = GameManager.Instance.MainCamera != null ? GameManager.Instance.MainCamera.transform.forward : Vector3.forward;
+
+            MsgCastSpell msg = new MsgCastSpell
+            {
+                casterConnectionId = NetworkSession.IsHost ? 0 : localConnectionId,
+                casterName = GameManager.Instance.PlayerEntity != null ? GameManager.Instance.PlayerEntity.Name : "Player",
+                spellName = readySpell.Settings.Name,
+                elementType = readySpell.Settings.ElementType,
+                targetType = readySpell.Settings.TargetType,
+                origin = origin,
+                direction = dir
+            };
+
+            if (NetworkServer.active)
+            {
+                foreach (var kvp in NetworkServer.connections)
+                {
+                    if (kvp.Value != null && kvp.Value.isReady)
+                    {
+                        kvp.Value.Send(msg);
+                    }
+                }
+            }
+            else if (NetworkClient.isConnected)
+            {
+                NetworkClient.Send(msg);
+            }
+        }
+
+        private void OnServerReceiveCastSpell(NetworkConnection conn, MsgCastSpell msg)
+        {
+            msg.casterConnectionId = conn.connectionId;
+            if (NetworkSession.IsHost)
+            {
+                PlayRemoteSpellCastVisual(msg);
+            }
+
+            foreach (var kvp in NetworkServer.connections)
+            {
+                if (kvp.Key != conn.connectionId && kvp.Value != null && kvp.Value.isReady)
+                {
+                    kvp.Value.Send(msg);
+                }
+            }
+        }
+
+        private void OnClientReceiveCastSpell(MsgCastSpell msg)
+        {
+            if (NetworkSession.IsHost && msg.casterConnectionId == 0)
+                return;
+            if (!NetworkSession.IsHost && msg.casterConnectionId == localConnectionId)
+                return;
+
+            PlayRemoteSpellCastVisual(msg);
+        }
+
+        private void PlayRemoteSpellCastVisual(MsgCastSpell msg)
+        {
+            NativePlayerPuppet puppet = null;
+            if (remotePlayerPuppets.TryGetValue(msg.casterConnectionId, out NativePlayerPuppet p))
+            {
+                puppet = p;
+            }
+
+            if (puppet != null)
+            {
+                puppet.TriggerCastAnimation();
+
+                if (GameManager.Instance.PlayerEffectManager != null && puppet.EntityBehaviour != null)
+                {
+                    int soundId = GameManager.Instance.PlayerEffectManager.GetCastSoundID(msg.elementType);
+                    GameManager.Instance.PlayerEffectManager.PlayCastSound(puppet.EntityBehaviour, soundId);
+                }
+            }
+
+            if (msg.targetType == TargetTypes.SingleTargetAtRange || msg.targetType == TargetTypes.AreaAtRange)
+            {
+                if (GameManager.Instance.PlayerEffectManager != null)
+                {
+                    DaggerfallMissile missile = GameManager.Instance.PlayerEffectManager.InstantiateSpellMissile(msg.elementType);
+                    if (missile != null)
+                    {
+                        missile.transform.position = msg.origin;
+                        missile.CustomAimDirection = msg.direction;
+                        missile.Payload = null; // Visual only on remote peers
+                        missile.Caster = puppet != null ? puppet.EntityBehaviour : null;
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Sends a spell payload bundle to another player (beneficial or harmful if PvP enabled).
+        /// </summary>
+        public void SendSpellPayloadToPlayer(int targetConnId, EntityEffectBundle payload)
+        {
+            if (payload == null || payload.Settings.Effects == null || payload.Settings.Effects.Length == 0)
+                return;
+
+            bool isHarmful = IsHarmfulBundle(payload.Settings);
+            if (isHarmful && !isPvpAllowed)
+            {
+                DaggerfallUI.AddHUDText("[PvP] Fuego amigo desactivado (net_pvp está en OFF).");
+                return;
+            }
+
+            string json = SaveLoadManager.Serialize(typeof(EffectBundleSettings), payload.Settings, false);
+            MsgApplySpellBundle msg = new MsgApplySpellBundle
+            {
+                targetConnectionId = targetConnId,
+                casterConnectionId = NetworkSession.IsHost ? 0 : localConnectionId,
+                casterName = GameManager.Instance.PlayerEntity != null ? GameManager.Instance.PlayerEntity.Name : "Player",
+                spellName = payload.Settings.Name,
+                elementType = payload.Settings.ElementType,
+                bundleSettingsJson = json,
+                isHarmful = isHarmful
+            };
+
+            if (NetworkSession.IsHost)
+            {
+                if (targetConnId == 0)
+                {
+                    ApplyReceivedSpellBundle(msg);
+                }
+                else if (NetworkServer.connections.TryGetValue(targetConnId, out NetworkConnection conn) && conn != null && conn.isReady)
+                {
+                    conn.Send(msg);
+                }
+            }
+            else if (NetworkClient.isConnected)
+            {
+                NetworkClient.Send(msg);
+            }
+        }
+
+        private void OnServerReceiveApplySpellBundle(NetworkConnection conn, MsgApplySpellBundle msg)
+        {
+            msg.casterConnectionId = conn.connectionId;
+            if (msg.isHarmful && !isPvpAllowed)
+                return;
+
+            if (msg.targetConnectionId == 0)
+            {
+                ApplyReceivedSpellBundle(msg);
+            }
+            else if (NetworkServer.connections.TryGetValue(msg.targetConnectionId, out NetworkConnection targetConn) && targetConn != null && targetConn.isReady)
+            {
+                targetConn.Send(msg);
+            }
+        }
+
+        private void OnClientReceiveApplySpellBundle(MsgApplySpellBundle msg)
+        {
+            int myId = NetworkSession.IsHost ? 0 : localConnectionId;
+            if (msg.targetConnectionId != myId)
+                return;
+
+            ApplyReceivedSpellBundle(msg);
+        }
+
+        private void ApplyReceivedSpellBundle(MsgApplySpellBundle msg)
+        {
+            if (string.IsNullOrEmpty(msg.bundleSettingsJson))
+                return;
+
+            if (msg.isHarmful && !isPvpAllowed)
+                return;
+
+            try
+            {
+                EffectBundleSettings settings = (EffectBundleSettings)SaveLoadManager.Deserialize(typeof(EffectBundleSettings), msg.bundleSettingsJson);
+                if (settings.Effects == null || settings.Effects.Length == 0)
+                    return;
+
+                DaggerfallEntityBehaviour casterBehaviour = null;
+                if (remotePlayerPuppets.TryGetValue(msg.casterConnectionId, out NativePlayerPuppet puppet) && puppet != null)
+                {
+                    casterBehaviour = puppet.EntityBehaviour;
+                }
+
+                EntityEffectBundle bundle = new EntityEffectBundle(settings, casterBehaviour);
+                if (GameManager.Instance.PlayerEffectManager != null)
+                {
+                    GameManager.Instance.PlayerEffectManager.AssignBundle(bundle, AssignBundleFlags.ShowNonPlayerFailures);
+
+                    if (msg.isHarmful)
+                    {
+                        DaggerfallUI.AddHUDText($"[PvP] Recibiste impacto mágico de {msg.casterName}: {msg.spellName}");
+                    }
+                    else
+                    {
+                        DaggerfallUI.AddHUDText($"[Magia] {msg.casterName} aplicó sobre vos: {msg.spellName}");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                DaggerfallUnity.LogMessage($"[DFU Magic] Failed to apply received spell bundle: {ex.Message}", true);
+            }
+        }
+
+        private void OnClientReceivePvpStateSync(MsgPvpStateSync msg)
+        {
+            isPvpAllowed = msg.isPvpAllowed;
+            DaggerfallUI.AddHUDText($"[PvP] Friendly Fire is now {(isPvpAllowed ? "ENABLED" : "DISABLED")}.");
         }
 
         #endregion
