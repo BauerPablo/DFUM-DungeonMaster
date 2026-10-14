@@ -24,6 +24,7 @@ using DaggerfallWorkshop.Game.Questing;
 using DaggerfallConnect;
 using DaggerfallConnect.Arena2;
 using DaggerfallConnect.Utility;
+using DaggerfallWorkshop.Game.Utility;
 
 namespace DaggerfallWorkshop.Game.Networking
 {
@@ -211,6 +212,10 @@ namespace DaggerfallWorkshop.Game.Networking
         private ulong lastBroadcastTimeInSeconds = 0;
         private Vector2 dmScrollPosition = Vector2.zero;
 
+        [Header("Town Population Sync")]
+        private float populationSyncTimer = 0f;
+        private const float PopulationSyncInterval = 0.35f;
+
         #endregion
 
         #region Events
@@ -348,6 +353,11 @@ namespace DaggerfallWorkshop.Game.Networking
                     {
                         BroadcastWorldTime(timeJump);
                     }
+                }
+
+                if (NetworkServer.active)
+                {
+                    SyncTownPopulation(Time.deltaTime);
                 }
             }
 
@@ -720,6 +730,7 @@ namespace DaggerfallWorkshop.Game.Networking
             NetworkClient.RegisterHandler<MsgTradeStateSync>(OnClientReceiveTradeStateSync);
             NetworkClient.RegisterHandler<MsgTradeCancel>(OnClientReceiveTradeCancel);
             NetworkClient.RegisterHandler<MsgTradeCompleted>(OnClientReceiveTradeCompleted);
+            NetworkClient.RegisterHandler<MsgPopulationSync>(OnClientReceivePopulationSync);
         }
 
         public override void OnStopClient()
@@ -759,6 +770,7 @@ namespace DaggerfallWorkshop.Game.Networking
             NetworkClient.UnregisterHandler<MsgTradeStateSync>();
             NetworkClient.UnregisterHandler<MsgTradeCancel>();
             NetworkClient.UnregisterHandler<MsgTradeCompleted>();
+            NetworkClient.UnregisterHandler<MsgPopulationSync>();
             activeDialogueBubbles.Clear();
             ClosePartyVoteWindow();
             showPlayerInteractionWindow = false;
@@ -1114,6 +1126,7 @@ namespace DaggerfallWorkshop.Game.Networking
 
         private readonly Dictionary<int, MsgPlayerProfile> connectedPlayerProfiles = new Dictionary<int, MsgPlayerProfile>();
         public readonly Dictionary<int, NativePlayerPuppet> remotePlayerPuppets = new Dictionary<int, NativePlayerPuppet>();
+        public Dictionary<int, NativePlayerPuppet> RemotePlayerPuppets => remotePlayerPuppets;
 
         private float playerStreamTimer = 0f;
         private Vector3 lastLocalPlayerPos;
@@ -6909,6 +6922,158 @@ namespace DaggerfallWorkshop.Game.Networking
 
             GUI.color = prevGuiColor;
             GUI.contentColor = prevContentColor;
+        }
+
+        #endregion
+
+        #region Town Population Synchronization
+
+        /// <summary>
+        /// Synchronizes wandering civilian town NPCs (PopulationManager) from Server to Clients.
+        /// </summary>
+        private void SyncTownPopulation(float dt)
+        {
+            populationSyncTimer += dt;
+            if (populationSyncTimer < PopulationSyncInterval)
+                return;
+
+            populationSyncTimer = 0f;
+
+            if (GameManager.Instance == null || GameManager.Instance.StreamingWorld == null)
+                return;
+
+            DaggerfallLocation dfLoc = GameManager.Instance.StreamingWorld.CurrentPlayerLocationObject;
+            if (dfLoc == null)
+                return;
+
+            PopulationManager popMgr = dfLoc.GetComponent<PopulationManager>();
+            if (popMgr == null || popMgr.PopulationPool == null)
+                return;
+
+            int poolCount = popMgr.PopulationPool.Count;
+            if (poolCount == 0)
+                return;
+
+            List<CivilianStateDTO> dtoList = new List<CivilianStateDTO>();
+            for (int i = 0; i < poolCount; i++)
+            {
+                var item = popMgr.PopulationPool[i];
+                if (item.npc == null)
+                    continue;
+
+                bool isActive = item.active && item.npc.gameObject.activeSelf;
+                bool isIdle = item.npc.Motor != null && item.npc.Motor.MobileAsset != null && item.npc.Motor.MobileAsset.IsIdle;
+                int moves = item.npc.Motor != null ? item.npc.Motor.MoveCount : 0;
+
+                dtoList.Add(new CivilianStateDTO
+                {
+                    poolIndex = i,
+                    active = isActive,
+                    race = (byte)item.npc.Race,
+                    gender = (byte)item.npc.Gender,
+                    outfitVariant = (byte)item.npc.PersonOutfitVariant,
+                    faceRecordId = item.npc.PersonFaceRecordId,
+                    isGuard = item.npc.IsGuard,
+                    nameNPC = item.npc.NameNPC ?? string.Empty,
+                    position = item.npc.transform.position,
+                    isIdle = isIdle,
+                    moveCount = moves
+                });
+            }
+
+            if (dtoList.Count > 0)
+            {
+                MsgPopulationSync msg = new MsgPopulationSync
+                {
+                    mapID = dfLoc.Summary.MapID,
+                    civilians = dtoList.ToArray()
+                };
+                NetworkServer.SendToAll(msg);
+            }
+        }
+
+        /// <summary>
+        /// Client receives authoritative civilian state from Server and updates local PopulationManager pool.
+        /// </summary>
+        private void OnClientReceivePopulationSync(MsgPopulationSync msg)
+        {
+            if (NetworkSession.IsHost)
+                return;
+
+            if (GameManager.Instance == null || GameManager.Instance.StreamingWorld == null)
+                return;
+
+            DaggerfallLocation dfLoc = GameManager.Instance.StreamingWorld.CurrentPlayerLocationObject;
+            if (dfLoc == null || dfLoc.Summary.MapID != msg.mapID)
+                return;
+
+            PopulationManager popMgr = dfLoc.GetComponent<PopulationManager>();
+            if (popMgr == null || msg.civilians == null)
+                return;
+
+            for (int i = 0; i < msg.civilians.Length; i++)
+            {
+                CivilianStateDTO civ = msg.civilians[i];
+
+                // Ensure population pool has enough items up to civ.poolIndex
+                while (popMgr.PopulationPool.Count <= civ.poolIndex)
+                {
+                    int created = popMgr.CreateNewPoolItem();
+                    if (created == -1)
+                        break;
+                }
+
+                if (civ.poolIndex < 0 || civ.poolIndex >= popMgr.PopulationPool.Count)
+                    continue;
+
+                var poolItem = popMgr.PopulationPool[civ.poolIndex];
+                if (poolItem.npc == null)
+                    continue;
+
+                if (civ.active)
+                {
+                    if (!poolItem.npc.gameObject.activeSelf)
+                    {
+                        poolItem.npc.gameObject.SetActive(true);
+                        poolItem.active = true;
+                        poolItem.scheduleEnable = false;
+                        poolItem.scheduleRecycle = false;
+                        if (poolItem.npc.Motor != null)
+                        {
+                            poolItem.npc.Motor.isClientProxy = true;
+                        }
+                        poolItem.npc.ApplyNetworkPerson((Races)civ.race, (Genders)civ.gender, civ.outfitVariant, civ.isGuard, civ.faceRecordId, civ.nameNPC);
+                    }
+
+                    if (poolItem.npc.Motor != null)
+                    {
+                        poolItem.npc.Motor.isClientProxy = true;
+                        poolItem.npc.Motor.SetNetworkTarget(civ.position, civ.isIdle, civ.moveCount);
+                    }
+
+                    if (poolItem.npc.Asset != null)
+                    {
+                        MeshRenderer mr = poolItem.npc.Asset.GetComponent<MeshRenderer>();
+                        if (mr != null)
+                        {
+                            mr.enabled = (civ.moveCount > 0);
+                        }
+                    }
+
+                    popMgr.PopulationPool[civ.poolIndex] = poolItem;
+                }
+                else
+                {
+                    if (poolItem.npc.gameObject.activeSelf)
+                    {
+                        poolItem.npc.gameObject.SetActive(false);
+                        poolItem.active = false;
+                        poolItem.scheduleEnable = false;
+                        poolItem.scheduleRecycle = false;
+                        popMgr.PopulationPool[civ.poolIndex] = poolItem;
+                    }
+                }
+            }
         }
 
         #endregion

@@ -108,6 +108,11 @@ namespace DaggerfallWorkshop.Game.Utility
             else
                 updateTimer = 0;
 
+            // In multiplayer client mode, autonomous random spawning is disabled;
+            // population is synchronized authoritatively from the host via DFUNetworkManager.
+            if (Networking.NetworkSession.IsClientOnly)
+                return;
+
             // Check if player inside max world range for population to exist
             playerInLocationRange = false;
             RectOffset locationRect = dfLocation.LocationRect;
@@ -143,8 +148,31 @@ namespace DaggerfallWorkshop.Game.Utility
                 return;
 
             // Get closest point on navgrid to player position in world
-            DFPosition playerWorldPos = new DFPosition(playerGPS.WorldX, playerGPS.WorldZ);
-            DFPosition playerGridPos = cityNavigation.WorldToNavGridPosition(playerWorldPos);
+            DFPosition centerWorldPos = new DFPosition(playerGPS.WorldX, playerGPS.WorldZ);
+
+            // In multiplayer host mode, allow spawning around connected party members within this location
+            if (Networking.NetworkSession.IsHost && Networking.DFUNetworkManager.Instance != null && Networking.DFUNetworkManager.Instance.RemotePlayerPuppets.Count > 0)
+            {
+                List<DFPosition> candidateOrigins = new List<DFPosition>();
+                candidateOrigins.Add(centerWorldPos);
+
+                foreach (var puppet in Networking.DFUNetworkManager.Instance.RemotePlayerPuppets.Values)
+                {
+                    if (puppet != null && puppet.gameObject.activeInHierarchy)
+                    {
+                        DFPosition puppetWorld = cityNavigation.SceneToWorldPosition(puppet.transform.position);
+                        candidateOrigins.Add(puppetWorld);
+                    }
+                }
+
+                if (candidateOrigins.Count > 1)
+                {
+                    int chosen = Random.Range(0, candidateOrigins.Count);
+                    centerWorldPos = candidateOrigins[chosen];
+                }
+            }
+
+            DFPosition playerGridPos = cityNavigation.WorldToNavGridPosition(centerWorldPos);
 
             // Spawn mobile at a random position and schedule to be live
             DFPosition spawnPosition;
@@ -180,8 +208,21 @@ namespace DaggerfallWorkshop.Game.Utility
             {
                 PoolItem poolItem = populationPool[i];
 
-                // Get distance to player
-                poolItem.distanceToPlayer = Vector3.Distance(playerGPS.transform.position, poolItem.npc.Motor.transform.position);
+                // Get distance to player (in multiplayer, use minimum distance to any party member)
+                float dist = Vector3.Distance(playerGPS.transform.position, poolItem.npc.Motor.transform.position);
+                if (Networking.NetworkSession.IsHost && Networking.DFUNetworkManager.Instance != null)
+                {
+                    foreach (var puppet in Networking.DFUNetworkManager.Instance.RemotePlayerPuppets.Values)
+                    {
+                        if (puppet != null && puppet.gameObject.activeInHierarchy)
+                        {
+                            float d = Vector3.Distance(puppet.transform.position, poolItem.npc.Motor.transform.position);
+                            if (d < dist)
+                                dist = d;
+                        }
+                    }
+                }
+                poolItem.distanceToPlayer = dist;
 
                 // Show pending mobiles when available
                 if (poolItem.active &&
@@ -266,7 +307,7 @@ namespace DaggerfallWorkshop.Game.Utility
         }
 
         // Creates a new pool item with NPC prefab - returns -1 if could not be created
-        int CreateNewPoolItem()
+        public int CreateNewPoolItem()
         {
             // Must have an NPC prefab set
             if (!DaggerfallUnity.Instance.Option_MobileNPCPrefab)

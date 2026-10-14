@@ -413,7 +413,7 @@ flowchart LR
   - In-world avatar click raycast within 3.5m opens an interactive character menu.
   - **Map Discovery Sharing (`MsgShareMapData`):** Exchange discovered town locations and interior buildings between party members to synchronize automap exploration.
   - **Bilateral Item & Gold Trading (`MsgTrade...`):** Mutual 2-column interface with real-time offer preview, inventory filtering, lock-and-accept state machine with anti-scam unlock protection, distance safeguards (>6m auto-cancel), and server-authoritative atomic swap execution.
-- [ ] **11.4 Wandering Town NPCs Synchronization (Population Sync):**
+- [x] **11.4 Wandering Town NPCs Synchronization (Population Sync):**
   - Synchronize civilian wandering NPCs (`PopulationManager` / `MobilePersonNPC`) across Host and Client.
   - Prevent pure clients from spawning autonomous, desynchronized random civilian mobs in settlements; synchronize population spawn seeds, billboards, and transforms with server authority.
 

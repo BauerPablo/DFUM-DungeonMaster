@@ -646,6 +646,38 @@ namespace DaggerfallWorkshop.Game.Networking
         public int receivedGold; // Gold transferred to this player
     }
 
+    #region Town Population Sync
+
+    /// <summary>
+    /// Synchronized state of a single civilian wandering NPC in a town or city.
+    /// </summary>
+    [Serializable]
+    public struct CivilianStateDTO
+    {
+        public int poolIndex;
+        public bool active;
+        public byte race;
+        public byte gender;
+        public byte outfitVariant;
+        public int faceRecordId;
+        public bool isGuard;
+        public string nameNPC;
+        public Vector3 position;
+        public bool isIdle;
+        public int moveCount;
+    }
+
+    /// <summary>
+    /// Broadcast from Server to Clients in the same location to synchronize wandering town civilians.
+    /// </summary>
+    public struct MsgPopulationSync : NetworkMessage
+    {
+        public int mapID;
+        public CivilianStateDTO[] civilians;
+    }
+
+    #endregion
+
     #endregion
 }
 

@@ -175,6 +175,46 @@ namespace DaggerfallWorkshop.Game
             SetPerson();
         }
 
+        /// <summary>
+        /// Applies network-synchronized person settings and updates billboard.
+        /// </summary>
+        public void ApplyNetworkPerson(Races race, Genders gender, int outfitVariant, bool isGuard, int faceRecordId, string nameNPC)
+        {
+            this.gender = gender;
+            this.personOutfitVariant = outfitVariant;
+            this.IsGuard = isGuard;
+            this.personFaceRecordId = faceRecordId;
+            this.nameNPC = nameNPC;
+
+            SetRace(race);
+
+            int[] recordIndices = null;
+            switch (race)
+            {
+                case Races.Redguard:
+                    recordIndices = (gender == Genders.Male) ? maleRedguardFaceRecordIndex : femaleRedguardFaceRecordIndex;
+                    break;
+                case Races.Nord:
+                    recordIndices = (gender == Genders.Male) ? maleNordFaceRecordIndex : femaleNordFaceRecordIndex;
+                    break;
+                case Races.Breton:
+                default:
+                    recordIndices = (gender == Genders.Male) ? maleBretonFaceRecordIndex : femaleBretonFaceRecordIndex;
+                    break;
+            }
+
+            int personFaceVariant = 0;
+            if (recordIndices != null && outfitVariant >= 0 && outfitVariant < recordIndices.Length)
+            {
+                personFaceVariant = Mathf.Clamp(faceRecordId - recordIndices[outfitVariant], 0, numPersonFaceVariants - 1);
+            }
+
+            if (Asset != null)
+            {
+                Asset.SetPerson(race, gender, personOutfitVariant, IsGuard, personFaceVariant, personFaceRecordId);
+            }
+        }
+
         #endregion
 
         #region Private Methods

@@ -61,6 +61,23 @@ namespace DaggerfallWorkshop.Game
             set { mobileAsset = value; }
         }
 
+        [Header("Multiplayer Client Proxy")]
+        public bool isClientProxy = false;
+        private Vector3 netTargetPosition = Vector3.zero;
+        private bool netIsIdle = false;
+
+        public void SetNetworkTarget(Vector3 targetPos, bool isIdle, int moves)
+        {
+            netTargetPosition = targetPos;
+            netIsIdle = isIdle;
+            moveCount = moves;
+
+            if (transform.position == Vector3.zero || Vector3.Distance(transform.position, targetPos) > 15f)
+            {
+                transform.position = targetPos;
+            }
+        }
+
         #endregion
 
         #region Structs & Enums
@@ -184,6 +201,20 @@ namespace DaggerfallWorkshop.Game
             // Do nothing if game paused
             if (GameManager.IsGamePaused)
                 return;
+
+            // In multiplayer client mode, lerp smoothly towards authoritative server position
+            if (isClientProxy)
+            {
+                if (netTargetPosition != Vector3.zero)
+                {
+                    transform.position = Vector3.Lerp(transform.position, netTargetPosition, Time.deltaTime * 6f);
+                }
+                if (mobileAsset != null)
+                {
+                    mobileAsset.IsIdle = netIsIdle;
+                }
+                return;
+            }
 
             // Do nothing if paralyzed
             if (entityBehaviour.Entity.IsParalyzed)
