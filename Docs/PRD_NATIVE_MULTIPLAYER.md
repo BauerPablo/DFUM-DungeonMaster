@@ -398,21 +398,29 @@ flowchart LR
 
 ---
 
-### Phase 11: Magic Spells & Player-to-Player Interaction
+### Phase 11: Magic Spells, Player Interactions & Town Population Sync
 
-**Goal:** Replicate visual magic effects, spells affecting party members, and direct player interactions.
+**Goal:** Replicate visual magic effects, route supportive and offensive spells between party members, provide direct player-to-player interactions (bilateral trading and map discovery sharing), and synchronize wandering civilian town NPCs.
 
 #### Tasks:
-- [ ] **11.1 Spell Effect Replication:**
-  - Replicate touch, target projectile, and area-of-effect visual particles and sound effects when players cast spells via `EntityEffectManager`.
-- [ ] **11.2 Supportive & Offensive Magic Routing:**
-  - Allow beneficial spells (healing, cure poison, water walking, levitation) to affect party members in reach.
-  - Configurable Friendly Fire / PvP damage toggle in Host Network Settings (`net_pvp on/off`).
-- [ ] **11.3 Direct Player Trading:**
-  - Allow players to directly initiate an item and gold trade window by clicking on a peer's avatar in close proximity.
+- [ ] **11.1 Spell Effect & Projectile Replication:**
+  - Replicate touch, target projectile (`DaggerfallMissile`), and area-of-effect (AOE) visual particles and casting/impact sound effects when players cast spells via `EntityEffectManager`.
+  - Broadcast `MsgCastSpell` so remote puppets trigger casting animations, audio, and visual projectile spawning.
+- [ ] **11.2 Supportive & Offensive Magic Routing (PvP Toggle):**
+  - Allow beneficial spells (healing, cure poison, water walking, levitation) to target and apply effect bundles to party members in range or by touch.
+  - Configurable Host-authoritative Friendly Fire / PvP damage toggle in Host Network Settings (`net_pvp on/off` and DM overlay toggle).
+- [x] **11.3 Direct Player-to-Player Interaction & Bilateral Trading:**
+  - In-world avatar click raycast within 3.5m opens an interactive character menu.
+  - **Map Discovery Sharing (`MsgShareMapData`):** Exchange discovered town locations and interior buildings between party members to synchronize automap exploration.
+  - **Bilateral Item & Gold Trading (`MsgTrade...`):** Mutual 2-column interface with real-time offer preview, inventory filtering, lock-and-accept state machine with anti-scam unlock protection, distance safeguards (>6m auto-cancel), and server-authoritative atomic swap execution.
+- [ ] **11.4 Wandering Town NPCs Synchronization (Population Sync):**
+  - Synchronize civilian wandering NPCs (`PopulationManager` / `MobilePersonNPC`) across Host and Client.
+  - Prevent pure clients from spawning autonomous, desynchronized random civilian mobs in settlements; synchronize population spawn seeds, billboards, and transforms with server authority.
 
 #### Verifiable Milestone 11:
-- Player A casts a healing spell or fireball; Player B sees the projectile trajectory and spell impact particles, with optional damage depending on PvP toggle.
+- Two players interact in town: Player A clicks Player B to share map discoveries or conduct a bilateral trade.
+- Both players see identical wandering civilian NPCs walking the streets without desynchronization.
+- Player A casts a fireball or healing spell; Player B sees the casting animation, projectile trajectory, and impact particles, receiving healing (supportive) or damage/resistance checks depending on the `net_pvp` toggle.
 
 ---
 
