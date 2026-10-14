@@ -9,8 +9,8 @@ This testing guide covers the **Quest Creator / Debug Menu**, multiplayer **Opt-
 
 | Status | Total Cases | Cases |
 | :--- | :---: | :--- |
-| **PASSED / VERIFIED** | **16** | Cases 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14, 15, 16, 17 |
-| **PENDING VERIFICATION (FIXED)** | **1** | Case 13 (Quest Monsters Replication) |
+| **PASSED / VERIFIED** | **17** | Cases 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17 |
+| **PENDING VERIFICATION** | **0** | None (Phase 10 Complete) |
 
 - **Vote Timeout:** Configured to `60s` (previously 15s).
 - **Dialogue Text:** Only overhead 3D bubbles appear; top HUD yellow notices removed.
@@ -150,16 +150,18 @@ This testing guide covers the **Quest Creator / Debug Menu**, multiplayer **Opt-
 
 ---
 
-### [ ] Case 13: Complete Multiplayer Quest Loop (End-to-End)
+### [x] Case 13: Complete Multiplayer Quest Loop (End-to-End)
 - **Goal:** Validate full lifecycle from acceptance to boss fight and reward turn-in.
-- [ ] Offer quest to party (**`Ctrl + F7`** -> `Offer to Party`). Both accept.
-- [ ] Warp party to objective dungeon (`dm_tp quest` or `Ctrl + F11`).
-- [ ] Enter dungeon/house together: Quest monster (e.g. Giant Scorpion) spawns for **both** Host and Client.
-- [ ] Client proxy enemy correctly matches cell context and attaches `QuestResourceBehaviour`.
-- [ ] Defeat the quest monster in co-op: Kill count increments on both Host and Client quests.
-- [ ] Journal updates for all party members indicating objective completed.
-- [ ] Warp back to questor (`dm_tp questor`).
-- [ ] Talk to questor to turn in quest: reward (gold/reputation) is granted.
+- [x] Offer quest to party (**`Ctrl + F7`** -> `Offer to Party`). Both accept.
+- [x] Warp party to objective dungeon (`dm_tp quest` or `Ctrl + F11`).
+- [x] Enter dungeon/house together: Quest monster (e.g. Giant Scorpion) spawns for **both** Host and Client.
+- [x] Client proxy enemy correctly matches cell context and attaches `QuestResourceBehaviour`.
+- [x] Defeat the quest monster in co-op: Kill count increments on both Host and Client quests.
+- [x] Journal updates for all party members indicating objective completed.
+- [x] Warp back to questor (`dm_tp questor`).
+- [x] Talk to questor to turn in quest: reward (gold/reputation) is granted.
+- [x] Clean journal closing & Tombstoning: Quest ends and clears from journal (**`L`**) on both Host and Client.
+- [x] Reputation inspector & manual host adjustments verified across all party members.
 
 ---
 
