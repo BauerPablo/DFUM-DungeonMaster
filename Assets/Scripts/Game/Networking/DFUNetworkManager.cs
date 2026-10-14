@@ -5746,7 +5746,7 @@ namespace DaggerfallWorkshop.Game.Networking
 
             GUILayout.Space(6);
             float totalLocalWeight = 0f;
-            foreach (var itm in localTradeItems) if (itm != null) totalLocalWeight += itm.weightInKG;
+            foreach (var itm in localTradeItems) if (itm != null) totalLocalWeight += itm.weightInKg;
             GUILayout.Label($"<b>Ítems Ofertados:</b> {localTradeItems.Count} ({totalLocalWeight:F1} kg)");
 
             localOfferScrollPos = GUILayout.BeginScrollView(localOfferScrollPos, GUILayout.Height(130));
@@ -5763,7 +5763,7 @@ namespace DaggerfallWorkshop.Game.Networking
 
                     GUILayout.BeginHorizontal();
                     string itmTitle = itm.stackCount > 1 ? $"{itm.ItemName} x{itm.stackCount}" : itm.ItemName;
-                    GUILayout.Label($"• {itmTitle} ({itm.weightInKG:F1}kg)", GUILayout.ExpandWidth(true));
+                    GUILayout.Label($"• {itmTitle} ({itm.weightInKg:F1}kg)", GUILayout.ExpandWidth(true));
                     if (!localTradeLocked && GUILayout.Button("X", GUILayout.Width(22), GUILayout.Height(18)))
                     {
                         localTradeItems.RemoveAt(i);
@@ -5791,14 +5791,15 @@ namespace DaggerfallWorkshop.Game.Networking
                     int addedAny = 0;
                     if (inv != null)
                     {
-                        foreach (DaggerfallUnityItem itm in inv)
+                        for (int i = 0; i < inv.Count; i++)
                         {
+                            DaggerfallUnityItem itm = inv.GetItem(i);
                             if (itm != null && !itm.IsEquipped && !itm.IsQuestItem && !localTradeItems.Contains(itm))
                             {
                                 addedAny++;
                                 GUILayout.BeginHorizontal();
                                 string itmTitle = itm.stackCount > 1 ? $"{itm.ItemName} x{itm.stackCount}" : itm.ItemName;
-                                if (GUILayout.Button($"+ {itmTitle} ({itm.weightInKG:F1}kg)", GUILayout.Height(20)))
+                                if (GUILayout.Button($"+ {itmTitle} ({itm.weightInKg:F1}kg)", GUILayout.Height(20)))
                                 {
                                     localTradeItems.Add(itm);
                                     localTradeLocked = false;
@@ -6060,7 +6061,7 @@ namespace DaggerfallWorkshop.Game.Networking
                     {
                         uid = itm.UID,
                         name = itm.ItemName,
-                        weight = itm.weightInKG,
+                        weight = itm.weightInKg,
                         stackCount = itm.stackCount,
                         value = itm.value
                     });
@@ -7297,7 +7298,7 @@ namespace DaggerfallWorkshop.Game.Networking
                 {
                     ApplyReceivedSpellBundle(msg);
                 }
-                else if (NetworkServer.connections.TryGetValue(targetConnId, out NetworkConnection conn) && conn != null && conn.isReady)
+                else if (NetworkServer.connections.TryGetValue(targetConnId, out NetworkConnectionToClient conn) && conn != null && conn.isReady)
                 {
                     conn.Send(msg);
                 }
@@ -7318,7 +7319,7 @@ namespace DaggerfallWorkshop.Game.Networking
             {
                 ApplyReceivedSpellBundle(msg);
             }
-            else if (NetworkServer.connections.TryGetValue(msg.targetConnectionId, out NetworkConnection targetConn) && targetConn != null && targetConn.isReady)
+            else if (NetworkServer.connections.TryGetValue(msg.targetConnectionId, out NetworkConnectionToClient targetConn) && targetConn != null && targetConn.isReady)
             {
                 targetConn.Send(msg);
             }

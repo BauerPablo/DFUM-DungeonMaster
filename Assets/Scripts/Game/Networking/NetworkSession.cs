@@ -41,6 +41,14 @@ namespace DaggerfallWorkshop.Game.Networking
         }
 
         /// <summary>
+        /// Alias for IsClient (pure client mode).
+        /// </summary>
+        public static bool IsClientOnly
+        {
+            get { return IsClient; }
+        }
+
+        /// <summary>
         /// Returns true if this instance is acting as host (both local server and client connected).
         /// </summary>
         public static bool IsHost
