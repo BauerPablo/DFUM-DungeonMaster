@@ -84,9 +84,7 @@ namespace DaggerfallWorkshop.Game.Networking
                 {
                     System.IO.Path.Combine(Application.streamingAssetsPath, "Textures/TEXTURE.488"),
                     System.IO.Path.Combine(Application.streamingAssetsPath, "TEXTURE.488"),
-                    System.IO.Path.Combine(Application.dataPath, "StreamingAssets/Textures/TEXTURE.488"),
-                    System.IO.Path.Combine(Application.dataPath, "Game/Mods/TanguyMultiplayer/Textures/Sprites/TEXTURE.488 (Medium Fighter)"),
-                    System.IO.Path.Combine(Application.dataPath, "../Assets/Game/Mods/TanguyMultiplayer/Textures/Sprites/TEXTURE.488 (Medium Fighter)")
+                    System.IO.Path.Combine(Application.dataPath, "StreamingAssets/Textures/TEXTURE.488")
                 };
 
                 string foundDir = null;

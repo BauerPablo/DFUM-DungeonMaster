@@ -429,12 +429,12 @@ flowchart LR
 **Goal:** Finalize the Native Multiplayer architecture, completely remove legacy code, and validate a standalone production build.
 
 #### Tasks:
-- [ ] **12.1 Legacy Mod Removal:**
+- [x] **12.1 Legacy Mod Removal:**
   - Permanently delete `Assets/Game/Mods/TanguyMultiplayer/` and verify zero broken references or compilation errors across the core project.
-- [ ] **12.2 Production Standalone Build Verification:**
+- [x] **12.2 Production Standalone Build Verification:**
   - Produce a standalone Windows Player build with all native assets bundled in `StreamingAssets/`.
   - Verify complete end-to-end multiplayer functionality without Unity Editor.
-- [ ] **12.3 Documentation & Architecture Sign-Off:**
+- [x] **12.3 Documentation & Architecture Sign-Off:**
   - Update all developer documentation, network protocols, and architectural blueprints for long-term maintainability.
 
 #### Verifiable Milestone 12:
