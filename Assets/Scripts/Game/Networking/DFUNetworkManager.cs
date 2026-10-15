@@ -27,6 +27,7 @@ using DaggerfallConnect.Utility;
 using DaggerfallWorkshop.Game.Utility;
 using DaggerfallWorkshop.Game.MagicAndEffects;
 using DaggerfallConnect.Save;
+using DaggerfallConnect.FallExe;
 
 namespace DaggerfallWorkshop.Game.Networking
 {
