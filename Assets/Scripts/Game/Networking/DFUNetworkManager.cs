@@ -50,6 +50,21 @@ namespace DaggerfallWorkshop.Game.Networking
         [Tooltip("Default port for KCP transport")]
         public ushort defaultPort = 7777;
 
+        [Tooltip("Unified TTRPG Master Suite overlay (toggle via Ctrl+F11 or console command ttrpg_gui / dm_gui)")]
+        public bool showTtrpgSuite = false;
+        private Rect ttrpgSuiteRect = new Rect(200, 20, 660, 620);
+        public int ttrpgSelectedTab = 0;
+        public readonly string[] ttrpgTabNames = new string[]
+        {
+            "Red & Sesión",
+            "Spawns & NPCs",
+            "Mundo & Clima",
+            "Quests & Diálogos",
+            "Loot & Forja",
+            "Party & DM"
+        };
+        private Vector2 ttrpgSuiteScrollPos = Vector2.zero;
+
         [Tooltip("Show in-game network debug overlay (toggle via console command net_gui)")]
         public bool showDebugGui = false;
 
@@ -151,7 +166,7 @@ namespace DaggerfallWorkshop.Game.Networking
         /// <summary>
         /// True if any network, DM, loot, quest, player interaction, or trade debug overlay is open.
         /// </summary>
-        public bool IsAnyGuiOpen => showDebugGui || showDmGui || showLootGui || showQuestGui || showPlayerInteractionWindow || showTradeWindow || showTradeInvitePrompt;
+        public bool IsAnyGuiOpen => showTtrpgSuite || showDebugGui || showDmGui || showLootGui || showQuestGui || showPlayerInteractionWindow || showTradeWindow || showTradeInvitePrompt;
 
         private KcpTransport kcpTransport;
 
@@ -272,24 +287,42 @@ namespace DaggerfallWorkshop.Game.Networking
         {
             bool ctrlHeld = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
 
-            if (ctrlHeld && Input.GetKeyDown(KeyCode.F10))
-            {
-                showDebugGui = !showDebugGui;
-            }
-
             if (ctrlHeld && Input.GetKeyDown(KeyCode.F11))
             {
-                showDmGui = !showDmGui;
+                showTtrpgSuite = !showTtrpgSuite;
+            }
+
+            if (ctrlHeld && Input.GetKeyDown(KeyCode.F10))
+            {
+                if (showTtrpgSuite && ttrpgSelectedTab == 0)
+                    showTtrpgSuite = false;
+                else
+                {
+                    showTtrpgSuite = true;
+                    ttrpgSelectedTab = 0;
+                }
             }
 
             if (ctrlHeld && Input.GetKeyDown(KeyCode.F12))
             {
-                showLootGui = !showLootGui;
+                if (showTtrpgSuite && ttrpgSelectedTab == 4)
+                    showTtrpgSuite = false;
+                else
+                {
+                    showTtrpgSuite = true;
+                    ttrpgSelectedTab = 4;
+                }
             }
 
             if (ctrlHeld && Input.GetKeyDown(KeyCode.F7))
             {
-                showQuestGui = !showQuestGui;
+                if (showTtrpgSuite && ttrpgSelectedTab == 3)
+                    showTtrpgSuite = false;
+                else
+                {
+                    showTtrpgSuite = true;
+                    ttrpgSelectedTab = 3;
+                }
             }
 
             if (ctrlHeld && Input.GetKeyDown(KeyCode.F8))
@@ -298,10 +331,15 @@ namespace DaggerfallWorkshop.Game.Networking
                     FreeCamController.Instance.ToggleFreeCam();
             }
 
-            if (showDebugGui || showDmGui || showLootGui || showQuestGui || showPlayerInteractionWindow || showTradeWindow || showTradeInvitePrompt)
+            if (showTtrpgSuite || showDebugGui || showDmGui || showLootGui || showQuestGui || showPlayerInteractionWindow || showTradeWindow || showTradeInvitePrompt)
             {
                 Cursor.lockState = CursorLockMode.None;
                 Cursor.visible = true;
+            }
+
+            if (showTtrpgSuite && Input.GetKeyDown(KeyCode.Escape))
+            {
+                showTtrpgSuite = false;
             }
 
             if (showTradeInvitePrompt)
@@ -2548,6 +2586,12 @@ namespace DaggerfallWorkshop.Game.Networking
                 GUI.color = prevColor;
             }
 
+            if (showTtrpgSuite)
+            {
+                GUI.depth = -999;
+                ttrpgSuiteRect = GUI.Window(987653, ttrpgSuiteRect, DrawTtrpgMasterWindow, "DFU TTRPG MASTER SUITE (Ctrl+F11)");
+            }
+
             if (showDebugGui)
             {
                 GUI.depth = -999;
@@ -2594,10 +2638,79 @@ namespace DaggerfallWorkshop.Game.Networking
             DrawDialogueBubbles();
         }
 
+        private void DrawTtrpgMasterWindow(int windowId)
+        {
+            GUILayout.Space(2);
+
+            // Tab bar with pixel-art / retro styling
+            GUILayout.BeginHorizontal();
+            for (int i = 0; i < ttrpgTabNames.Length; i++)
+            {
+                bool isSelected = (ttrpgSelectedTab == i);
+                string tabTitle = isSelected ? $"<b><color=#FFD700>[ {ttrpgTabNames[i]} ]</color></b>" : ttrpgTabNames[i];
+                if (GUILayout.Button(tabTitle, GUILayout.Height(28)))
+                {
+                    ttrpgSelectedTab = i;
+                }
+            }
+            GUILayout.EndHorizontal();
+
+            GUILayout.Space(6);
+
+            // Scroll view for tab content
+            ttrpgSuiteScrollPos = GUILayout.BeginScrollView(ttrpgSuiteScrollPos);
+
+            switch (ttrpgSelectedTab)
+            {
+                case 0:
+                    DrawNetworkWindowContent();
+                    break;
+                case 1:
+                    DrawSpawnsTabContent();
+                    break;
+                case 2:
+                    DrawWorldTabContent();
+                    break;
+                case 3:
+                    DrawQuestWindowContent();
+                    break;
+                case 4:
+                    DrawLootWindowContent();
+                    break;
+                case 5:
+                    DrawPartyDmTabContent();
+                    break;
+            }
+
+            GUILayout.EndScrollView();
+
+            GUILayout.Space(6);
+            GUILayout.BeginHorizontal();
+            GUILayout.Label($"<color=#AAAAAA>Role: {NetworkSession.GetStatusString()}</color>", GUILayout.ExpandWidth(true));
+            if (GUILayout.Button("Cerrar (Esc / Ctrl+F11)", GUILayout.Width(170), GUILayout.Height(24)))
+            {
+                showTtrpgSuite = false;
+            }
+            GUILayout.EndHorizontal();
+
+            GUI.DragWindow();
+        }
+
         private void DrawNetworkWindow(int windowId)
         {
+            DrawNetworkWindowContent();
+            GUILayout.Space(8);
+            if (GUILayout.Button("Quest Creator / Test Menu (Ctrl+F7)", GUILayout.Height(26)))
+            {
+                showQuestGui = !showQuestGui;
+            }
+            GUI.DragWindow();
+        }
+
+        private void DrawNetworkWindowContent()
+        {
             GUILayout.Space(5);
-            GUILayout.Label($"Status: {NetworkSession.GetStatusString()}");
+            GUILayout.Label($"<b>Status:</b> {NetworkSession.GetStatusString()}");
 
             if (NetworkSession.IsSinglePlayer)
             {
@@ -2648,14 +2761,6 @@ namespace DaggerfallWorkshop.Game.Networking
             LogSpawnsEnabled = GUILayout.Toggle(LogSpawnsEnabled, "Spawns/Despawns");
             LogLootEnabled = GUILayout.Toggle(LogLootEnabled, "Loot Containers");
             LogTransitionsEnabled = GUILayout.Toggle(LogTransitionsEnabled, "Transitions");
-
-            GUILayout.Space(8);
-            if (GUILayout.Button("Quest Creator / Test Menu (Ctrl+F7)", GUILayout.Height(26)))
-            {
-                showQuestGui = !showQuestGui;
-            }
-
-            GUI.DragWindow();
         }
 
         public void ToggleDmInvisibility()
@@ -2827,327 +2932,11 @@ namespace DaggerfallWorkshop.Game.Networking
             }
             else
             {
-                // World Time controls
-                GUILayout.Space(5);
-                GUILayout.Label("<b>--- World Time ---</b>");
-                if (DaggerfallUnity.Instance != null && DaggerfallUnity.Instance.WorldTime != null)
-                {
-                    var wt = DaggerfallUnity.Instance.WorldTime;
-                    GUILayout.Label($"Time: {wt.Now.ShortTimeString()} {wt.Now.DateString()} ({wt.TimeScale}x)");
-                }
-                else
-                {
-                    GUILayout.Label("WorldTime unavailable");
-                }
-
-                GUILayout.BeginHorizontal();
-                if (GUILayout.Button("Dawn (06:00)")) SetWorldTime(6, 0);
-                if (GUILayout.Button("Noon (12:00)")) SetWorldTime(12, 0);
-                GUILayout.EndHorizontal();
-
-                GUILayout.BeginHorizontal();
-                if (GUILayout.Button("Dusk (18:00)")) SetWorldTime(18, 0);
-                if (GUILayout.Button("Midnight (00:00)")) SetWorldTime(0, 0);
-                GUILayout.EndHorizontal();
-
-                GUILayout.Label("Time Scale:");
-                GUILayout.BeginHorizontal();
-                if (GUILayout.Button("Pause (0x)")) SetWorldTimeScale(0f);
-                if (GUILayout.Button("Real (1x)")) SetWorldTimeScale(1f);
-                if (GUILayout.Button("Norm (12x)")) SetWorldTimeScale(12f);
-                if (GUILayout.Button("Fast (60x)")) SetWorldTimeScale(60f);
-                GUILayout.EndHorizontal();
-
-                // Weather controls
-                GUILayout.Space(5);
-                GUILayout.Label("<b>--- Weather ---</b>");
-                WeatherManager wm = GameManager.Instance != null ? GameManager.Instance.WeatherManager : null;
-                string weatherName = wm != null ? wm.CurrentWeather.ToString() : "Unknown";
-                GUILayout.Label($"Current Weather: <b>{weatherName}</b>");
-
-                GUILayout.BeginHorizontal();
-                if (GUILayout.Button("Sunny")) SetWorldWeather(WeatherType.Sunny);
-                if (GUILayout.Button("Cloudy")) SetWorldWeather(WeatherType.Cloudy);
-                if (GUILayout.Button("Overcast")) SetWorldWeather(WeatherType.Overcast);
-                if (GUILayout.Button("Fog")) SetWorldWeather(WeatherType.Fog);
-                GUILayout.EndHorizontal();
-
-                GUILayout.BeginHorizontal();
-                if (GUILayout.Button("Rain")) SetWorldWeather(WeatherType.Rain);
-                if (GUILayout.Button("Thunder")) SetWorldWeather(WeatherType.Thunder);
-                if (GUILayout.Button("Snow")) SetWorldWeather(WeatherType.Snow);
-                GUILayout.EndHorizontal();
-
+                DrawSpawnsTabContent();
                 GUILayout.Space(10);
-                GUILayout.Label("<b>--- Enemy Spawner ---</b>");
-                MobileTypes currentEnemy = dmEnemies[selectedDmIndex];
-                GUILayout.Label($"Enemy: <b>{currentEnemy}</b>");
-
-                GUILayout.BeginHorizontal();
-                if (GUILayout.Button("< Prev") && selectedDmIndex > 0)
-                {
-                    selectedDmIndex--;
-                }
-                if (GUILayout.Button("Next >") && selectedDmIndex < dmEnemies.Length - 1)
-                {
-                    selectedDmIndex++;
-                }
-                GUILayout.EndHorizontal();
-
-                GUILayout.Space(5);
-                if (GUILayout.Button($"Spawn {currentEnemy} (2m Front)", GUILayout.Height(30)))
-                {
-                    SpawnEnemyInFrontOfPlayer(currentEnemy);
-                }
-
-                GUILayout.Space(5);
-                GUILayout.Label("Quick Spawns:");
-                GUILayout.BeginHorizontal();
-                if (GUILayout.Button("Rat"))
-                    SpawnEnemyInFrontOfPlayer(MobileTypes.Rat);
-                if (GUILayout.Button("Bat"))
-                    SpawnEnemyInFrontOfPlayer(MobileTypes.GiantBat);
-                if (GUILayout.Button("Skeleton"))
-                    SpawnEnemyInFrontOfPlayer(MobileTypes.SkeletalWarrior);
-                GUILayout.EndHorizontal();
-
-                GUILayout.BeginHorizontal();
-                if (GUILayout.Button("Thief"))
-                    SpawnEnemyInFrontOfPlayer(MobileTypes.Thief);
-                if (GUILayout.Button("Zombie"))
-                    SpawnEnemyInFrontOfPlayer(MobileTypes.Zombie);
-                if (GUILayout.Button("Bear"))
-                    SpawnEnemyInFrontOfPlayer(MobileTypes.GrizzlyBear);
-                GUILayout.EndHorizontal();
-
-                GUILayout.Space(5);
-                GUILayout.Label("Authoritative Despawn:");
-                GUILayout.BeginHorizontal();
-                if (GUILayout.Button("Despawn Last", GUILayout.Height(24)))
-                {
-                    DespawnLastEnemy();
-                }
-                if (GUILayout.Button("Despawn All", GUILayout.Height(24)))
-                {
-                    DespawnAllSpawnedEnemies();
-                }
-                GUILayout.EndHorizontal();
-
-                GUILayout.Space(8);
-                GUILayout.Label("<b>--- DM Teleportation ---</b>");
-
-                DFPosition curPixel = GameManager.Instance.PlayerGPS != null ? GameManager.Instance.PlayerGPS.CurrentMapPixel : new DFPosition(0, 0);
-                string curLoc = GameManager.Instance.PlayerGPS != null && GameManager.Instance.PlayerGPS.CurrentLocation.Loaded
-                    ? GameManager.Instance.PlayerGPS.CurrentLocation.Name
-                    : "Wilderness";
-                GUILayout.Label($"Current: ({curPixel.X}, {curPixel.Y}) - {curLoc}");
-
-                GUILayout.BeginHorizontal();
-                GUILayout.Label("Map X:", GUILayout.Width(45));
-                dmTpInputX = GUILayout.TextField(dmTpInputX, GUILayout.Width(45));
-                GUILayout.Label("Y:", GUILayout.Width(20));
-                dmTpInputY = GUILayout.TextField(dmTpInputY, GUILayout.Width(45));
-                if (GUILayout.Button("Here", GUILayout.Width(45)))
-                {
-                    dmTpInputX = curPixel.X.ToString();
-                    dmTpInputY = curPixel.Y.ToString();
-                }
-                GUILayout.EndHorizontal();
-
-                int.TryParse(dmTpInputX, out int dmTargetX);
-                int.TryParse(dmTpInputY, out int dmTargetY);
-
-                GUILayout.BeginHorizontal();
-                if (GUILayout.Button($"TP Me ({dmTargetX}, {dmTargetY})", GUILayout.Height(24)))
-                {
-                    TeleportLocalPlayer(dmTargetX, dmTargetY);
-                    DaggerfallUI.AddHUDText($"[DM TP] Teleported to ({dmTargetX}, {dmTargetY})");
-                }
-                if (GUILayout.Button($"Warp Party ({dmTargetX}, {dmTargetY})", GUILayout.Height(24)))
-                {
-                    if (NetworkSession.IsHost)
-                    {
-                        ExecuteHostAuthoritativeTravel(dmTargetX, dmTargetY, false, $"Coordinates ({dmTargetX}, {dmTargetY})|Iliac Bay|0|0");
-                    }
-                    else
-                    {
-                        InitiatePartyTravelVote($"Coords ({dmTargetX}, {dmTargetY})", "Iliac Bay", dmTargetX, dmTargetY, 0, 0, 0, false, false, false);
-                    }
-                }
-                GUILayout.EndHorizontal();
-
-                // Quick Quest Teleports in DM window
-                ulong[] activeQuests = QuestMachine.Instance != null ? QuestMachine.Instance.GetAllActiveQuests() : null;
-                if (activeQuests != null && activeQuests.Length > 0)
-                {
-                    Quest firstQuest = QuestMachine.Instance.GetQuest(activeQuests[0]);
-                    if (firstQuest != null)
-                    {
-                        QuestResource[] places = firstQuest.GetAllResources(typeof(Place));
-                        Place objPlace = null;
-                        if (places != null)
-                        {
-                            foreach (var pRes in places)
-                            {
-                                Place p = pRes as Place;
-                                if (p != null && !string.IsNullOrEmpty(p.SiteDetails.locationName))
-                                {
-                                    objPlace = p;
-                                    break;
-                                }
-                            }
-                        }
-
-                        if (objPlace != null)
-                        {
-                            SiteDetails site = objPlace.SiteDetails;
-                            DFLocation dfLoc = new DFLocation();
-                            if (DaggerfallUnity.Instance != null && DaggerfallUnity.Instance.ContentReader != null &&
-                                DaggerfallUnity.Instance.ContentReader.GetLocation(site.regionName, site.locationName, out dfLoc))
-                            {
-                                DFPosition objCoords = MapsFile.LongitudeLatitudeToMapPixel(dfLoc.MapTableData.Longitude, dfLoc.MapTableData.Latitude);
-                                GUILayout.Space(2);
-                                GUILayout.BeginHorizontal();
-                                if (GUILayout.Button($"TP Quest: {site.locationName}", GUILayout.Height(22)))
-                                {
-                                    TeleportLocalPlayer(objCoords.X, objCoords.Y);
-                                    DaggerfallUI.AddHUDText($"[DM TP] Teleported to {site.locationName} ({objCoords.X}, {objCoords.Y})");
-                                }
-                                if (GUILayout.Button("Warp Party", GUILayout.Width(80), GUILayout.Height(22)))
-                                {
-                                    if (NetworkSession.IsHost)
-                                    {
-                                        ExecuteHostAuthoritativeTravel(objCoords.X, objCoords.Y, false, $"{site.locationName}|{site.regionName}|0|0");
-                                    }
-                                    else
-                                    {
-                                        InitiatePartyTravelVote(site.locationName, site.regionName, objCoords.X, objCoords.Y, 0, 0, 0, false, false, false);
-                                    }
-                                }
-                                GUILayout.EndHorizontal();
-                            }
-                        }
-                    }
-                }
-
-                GUILayout.Space(4);
-                if (GUILayout.Button("Gather Party to Host", GUILayout.Height(24)))
-                {
-                    GatherPartyToHost();
-                }
-
-                GUILayout.Space(8);
-                GUILayout.Label("<b>--- DM Tools & Observer ---</b>");
-                string invisLabel = isDmInvisible ? "DM Invisibility: [ON]" : "DM Invisibility: [OFF]";
-                if (GUILayout.Button(invisLabel, GUILayout.Height(24)))
-                {
-                    ToggleDmInvisibility();
-                }
-
-                bool godOn = GameManager.Instance != null && GameManager.Instance.PlayerEntity != null && GameManager.Instance.PlayerEntity.GodMode;
-                string godLabel = godOn ? "God Mode (Invincible): [ON]" : "God Mode (Invincible): [OFF]";
-                if (GUILayout.Button(godLabel, GUILayout.Height(24)))
-                {
-                    ToggleDmGodMode();
-                }
-
-                bool freeCamOn = FreeCamController.Instance != null && FreeCamController.Instance.IsActive;
-                string freeCamLabel = freeCamOn ? "Eagle Eye / FreeCam (Ctrl+F8): [ACTIVE]" : "Eagle Eye / FreeCam (Ctrl+F8): [INACTIVE]";
-                if (GUILayout.Button(freeCamLabel, GUILayout.Height(24)))
-                {
-                    if (FreeCamController.Instance != null)
-                        FreeCamController.Instance.ToggleFreeCam();
-                }
-
-                GUILayout.Space(8);
-                GUILayout.Label("<b>--- PvP & Friendly Fire ---</b>");
-                bool newPvp = GUILayout.Toggle(isPvpAllowed, " Friendly Fire / PvP (net_pvp)");
-                if (newPvp != isPvpAllowed)
-                {
-                    SetPvpAllowed(newPvp);
-                }
-
-                GUILayout.Space(8);
-                GUILayout.Label("<b>--- Grant / Teach Spells ---</b>");
-                GUILayout.Label("Teach spells to yourself or connected party members:");
-
-                List<int> targetOptions = new List<int> { 0 };
-                List<string> targetNames = new List<string> { "Self (Host/DM)" };
-                foreach (var kvp in connectedPlayerProfiles)
-                {
-                    if (kvp.Key != 0)
-                    {
-                        targetOptions.Add(kvp.Key);
-                        targetNames.Add($"{kvp.Value.playerName} (ID {kvp.Key})");
-                    }
-                }
-
-                GUILayout.BeginHorizontal();
-                GUILayout.Label("Target:", GUILayout.Width(45));
-                if (GUILayout.Button("<", GUILayout.Width(24)) && selectedDmSpellTargetIndex > 0)
-                    selectedDmSpellTargetIndex--;
-                selectedDmSpellTargetIndex = Mathf.Clamp(selectedDmSpellTargetIndex, 0, targetOptions.Count - 1);
-                GUILayout.Label($"<b>{targetNames[selectedDmSpellTargetIndex]}</b>", GUILayout.ExpandWidth(true));
-                if (GUILayout.Button(">", GUILayout.Width(24)) && selectedDmSpellTargetIndex < targetOptions.Count - 1)
-                    selectedDmSpellTargetIndex++;
-                GUILayout.EndHorizontal();
-
-                int targetConnId = targetOptions[selectedDmSpellTargetIndex];
-
-                GUILayout.Space(4);
-                GUILayout.Label("Quick Spells:");
-                GUILayout.BeginHorizontal();
-                if (GUILayout.Button("Fireball")) TeachDmSpellToTarget(targetConnId, "Fireball");
-                if (GUILayout.Button("Wizard's Fire")) TeachDmSpellToTarget(targetConnId, "Wizard's Fire");
-                if (GUILayout.Button("Shock")) TeachDmSpellToTarget(targetConnId, "Shock");
-                GUILayout.EndHorizontal();
-
-                GUILayout.BeginHorizontal();
-                if (GUILayout.Button("Ice Storm")) TeachDmSpellToTarget(targetConnId, "Ice Storm");
-                if (GUILayout.Button("Toxic Cloud")) TeachDmSpellToTarget(targetConnId, "Toxic Cloud");
-                if (GUILayout.Button("Levitate")) TeachDmSpellToTarget(targetConnId, "Levitate");
-                GUILayout.EndHorizontal();
-
-                GUILayout.BeginHorizontal();
-                if (GUILayout.Button("Free Action")) TeachDmSpellToTarget(targetConnId, "Free Action");
-                if (GUILayout.Button("Heal")) TeachDmSpellToTarget(targetConnId, "Heal");
-                if (GUILayout.Button("Invisibility")) TeachDmSpellToTarget(targetConnId, "Invisibility (Normal)");
-                GUILayout.EndHorizontal();
-
-                GUILayout.BeginHorizontal();
-                if (GUILayout.Button("Cure Poison")) TeachDmSpellToTarget(targetConnId, "Cure Poison");
-                if (GUILayout.Button("Light")) TeachDmSpellToTarget(targetConnId, "Light");
-                if (GUILayout.Button("Open")) TeachDmSpellToTarget(targetConnId, "Open");
-                GUILayout.EndHorizontal();
-
-                GUILayout.Space(4);
-                GUILayout.BeginHorizontal();
-                GUILayout.Label("Search:", GUILayout.Width(50));
-                dmSpellFilter = GUILayout.TextField(dmSpellFilter ?? "", GUILayout.ExpandWidth(true));
-                if (GUILayout.Button("X", GUILayout.Width(22))) dmSpellFilter = "";
-                GUILayout.EndHorizontal();
-
-                if (!string.IsNullOrEmpty(dmSpellFilter) && dmSpellFilter.Length >= 2 && GameManager.Instance.EntityEffectBroker != null)
-                {
-                    dmSpellListScrollPos = GUILayout.BeginScrollView(dmSpellListScrollPos, GUILayout.Height(100));
-                    int matches = 0;
-                    foreach (var s in GameManager.Instance.EntityEffectBroker.StandardSpells)
-                    {
-                        if (!string.IsNullOrEmpty(s.spellName) && !s.spellName.StartsWith("!") &&
-                            s.spellName.IndexOf(dmSpellFilter, StringComparison.OrdinalIgnoreCase) >= 0)
-                        {
-                            matches++;
-                            if (GUILayout.Button($"Teach: {s.spellName}"))
-                            {
-                                TeachDmSpellToTarget(targetConnId, s.spellName, s.index);
-                            }
-                            if (matches >= 20) break;
-                        }
-                    }
-                    if (matches == 0)
-                        GUILayout.Label("<color=#888888><i>No matching spells found.</i></color>");
-                    GUILayout.EndScrollView();
-                }
+                DrawWorldTabContent();
+                GUILayout.Space(10);
+                DrawPartyDmTabContent();
             }
 
             GUILayout.Space(5);
@@ -3167,7 +2956,364 @@ namespace DaggerfallWorkshop.Game.Networking
             GUI.DragWindow();
         }
 
+        private void DrawSpawnsTabContent()
+        {
+            GUILayout.Space(5);
+            if (!NetworkSession.ShouldHandleSpawns)
+            {
+                GUILayout.Label("Spawns & NPC controls are only allowed on the Host/Server (or DM).", GUI.skin.box);
+                return;
+            }
+
+            GUILayout.Label("<b><color=#FFD700>--- Enemy & Monster Spawner ---</color></b>");
+            MobileTypes currentEnemy = dmEnemies[selectedDmIndex];
+            GUILayout.Label($"Selected Enemy: <b>{currentEnemy}</b>");
+
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("< Prev") && selectedDmIndex > 0)
+            {
+                selectedDmIndex--;
+            }
+            if (GUILayout.Button("Next >") && selectedDmIndex < dmEnemies.Length - 1)
+            {
+                selectedDmIndex++;
+            }
+            GUILayout.EndHorizontal();
+
+            GUILayout.Space(5);
+            if (GUILayout.Button($"Spawn {currentEnemy} (2m Front)", GUILayout.Height(30)))
+            {
+                SpawnEnemyInFrontOfPlayer(currentEnemy);
+            }
+
+            GUILayout.Space(6);
+            GUILayout.Label("<b>Quick Spawns:</b>");
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("Rat"))
+                SpawnEnemyInFrontOfPlayer(MobileTypes.Rat);
+            if (GUILayout.Button("Bat"))
+                SpawnEnemyInFrontOfPlayer(MobileTypes.GiantBat);
+            if (GUILayout.Button("Skeleton"))
+                SpawnEnemyInFrontOfPlayer(MobileTypes.SkeletalWarrior);
+            GUILayout.EndHorizontal();
+
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("Thief"))
+                SpawnEnemyInFrontOfPlayer(MobileTypes.Thief);
+            if (GUILayout.Button("Zombie"))
+                SpawnEnemyInFrontOfPlayer(MobileTypes.Zombie);
+            if (GUILayout.Button("Bear"))
+                SpawnEnemyInFrontOfPlayer(MobileTypes.GrizzlyBear);
+            GUILayout.EndHorizontal();
+
+            GUILayout.Space(8);
+            GUILayout.Label("<b>Authoritative Despawn:</b>");
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("Despawn Last", GUILayout.Height(24)))
+            {
+                DespawnLastEnemy();
+            }
+            if (GUILayout.Button("Despawn All", GUILayout.Height(24)))
+            {
+                DespawnAllSpawnedEnemies();
+            }
+            GUILayout.EndHorizontal();
+        }
+
+        private void DrawWorldTabContent()
+        {
+            GUILayout.Space(5);
+            if (!NetworkSession.ShouldHandleSpawns)
+            {
+                GUILayout.Label("World controls & DM teleportation are only allowed on the Host/Server (or DM).", GUI.skin.box);
+                return;
+            }
+
+            // World Time controls
+            GUILayout.Label("<b><color=#FFD700>--- World Time ---</color></b>");
+            if (DaggerfallUnity.Instance != null && DaggerfallUnity.Instance.WorldTime != null)
+            {
+                var wt = DaggerfallUnity.Instance.WorldTime;
+                GUILayout.Label($"Time: {wt.Now.ShortTimeString()} {wt.Now.DateString()} ({wt.TimeScale}x)");
+            }
+            else
+            {
+                GUILayout.Label("WorldTime unavailable");
+            }
+
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("Dawn (06:00)")) SetWorldTime(6, 0);
+            if (GUILayout.Button("Noon (12:00)")) SetWorldTime(12, 0);
+            GUILayout.EndHorizontal();
+
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("Dusk (18:00)")) SetWorldTime(18, 0);
+            if (GUILayout.Button("Midnight (00:00)")) SetWorldTime(0, 0);
+            GUILayout.EndHorizontal();
+
+            GUILayout.Label("Time Scale:");
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("Pause (0x)")) SetWorldTimeScale(0f);
+            if (GUILayout.Button("Real (1x)")) SetWorldTimeScale(1f);
+            if (GUILayout.Button("Norm (12x)")) SetWorldTimeScale(12f);
+            if (GUILayout.Button("Fast (60x)")) SetWorldTimeScale(60f);
+            GUILayout.EndHorizontal();
+
+            // Weather controls
+            GUILayout.Space(8);
+            GUILayout.Label("<b><color=#FFD700>--- Weather ---</color></b>");
+            WeatherManager wm = GameManager.Instance != null ? GameManager.Instance.WeatherManager : null;
+            string weatherName = wm != null ? wm.CurrentWeather.ToString() : "Unknown";
+            GUILayout.Label($"Current Weather: <b>{weatherName}</b>");
+
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("Sunny")) SetWorldWeather(WeatherType.Sunny);
+            if (GUILayout.Button("Cloudy")) SetWorldWeather(WeatherType.Cloudy);
+            if (GUILayout.Button("Overcast")) SetWorldWeather(WeatherType.Overcast);
+            if (GUILayout.Button("Fog")) SetWorldWeather(WeatherType.Fog);
+            GUILayout.EndHorizontal();
+
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("Rain")) SetWorldWeather(WeatherType.Rain);
+            if (GUILayout.Button("Thunder")) SetWorldWeather(WeatherType.Thunder);
+            if (GUILayout.Button("Snow")) SetWorldWeather(WeatherType.Snow);
+            GUILayout.EndHorizontal();
+
+            // DM Teleportation
+            GUILayout.Space(8);
+            GUILayout.Label("<b><color=#FFD700>--- DM Teleportation ---</color></b>");
+
+            DFPosition curPixel = GameManager.Instance.PlayerGPS != null ? GameManager.Instance.PlayerGPS.CurrentMapPixel : new DFPosition(0, 0);
+            string curLoc = GameManager.Instance.PlayerGPS != null && GameManager.Instance.PlayerGPS.CurrentLocation.Loaded
+                ? GameManager.Instance.PlayerGPS.CurrentLocation.Name
+                : "Wilderness";
+            GUILayout.Label($"Current: ({curPixel.X}, {curPixel.Y}) - {curLoc}");
+
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Map X:", GUILayout.Width(45));
+            dmTpInputX = GUILayout.TextField(dmTpInputX, GUILayout.Width(45));
+            GUILayout.Label("Y:", GUILayout.Width(20));
+            dmTpInputY = GUILayout.TextField(dmTpInputY, GUILayout.Width(45));
+            if (GUILayout.Button("Here", GUILayout.Width(45)))
+            {
+                dmTpInputX = curPixel.X.ToString();
+                dmTpInputY = curPixel.Y.ToString();
+            }
+            GUILayout.EndHorizontal();
+
+            int.TryParse(dmTpInputX, out int dmTargetX);
+            int.TryParse(dmTpInputY, out int dmTargetY);
+
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button($"TP Me ({dmTargetX}, {dmTargetY})", GUILayout.Height(24)))
+            {
+                TeleportLocalPlayer(dmTargetX, dmTargetY);
+                DaggerfallUI.AddHUDText($"[DM TP] Teleported to ({dmTargetX}, {dmTargetY})");
+            }
+            if (GUILayout.Button($"Warp Party ({dmTargetX}, {dmTargetY})", GUILayout.Height(24)))
+            {
+                if (NetworkSession.IsHost)
+                {
+                    ExecuteHostAuthoritativeTravel(dmTargetX, dmTargetY, false, $"Coordinates ({dmTargetX}, {dmTargetY})|Iliac Bay|0|0");
+                }
+                else
+                {
+                    InitiatePartyTravelVote($"Coords ({dmTargetX}, {dmTargetY})", "Iliac Bay", dmTargetX, dmTargetY, 0, 0, 0, false, false, false);
+                }
+            }
+            GUILayout.EndHorizontal();
+
+            // Quick Quest Teleports
+            ulong[] activeQuests = QuestMachine.Instance != null ? QuestMachine.Instance.GetAllActiveQuests() : null;
+            if (activeQuests != null && activeQuests.Length > 0)
+            {
+                Quest firstQuest = QuestMachine.Instance.GetQuest(activeQuests[0]);
+                if (firstQuest != null)
+                {
+                    QuestResource[] places = firstQuest.GetAllResources(typeof(Place));
+                    Place objPlace = null;
+                    if (places != null)
+                    {
+                        foreach (var pRes in places)
+                        {
+                            Place p = pRes as Place;
+                            if (p != null && !string.IsNullOrEmpty(p.SiteDetails.locationName))
+                            {
+                                objPlace = p;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (objPlace != null)
+                    {
+                        SiteDetails site = objPlace.SiteDetails;
+                        DFLocation dfLoc = new DFLocation();
+                        if (DaggerfallUnity.Instance != null && DaggerfallUnity.Instance.ContentReader != null &&
+                            DaggerfallUnity.Instance.ContentReader.GetLocation(site.regionName, site.locationName, out dfLoc))
+                        {
+                            DFPosition objCoords = MapsFile.LongitudeLatitudeToMapPixel(dfLoc.MapTableData.Longitude, dfLoc.MapTableData.Latitude);
+                            GUILayout.Space(2);
+                            GUILayout.BeginHorizontal();
+                            if (GUILayout.Button($"TP Quest: {site.locationName}", GUILayout.Height(22)))
+                            {
+                                TeleportLocalPlayer(objCoords.X, objCoords.Y);
+                                DaggerfallUI.AddHUDText($"[DM TP] Teleported to {site.locationName} ({objCoords.X}, {objCoords.Y})");
+                            }
+                            if (GUILayout.Button("Warp Party", GUILayout.Width(80), GUILayout.Height(22)))
+                            {
+                                if (NetworkSession.IsHost)
+                                {
+                                    ExecuteHostAuthoritativeTravel(objCoords.X, objCoords.Y, false, $"{site.locationName}|{site.regionName}|0|0");
+                                }
+                                else
+                                {
+                                    InitiatePartyTravelVote(site.locationName, site.regionName, objCoords.X, objCoords.Y, 0, 0, 0, false, false, false);
+                                }
+                            }
+                            GUILayout.EndHorizontal();
+                        }
+                    }
+                }
+            }
+
+            GUILayout.Space(8);
+            GUILayout.Label("<b><color=#FFD700>--- God Mode & Observer ---</color></b>");
+            bool godOn = GameManager.Instance != null && GameManager.Instance.PlayerEntity != null && GameManager.Instance.PlayerEntity.GodMode;
+            string godLabel = godOn ? "God Mode (Invincible): [ON]" : "God Mode (Invincible): [OFF]";
+            if (GUILayout.Button(godLabel, GUILayout.Height(24)))
+            {
+                ToggleDmGodMode();
+            }
+
+            bool freeCamOn = FreeCamController.Instance != null && FreeCamController.Instance.IsActive;
+            string freeCamLabel = freeCamOn ? "Eagle Eye / FreeCam (Ctrl+F8): [ACTIVE]" : "Eagle Eye / FreeCam (Ctrl+F8): [INACTIVE]";
+            if (GUILayout.Button(freeCamLabel, GUILayout.Height(24)))
+            {
+                if (FreeCamController.Instance != null)
+                    FreeCamController.Instance.ToggleFreeCam();
+            }
+        }
+
+        private void DrawPartyDmTabContent()
+        {
+            GUILayout.Space(5);
+            GUILayout.Label("<b><color=#FFD700>--- DM Tools & Stealth ---</color></b>");
+            string invisLabel = isDmInvisible ? "DM Invisibility: [ON]" : "DM Invisibility: [OFF]";
+            if (GUILayout.Button(invisLabel, GUILayout.Height(24)))
+            {
+                ToggleDmInvisibility();
+            }
+
+            GUILayout.Space(4);
+            if (GUILayout.Button("Gather Party to Host", GUILayout.Height(24)))
+            {
+                GatherPartyToHost();
+            }
+
+            GUILayout.Space(8);
+            GUILayout.Label("<b><color=#FFD700>--- PvP & Friendly Fire ---</color></b>");
+            bool newPvp = GUILayout.Toggle(isPvpAllowed, " Friendly Fire / PvP (net_pvp)");
+            if (newPvp != isPvpAllowed)
+            {
+                SetPvpAllowed(newPvp);
+            }
+
+            GUILayout.Space(8);
+            GUILayout.Label("<b><color=#FFD700>--- Grant / Teach Spells ---</color></b>");
+            GUILayout.Label("Teach spells to yourself or connected party members:");
+
+            List<int> targetOptions = new List<int> { 0 };
+            List<string> targetNames = new List<string> { "Self (Host/DM)" };
+            foreach (var kvp in connectedPlayerProfiles)
+            {
+                if (kvp.Key != 0)
+                {
+                    targetOptions.Add(kvp.Key);
+                    targetNames.Add($"{kvp.Value.playerName} (ID {kvp.Key})");
+                }
+            }
+
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Target:", GUILayout.Width(45));
+            if (GUILayout.Button("<", GUILayout.Width(24)) && selectedDmSpellTargetIndex > 0)
+                selectedDmSpellTargetIndex--;
+            selectedDmSpellTargetIndex = Mathf.Clamp(selectedDmSpellTargetIndex, 0, targetOptions.Count - 1);
+            GUILayout.Label($"<b>{targetNames[selectedDmSpellTargetIndex]}</b>", GUILayout.ExpandWidth(true));
+            if (GUILayout.Button(">", GUILayout.Width(24)) && selectedDmSpellTargetIndex < targetOptions.Count - 1)
+                selectedDmSpellTargetIndex++;
+            GUILayout.EndHorizontal();
+
+            int targetConnId = targetOptions[selectedDmSpellTargetIndex];
+
+            GUILayout.Space(4);
+            GUILayout.Label("Quick Spells:");
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("Fireball")) TeachDmSpellToTarget(targetConnId, "Fireball");
+            if (GUILayout.Button("Wizard's Fire")) TeachDmSpellToTarget(targetConnId, "Wizard's Fire");
+            if (GUILayout.Button("Shock")) TeachDmSpellToTarget(targetConnId, "Shock");
+            GUILayout.EndHorizontal();
+
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("Ice Storm")) TeachDmSpellToTarget(targetConnId, "Ice Storm");
+            if (GUILayout.Button("Toxic Cloud")) TeachDmSpellToTarget(targetConnId, "Toxic Cloud");
+            if (GUILayout.Button("Levitate")) TeachDmSpellToTarget(targetConnId, "Levitate");
+            GUILayout.EndHorizontal();
+
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("Free Action")) TeachDmSpellToTarget(targetConnId, "Free Action");
+            if (GUILayout.Button("Heal")) TeachDmSpellToTarget(targetConnId, "Heal");
+            if (GUILayout.Button("Invisibility")) TeachDmSpellToTarget(targetConnId, "Invisibility (Normal)");
+            GUILayout.EndHorizontal();
+
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("Cure Poison")) TeachDmSpellToTarget(targetConnId, "Cure Poison");
+            if (GUILayout.Button("Light")) TeachDmSpellToTarget(targetConnId, "Light");
+            if (GUILayout.Button("Open")) TeachDmSpellToTarget(targetConnId, "Open");
+            GUILayout.EndHorizontal();
+
+            GUILayout.Space(4);
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Search:", GUILayout.Width(50));
+            dmSpellFilter = GUILayout.TextField(dmSpellFilter ?? "", GUILayout.ExpandWidth(true));
+            if (GUILayout.Button("X", GUILayout.Width(22))) dmSpellFilter = "";
+            GUILayout.EndHorizontal();
+
+            if (!string.IsNullOrEmpty(dmSpellFilter) && dmSpellFilter.Length >= 2 && GameManager.Instance.EntityEffectBroker != null)
+            {
+                dmSpellListScrollPos = GUILayout.BeginScrollView(dmSpellListScrollPos, GUILayout.Height(100));
+                int matches = 0;
+                foreach (var s in GameManager.Instance.EntityEffectBroker.StandardSpells)
+                {
+                    if (!string.IsNullOrEmpty(s.spellName) && !s.spellName.StartsWith("!") &&
+                        s.spellName.IndexOf(dmSpellFilter, StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        matches++;
+                        if (GUILayout.Button($"Teach: {s.spellName}"))
+                        {
+                            TeachDmSpellToTarget(targetConnId, s.spellName, s.index);
+                        }
+                        if (matches >= 20) break;
+                    }
+                }
+                if (matches == 0)
+                    GUILayout.Label("<color=#888888><i>No matching spells found.</i></color>");
+                GUILayout.EndScrollView();
+            }
+        }
+
         private void DrawLootWindow(int windowId)
+        {
+            DrawLootWindowContent();
+            GUILayout.Space(8);
+            if (GUILayout.Button("Close (Ctrl+F12 / loot_gui)"))
+            {
+                showLootGui = false;
+            }
+            GUI.DragWindow();
+        }
+
+        private void DrawLootWindowContent()
         {
             GUILayout.Space(5);
             GUILayout.Label($"Role: {NetworkSession.GetStatusString()}");
@@ -3181,7 +3327,7 @@ namespace DaggerfallWorkshop.Game.Networking
             {
                 // Section 1: Spawn Corpse
                 GUILayout.Space(5);
-                GUILayout.Label("<b>--- Section 1: Spawn Corpse ---</b>");
+                GUILayout.Label("<b><color=#FFD700>--- Section 1: Spawn Corpse ---</color></b>");
                 MobileTypes currentEnemy = lootEnemies[selectedLootEnemyIndex];
                 GUILayout.Label($"Corpse: <b>{currentEnemy}</b>");
 
@@ -3224,7 +3370,7 @@ namespace DaggerfallWorkshop.Game.Networking
 
                 // Section 2: Spawn Chests & Treasures
                 GUILayout.Space(8);
-                GUILayout.Label("<b>--- Section 2: Chests & Treasures ---</b>");
+                GUILayout.Label("<b><color=#FFD700>--- Section 2: Chests & Treasures ---</color></b>");
                 if (GUILayout.Button("Spawn Dungeon Chest (Treasure Mix)", GUILayout.Height(25)))
                 {
                     SpawnChestInFrontOfPlayer("Dungeon Chest");
@@ -3244,7 +3390,7 @@ namespace DaggerfallWorkshop.Game.Networking
 
                 // Section 3: Despawn Spawned Loot
                 GUILayout.Space(8);
-                GUILayout.Label("<b>--- Section 3: Despawn Spawned Loot ---</b>");
+                GUILayout.Label("<b><color=#FFD700>--- Section 3: Despawn Spawned Loot ---</color></b>");
                 GUILayout.BeginHorizontal();
                 if (GUILayout.Button("Despawn Last", GUILayout.Height(24)))
                 {
@@ -3256,14 +3402,6 @@ namespace DaggerfallWorkshop.Game.Networking
                 }
                 GUILayout.EndHorizontal();
             }
-
-            GUILayout.Space(8);
-            if (GUILayout.Button("Close (Ctrl+F12 / loot_gui)"))
-            {
-                showLootGui = false;
-            }
-
-            GUI.DragWindow();
         }
 
         private void RefreshCachedSettlementsIfNeeded()
@@ -3306,7 +3444,18 @@ namespace DaggerfallWorkshop.Game.Networking
         private void DrawQuestWindow(int windowId)
         {
             questScrollPos = GUILayout.BeginScrollView(questScrollPos);
+            DrawQuestWindowContent();
+            GUILayout.Space(8);
+            if (GUILayout.Button("Close (Ctrl+F7 / quest_gui)", GUILayout.Height(24)))
+            {
+                showQuestGui = false;
+            }
+            GUILayout.EndScrollView();
+            GUI.DragWindow();
+        }
 
+        private void DrawQuestWindowContent()
+        {
             GUILayout.Space(5);
             GUILayout.Label($"<b>Status:</b> {NetworkSession.GetStatusString()}");
             if (NetworkSession.IsActive)
@@ -3872,15 +4021,6 @@ namespace DaggerfallWorkshop.Game.Networking
                 }
                 GUILayout.EndHorizontal();
             }
-
-            GUILayout.Space(8);
-            if (GUILayout.Button("Close (Ctrl+F7 / quest_gui)", GUILayout.Height(24)))
-            {
-                showQuestGui = false;
-            }
-
-            GUILayout.EndScrollView();
-            GUI.DragWindow();
         }
 
         public MsgSpawnLoot CreateSpawnLootMessage(DaggerfallLoot loot)

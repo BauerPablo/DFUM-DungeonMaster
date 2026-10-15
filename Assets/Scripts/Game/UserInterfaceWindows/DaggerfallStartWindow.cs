@@ -26,6 +26,7 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
 
         private Button loadGameButton;
         private Button newGameButton;
+        private Button multiplayerButton;
         private Button exitButton;
 
         bool isLoadGameDeferred = false;
@@ -57,6 +58,18 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
             newGameButton.OnMouseClick += NewGameButton_OnMouseClick;
             newGameButton.Hotkey = DaggerfallShortcut.GetBinding(DaggerfallShortcut.Buttons.MainMenuStart);
             newGameButton.OnKeyboardEvent += NewGameButton_OnKeyboardEvent;
+
+            multiplayerButton = DaggerfallUI.AddButton(new Vector2(72, 120), new Vector2(147, 16), NativePanel);
+            multiplayerButton.Outline.Enabled = true;
+            multiplayerButton.Outline.Color = new Color(0.70f, 0.55f, 0.22f, 0.85f);
+            multiplayerButton.BackgroundColor = new Color(0.12f, 0.10f, 0.08f, 0.90f);
+            TextLabel mpLabel = DaggerfallUI.AddDefaultTitleTextLabel(new Vector2(0, 2), multiplayerButton);
+            mpLabel.Text = "MULTIPLAYER / TTRPG";
+            mpLabel.TextColor = new Color(0.95f, 0.85f, 0.40f);
+            mpLabel.ShadowPosition = Vector2.one;
+            mpLabel.ShadowColor = Color.black;
+            mpLabel.HorizontalAlignment = HorizontalAlignment.Center;
+            multiplayerButton.OnMouseClick += (s, e) => OpenMultiplayerWindow();
 
             exitButton = DaggerfallUI.AddButton(new Vector2(125, 145), new Vector2(41, 15), DaggerfallUIMessages.dfuiExitGame, NativePanel);
             exitButton.OnMouseClick += ExitButton_OnMouseClick;
@@ -97,6 +110,11 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
         void ExitGame()
         {
             Application.Quit();
+        }
+
+        void OpenMultiplayerWindow()
+        {
+            uiManager.PushWindow(new DaggerfallMultiplayerWindow(uiManager, this));
         }
 
         public override void ProcessMessages()

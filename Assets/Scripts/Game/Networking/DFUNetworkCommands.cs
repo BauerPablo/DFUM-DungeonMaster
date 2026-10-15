@@ -30,6 +30,7 @@ namespace DaggerfallWorkshop.Game.Networking
                 ConsoleCommandsDatabase.RegisterCommand(NetStatus.name, NetStatus.description, NetStatus.usage, NetStatus.Execute);
                 ConsoleCommandsDatabase.RegisterCommand(NetEntities.name, NetEntities.description, NetEntities.usage, NetEntities.Execute);
                 ConsoleCommandsDatabase.RegisterCommand(NetGui.name, NetGui.description, NetGui.usage, NetGui.Execute);
+                ConsoleCommandsDatabase.RegisterCommand(TtrpgGui.name, TtrpgGui.description, TtrpgGui.usage, TtrpgGui.Execute);
                 ConsoleCommandsDatabase.RegisterCommand(DmGui.name, DmGui.description, DmGui.usage, DmGui.Execute);
                 ConsoleCommandsDatabase.RegisterCommand(LootGui.name, LootGui.description, LootGui.usage, LootGui.Execute);
                 ConsoleCommandsDatabase.RegisterCommand(QuestGui.name, QuestGui.description, QuestGui.usage, QuestGui.Execute);
@@ -188,7 +189,7 @@ namespace DaggerfallWorkshop.Game.Networking
         private static class NetGui
         {
             public static readonly string name = "net_gui";
-            public static readonly string description = "Toggles the on-screen network debug GUI overlay.";
+            public static readonly string description = "Toggles the on-screen network debug GUI overlay / TTRPG Red Tab.";
             public static readonly string usage = "net_gui";
 
             public static string Execute(params string[] args)
@@ -197,15 +198,48 @@ namespace DaggerfallWorkshop.Game.Networking
                 if (mgr == null)
                     return "DFUNetworkManager not available.";
 
-                mgr.showDebugGui = !mgr.showDebugGui;
-                return $"Network debug GUI is now {(mgr.showDebugGui ? "ENABLED" : "DISABLED")}.";
+                if (mgr.showTtrpgSuite && mgr.ttrpgSelectedTab == 0)
+                {
+                    mgr.showTtrpgSuite = false;
+                }
+                else
+                {
+                    mgr.showTtrpgSuite = true;
+                    mgr.ttrpgSelectedTab = 0;
+                }
+                return $"TTRPG Master Suite (Red & Sesión) is now {(mgr.showTtrpgSuite ? "ENABLED" : "DISABLED")}.";
+            }
+        }
+
+        private static class TtrpgGui
+        {
+            public static readonly string name = "ttrpg_gui";
+            public static readonly string description = "Toggles the unified TTRPG Master Suite (Tabs: Red, Spawns, Mundo, Quests, Loot, Party).";
+            public static readonly string usage = "ttrpg_gui [tabIndex (0-5)]";
+
+            public static string Execute(params string[] args)
+            {
+                DFUNetworkManager mgr = GameManager.Instance.NetworkManager;
+                if (mgr == null)
+                    return "DFUNetworkManager not available.";
+
+                if (args.Length > 0 && int.TryParse(args[0], out int tab) && tab >= 0 && tab <= 5)
+                {
+                    mgr.ttrpgSelectedTab = tab;
+                    mgr.showTtrpgSuite = true;
+                    string tabName = (mgr.ttrpgTabNames != null && tab < mgr.ttrpgTabNames.Length) ? mgr.ttrpgTabNames[tab] : tab.ToString();
+                    return $"TTRPG Master Suite opened to tab {tab} ({tabName}).";
+                }
+
+                mgr.showTtrpgSuite = !mgr.showTtrpgSuite;
+                return $"TTRPG Master Suite is now {(mgr.showTtrpgSuite ? "ENABLED" : "DISABLED")}.";
             }
         }
 
         private static class DmGui
         {
             public static readonly string name = "dm_gui";
-            public static readonly string description = "Toggles the Dungeon Master (DM) enemy spawner GUI overlay.";
+            public static readonly string description = "Toggles the Dungeon Master (DM) enemy spawner GUI overlay / TTRPG Spawns Tab.";
             public static readonly string usage = "dm_gui";
 
             public static string Execute(params string[] args)
@@ -214,15 +248,23 @@ namespace DaggerfallWorkshop.Game.Networking
                 if (mgr == null)
                     return "DFUNetworkManager not available.";
 
-                mgr.showDmGui = !mgr.showDmGui;
-                return $"DM spawner GUI is now {(mgr.showDmGui ? "ENABLED" : "DISABLED")}.";
+                if (mgr.showTtrpgSuite && mgr.ttrpgSelectedTab == 1)
+                {
+                    mgr.showTtrpgSuite = false;
+                }
+                else
+                {
+                    mgr.showTtrpgSuite = true;
+                    mgr.ttrpgSelectedTab = 1;
+                }
+                return $"TTRPG Master Suite (Spawns & NPCs) is now {(mgr.showTtrpgSuite ? "ENABLED" : "DISABLED")}.";
             }
         }
 
         private static class LootGui
         {
             public static readonly string name = "loot_gui";
-            public static readonly string description = "Toggles the DM Loot and Container Spawner GUI overlay (Shortcut: F12).";
+            public static readonly string description = "Toggles the DM Loot and Container Spawner GUI overlay / TTRPG Loot Tab.";
             public static readonly string usage = "loot_gui";
 
             public static string Execute(params string[] args)
@@ -231,8 +273,16 @@ namespace DaggerfallWorkshop.Game.Networking
                 if (mgr == null)
                     return "DFUNetworkManager not available.";
 
-                mgr.showLootGui = !mgr.showLootGui;
-                return $"DM loot spawner GUI is now {(mgr.showLootGui ? "ENABLED" : "DISABLED")}.";
+                if (mgr.showTtrpgSuite && mgr.ttrpgSelectedTab == 4)
+                {
+                    mgr.showTtrpgSuite = false;
+                }
+                else
+                {
+                    mgr.showTtrpgSuite = true;
+                    mgr.ttrpgSelectedTab = 4;
+                }
+                return $"TTRPG Master Suite (Loot & Forja) is now {(mgr.showTtrpgSuite ? "ENABLED" : "DISABLED")}.";
             }
         }
 
@@ -482,7 +532,7 @@ namespace DaggerfallWorkshop.Game.Networking
         private static class QuestGui
         {
             public static readonly string name = "quest_gui";
-            public static readonly string description = "Toggles the Quest Creator / Test Menu overlay (or press F7).";
+            public static readonly string description = "Toggles the Quest Creator / Test Menu overlay / TTRPG Quests Tab.";
             public static readonly string usage = "quest_gui";
 
             public static string Execute(params string[] args)
@@ -491,8 +541,16 @@ namespace DaggerfallWorkshop.Game.Networking
                 if (mgr == null)
                     return "DFUNetworkManager not available on GameManager.";
 
-                mgr.showQuestGui = !mgr.showQuestGui;
-                return $"Quest Creator GUI is now {(mgr.showQuestGui ? "OPEN" : "CLOSED")}.";
+                if (mgr.showTtrpgSuite && mgr.ttrpgSelectedTab == 3)
+                {
+                    mgr.showTtrpgSuite = false;
+                }
+                else
+                {
+                    mgr.showTtrpgSuite = true;
+                    mgr.ttrpgSelectedTab = 3;
+                }
+                return $"TTRPG Master Suite (Quests & Diálogos) is now {(mgr.showTtrpgSuite ? "OPEN" : "CLOSED")}.";
             }
         }
 
@@ -517,8 +575,16 @@ namespace DaggerfallWorkshop.Game.Networking
                     case "menu":
                     case "gui":
                         if (mgr == null) return "DFUNetworkManager not available.";
-                        mgr.showQuestGui = !mgr.showQuestGui;
-                        return $"Quest Creator GUI is now {(mgr.showQuestGui ? "OPEN" : "CLOSED")}.";
+                        if (mgr.showTtrpgSuite && mgr.ttrpgSelectedTab == 3)
+                        {
+                            mgr.showTtrpgSuite = false;
+                        }
+                        else
+                        {
+                            mgr.showTtrpgSuite = true;
+                            mgr.ttrpgSelectedTab = 3;
+                        }
+                        return $"TTRPG Master Suite (Quests & Diálogos) is now {(mgr.showTtrpgSuite ? "OPEN" : "CLOSED")}.";
 
                     case "list":
                         if (QuestMachine.Instance == null) return "QuestMachine is not initialized.";
