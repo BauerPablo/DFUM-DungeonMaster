@@ -26,6 +26,7 @@ using DaggerfallConnect.Arena2;
 using DaggerfallConnect.Utility;
 using DaggerfallWorkshop.Game.Utility;
 using DaggerfallWorkshop.Game.MagicAndEffects;
+using DaggerfallConnect.Save;
 
 namespace DaggerfallWorkshop.Game.Networking
 {
@@ -1802,7 +1803,7 @@ namespace DaggerfallWorkshop.Game.Networking
                 {
                     loot.Items.RemoveItem(targetItem);
                 }
-                LogLoot($"[DFU Loot] Conn {conn.connectionId} took item '{targetItem.ItemName}' from container {msg.loadID}. Remaining: {loot.Items.Count}");
+                LogLoot($"[DFU Loot] Conn {conn.connectionId} took item '{GetSafeItemName(targetItem)}' from container {msg.loadID}. Remaining: {loot.Items.Count}");
             }
             else
             {
@@ -1841,7 +1842,7 @@ namespace DaggerfallWorkshop.Game.Networking
                 {
                     DaggerfallUnityItem droppedItem = new DaggerfallUnityItem(itemData);
                     loot.Items.AddItem(droppedItem);
-                    LogLoot($"[DFU Loot] Conn {conn.connectionId} placed item '{droppedItem.ItemName}' (UID: {droppedItem.UID}) into container {msg.loadID}. Total: {loot.Items.Count}");
+                    LogLoot($"[DFU Loot] Conn {conn.connectionId} placed item '{GetSafeItemName(droppedItem)}' (UID: {droppedItem.UID}) into container {msg.loadID}. Total: {loot.Items.Count}");
                 }
             }
 
@@ -5803,6 +5804,24 @@ namespace DaggerfallWorkshop.Game.Networking
             GUI.DragWindow(new Rect(0, 0, 10000, 20));
         }
 
+        public static string GetSafeItemName(DaggerfallUnityItem itm)
+        {
+            if (itm == null)
+                return "Unknown Item";
+
+            try
+            {
+                ItemTemplate template = itm.ItemTemplate;
+                if (!string.IsNullOrEmpty(template.name))
+                    return itm.ItemName;
+            }
+            catch
+            {
+            }
+
+            return !string.IsNullOrEmpty(itm.shortName) ? itm.shortName : "Item";
+        }
+
         private void DrawTradeWindow(int windowId)
         {
             var playerEntity = GameManager.Instance.PlayerEntity;
@@ -5857,7 +5876,8 @@ namespace DaggerfallWorkshop.Game.Networking
                     if (itm == null) continue;
 
                     GUILayout.BeginHorizontal();
-                    string itmTitle = itm.stackCount > 1 ? $"{itm.ItemName} x{itm.stackCount}" : itm.ItemName;
+                    string safeName = GetSafeItemName(itm);
+                    string itmTitle = itm.stackCount > 1 ? $"{safeName} x{itm.stackCount}" : safeName;
                     GUILayout.Label($"• {itmTitle} ({itm.weightInKg:F1}kg)", GUILayout.ExpandWidth(true));
                     if (!localTradeLocked && GUILayout.Button("X", GUILayout.Width(22), GUILayout.Height(18)))
                     {
@@ -5889,11 +5909,12 @@ namespace DaggerfallWorkshop.Game.Networking
                         for (int i = 0; i < inv.Count; i++)
                         {
                             DaggerfallUnityItem itm = inv.GetItem(i);
-                            if (itm != null && !itm.IsEquipped && !itm.IsQuestItem && !localTradeItems.Contains(itm))
+                            if (itm != null && !itm.IsEquipped && !itm.IsQuestItem && itm.ItemGroup != ItemGroups.Currency && itm.ItemGroup != ItemGroups.None && !localTradeItems.Contains(itm))
                             {
                                 addedAny++;
                                 GUILayout.BeginHorizontal();
-                                string itmTitle = itm.stackCount > 1 ? $"{itm.ItemName} x{itm.stackCount}" : itm.ItemName;
+                                string safeName = GetSafeItemName(itm);
+                                string itmTitle = itm.stackCount > 1 ? $"{safeName} x{itm.stackCount}" : safeName;
                                 if (GUILayout.Button($"+ {itmTitle} ({itm.weightInKg:F1}kg)", GUILayout.Height(20)))
                                 {
                                     localTradeItems.Add(itm);
@@ -6157,7 +6178,7 @@ namespace DaggerfallWorkshop.Game.Networking
                     bundle.items.Add(new TradeItemDTO
                     {
                         uid = itm.UID,
-                        name = itm.ItemName,
+                        name = GetSafeItemName(itm),
                         weight = itm.weightInKg,
                         stackCount = itm.stackCount,
                         value = itm.value
@@ -7637,7 +7658,7 @@ namespace DaggerfallWorkshop.Game.Networking
                     spellBundleJson = json
                 };
 
-                if (NetworkServer.active && NetworkServer.connections.TryGetValue(targetConnId, out NetworkConnection conn) && conn != null)
+                if (NetworkServer.active && NetworkServer.connections.TryGetValue(targetConnId, out NetworkConnectionToClient conn) && conn != null)
                 {
                     conn.Send(msg);
                     string targetName = connectedPlayerProfiles.TryGetValue(targetConnId, out MsgPlayerProfile prof) ? prof.playerName : $"ID {targetConnId}";

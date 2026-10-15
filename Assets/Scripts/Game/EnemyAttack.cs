@@ -243,7 +243,7 @@ namespace DaggerfallWorkshop.Game
                     if (DFUNetworkManager.Instance != null && NetworkSession.IsActive && NetworkSession.IsHost)
                     {
                         Vector3 origin = entityBehaviour.transform.position + Vector3.up * 1.2f;
-                        Vector3 dir = enemySenses != null && enemySenses.Target != null ? (enemySenses.LastKnownTargetPos - origin).normalized : entityBehaviour.transform.forward;
+                        Vector3 dir = senses != null && senses.Target != null ? (senses.LastKnownTargetPos - origin).normalized : entityBehaviour.transform.forward;
                         DFUNetworkManager.Instance.BroadcastEnemyArrowShot(origin, dir);
                     }
                 }

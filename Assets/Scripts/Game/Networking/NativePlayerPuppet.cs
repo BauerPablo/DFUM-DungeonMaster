@@ -375,5 +375,25 @@ namespace DaggerfallWorkshop.Game.Networking
                 }
             }
         }
+
+        /// <summary>
+        /// Triggers visual attack billboard animation on this puppet.
+        /// </summary>
+        public void TriggerAttackAnimation()
+        {
+            if (mobileUnit != null && mobileUnit.gameObject.activeSelf)
+            {
+                try
+                {
+                    MobileStates attackState = (weaponType == (int)WeaponTypes.Bow) ? MobileStates.RangedAttack1 : MobileStates.PrimaryAttack;
+                    mobileUnit.ChangeEnemyState(attackState);
+                    castAnimTimer = 0.5f;
+                }
+                catch (System.Exception ex)
+                {
+                    UnityEngine.Debug.LogWarning($"[DFU Attack] Failed to trigger attack animation on puppet: {ex.Message}");
+                }
+            }
+        }
     }
 }
