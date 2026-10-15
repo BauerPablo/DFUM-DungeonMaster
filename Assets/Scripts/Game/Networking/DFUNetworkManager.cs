@@ -332,7 +332,7 @@ namespace DaggerfallWorkshop.Game.Networking
 
             if (showPlayerInteractionWindow)
             {
-                if (Input.GetKeyDown(KeyCode.Escape))
+                if (Input.GetKeyDown(KeyCode.Escape) || Input.GetKeyDown(KeyCode.F))
                 {
                     showPlayerInteractionWindow = false;
                 }
@@ -344,6 +344,13 @@ namespace DaggerfallWorkshop.Game.Networking
                          Vector3.Distance(GameManager.Instance.PlayerObject.transform.position, interactionTargetPuppet.transform.position) > 4.5f)
                 {
                     showPlayerInteractionWindow = false;
+                }
+            }
+            else if (NetworkSession.IsActive && Input.GetKeyDown(KeyCode.F))
+            {
+                if (!IsAnyGuiOpen && (DaggerfallUI.UIManager == null || DaggerfallUI.UIManager.WindowCount == 0) && GUIUtility.keyboardControl == 0)
+                {
+                    TryInteractWithNearbyPlayer();
                 }
             }
 
@@ -5511,6 +5518,47 @@ namespace DaggerfallWorkshop.Game.Networking
         #endregion
 
         #region P2P Interactive Player Menu & Map Sharing
+
+        public void TryInteractWithNearbyPlayer()
+        {
+            if (GameManager.Instance.PlayerObject == null)
+                return;
+
+            Vector3 playerPos = GameManager.Instance.PlayerObject.transform.position;
+            Transform camTransform = GameManager.Instance.MainCamera != null ? GameManager.Instance.MainCamera.transform : GameManager.Instance.PlayerObject.transform;
+            Vector3 camForward = camTransform.forward;
+            Vector3 camPos = camTransform.position;
+
+            NativePlayerPuppet bestPuppet = null;
+            float bestScore = float.MinValue;
+            const float maxInteractionDist = 4.0f;
+
+            foreach (var kvp in remotePlayerPuppets)
+            {
+                NativePlayerPuppet puppet = kvp.Value;
+                if (puppet == null || puppet.gameObject == null || !puppet.gameObject.activeInHierarchy)
+                    continue;
+
+                float dist = Vector3.Distance(playerPos, puppet.transform.position);
+                if (dist > maxInteractionDist)
+                    continue;
+
+                Vector3 toPuppet = (puppet.transform.position + Vector3.up * 0.9f - camPos).normalized;
+                float dot = Vector3.Dot(camForward, toPuppet);
+
+                float score = (maxInteractionDist - dist) + (dot > 0 ? dot * 3.0f : 0f);
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    bestPuppet = puppet;
+                }
+            }
+
+            if (bestPuppet != null)
+            {
+                OpenPlayerInteractionMenu(bestPuppet);
+            }
+        }
 
         public void OpenPlayerInteractionMenu(NativePlayerPuppet puppet)
         {
