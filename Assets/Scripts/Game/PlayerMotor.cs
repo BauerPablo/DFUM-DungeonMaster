@@ -393,10 +393,11 @@ namespace DaggerfallWorkshop.Game
         {
             frictionMotor.ContactPoint = hit.point;
 
-            // Don't consider enemies as moving platforms
-            // Otherwise, if we're positioned just right on top of one, the player camera gets unstable
+            // Don't consider enemies or remote player puppets as moving platforms
+            // Otherwise, if we're positioned just right on top of one, the player camera gets unstable or player gets dragged
             // This still allows standing on enemies
-            if (hit.collider.gameObject.GetComponent<DaggerfallEnemy>() != null)
+            if (hit.collider.gameObject.GetComponent<DaggerfallEnemy>() != null ||
+                hit.collider.gameObject.GetComponent<DaggerfallWorkshop.Game.Networking.NativePlayerPuppet>() != null)
                 return;
 
             // Get active platform

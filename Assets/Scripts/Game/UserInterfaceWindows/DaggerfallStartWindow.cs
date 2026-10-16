@@ -16,14 +16,21 @@ using DaggerfallWorkshop.Game.UserInterface;
 namespace DaggerfallWorkshop.Game.UserInterfaceWindows
 {
     /// <summary>
-    /// Implements the Daggerfall Start user interface to load, save, exit.
+    /// Implements the Daggerfall Start user interface refactored with Dark Fantasy Pixel-Art menu framing.
     /// </summary>
     public class DaggerfallStartWindow : DaggerfallBaseWindow
     {
         const string nativeImgName = "PICK03I0.IMG";
 
         Texture2D nativeTexture;
+        Texture2D titleLogoTexture;
+        Texture2D menuFrameTexture;
+        Texture2D crimsonBtnTexture;
+        Texture2D goldBtnTexture;
+        Texture2D darkBtnTexture;
 
+        private Panel titleLogoPanel;
+        private Panel menuContainerPanel;
         private Button loadGameButton;
         private Button newGameButton;
         private Button multiplayerButton;
@@ -40,41 +47,152 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
 
         protected override void Setup()
         {
-            // Load native texture
-            nativeTexture = DaggerfallUI.GetTextureFromImg(nativeImgName);
+            // Load custom pixel-art campfire menu background from Resources/Screens/background_menu
+            nativeTexture = Resources.Load<Texture2D>("Screens/background_menu");
+            if (nativeTexture != null)
+            {
+                nativeTexture.filterMode = FilterMode.Point;
+            }
+            else
+            {
+                // Fallback to classic IMG only if resource is missing
+                nativeTexture = DaggerfallUI.GetTextureFromImg(nativeImgName);
+            }
+
             if (!nativeTexture)
-                throw new Exception("DaggerfallStartWindow: Could not load native texture.");
+                throw new Exception("DaggerfallStartWindow: Could not load menu background texture.");
 
-            // Setup native panel background
+            // Fill full screen cleanly and keep 320x200 virtual coordinate space on NativePanel
+            ParentPanel.BackgroundTexture = nativeTexture;
+            ParentPanel.BackgroundTextureLayout = BackgroundLayout.ScaleToFit;
+            NativePanel.BackgroundColor = Color.clear;
             NativePanel.BackgroundTexture = nativeTexture;
+            NativePanel.BackgroundTextureLayout = BackgroundLayout.StretchToFill;
 
-            // Setup buttons
-            loadGameButton = DaggerfallUI.AddButton(new Vector2(72, 45), new Vector2(147, 15), DaggerfallUIMessages.dfuiOpenLoadSavedGameWindow, NativePanel);
-            loadGameButton.OnMouseClick += LoadGameButton_OnMouseClick;
-            loadGameButton.Hotkey = DaggerfallShortcut.GetBinding(DaggerfallShortcut.Buttons.MainMenuLoad);
-            loadGameButton.OnKeyboardEvent += LoadGameButton_OnKeyboardEvent;
+            // Load title logo (The Elder Scrolls II: Daggerfall Multiplayer TTRPG)
+            titleLogoTexture = Resources.Load<Texture2D>("Screens/title_logo");
+            if (titleLogoTexture != null)
+            {
+                titleLogoTexture.filterMode = FilterMode.Point;
+                titleLogoPanel = new Panel();
+                titleLogoPanel.Position = new Vector2(16, 12);
+                titleLogoPanel.Size = new Vector2(120, 70);
+                titleLogoPanel.BackgroundTexture = titleLogoTexture;
+                titleLogoPanel.BackgroundTextureLayout = BackgroundLayout.StretchToFill;
+                NativePanel.Components.Add(titleLogoPanel);
+            }
 
-            newGameButton = DaggerfallUI.AddButton(new Vector2(72, 99), new Vector2(147, 15), DaggerfallUIMessages.dfuiStartNewGame, NativePanel);
+            // Compact Dark Fantasy Pixel-Art menu container positioned neatly below the title banner
+            int frameW = 120;
+            int frameH = 99;
+            menuFrameTexture = DarkFantasyPixelArtTheme.CreateOrnateWindowTexture(
+                frameW,
+                frameH,
+                new Color32(16, 14, 18, 238),
+                parchmentInterior: false);
+
+            int btnW = 106;
+            crimsonBtnTexture = DarkFantasyPixelArtTheme.CreatePixelButtonTexture(
+                btnW, 18,
+                DarkFantasyPixelArtTheme.CrimsonBase,
+                DarkFantasyPixelArtTheme.CrimsonHighlight,
+                DarkFantasyPixelArtTheme.CrimsonShadow);
+
+            goldBtnTexture = DarkFantasyPixelArtTheme.CreatePixelButtonTexture(
+                btnW, 20,
+                new Color32(118, 84, 32, 250),
+                DarkFantasyPixelArtTheme.GoldHighlight,
+                new Color32(58, 40, 14, 255));
+
+            darkBtnTexture = DarkFantasyPixelArtTheme.CreatePixelButtonTexture(
+                btnW, 17,
+                DarkFantasyPixelArtTheme.IronButtonBase,
+                DarkFantasyPixelArtTheme.IronButtonHighlight,
+                DarkFantasyPixelArtTheme.IronButtonShadow);
+
+            menuContainerPanel = new Panel();
+            menuContainerPanel.Position = new Vector2(16, 88);
+            menuContainerPanel.Size = new Vector2(frameW, frameH);
+            menuContainerPanel.BackgroundTexture = menuFrameTexture;
+            NativePanel.Components.Add(menuContainerPanel);
+
+            // If title graphic is missing, fallback to text header
+            if (titleLogoTexture == null)
+            {
+                TextLabel headerLabel = DaggerfallUI.AddDefaultShadowedTextLabel(new Vector2(0, 7), menuContainerPanel);
+                headerLabel.Text = "DAGGERFALL";
+                headerLabel.TextColor = DarkFantasyPixelArtTheme.TextGold;
+                headerLabel.ShadowColor = Color.black;
+                headerLabel.ShadowPosition = Vector2.one;
+                headerLabel.HorizontalAlignment = HorizontalAlignment.Center;
+
+                TextLabel subHeaderLabel = DaggerfallUI.AddDefaultShadowedTextLabel(new Vector2(0, 16), menuContainerPanel);
+                subHeaderLabel.Text = "CHRONICLES & TTRPG";
+                subHeaderLabel.TextColor = DarkFantasyPixelArtTheme.TextMuted;
+                subHeaderLabel.ShadowColor = Color.black;
+                subHeaderLabel.ShadowPosition = Vector2.one;
+                subHeaderLabel.HorizontalAlignment = HorizontalAlignment.Center;
+                subHeaderLabel.TextScale = 0.85f;
+            }
+
+            int btnX = (frameW - btnW) / 2;
+
+            // Button 1: Start New Game (Crimson Pixel-Art Button)
+            newGameButton = CreateStyledMenuButton(
+                new Vector2(btnX, 7),
+                new Vector2(btnW, 18),
+                "NEW ADVENTURE",
+                crimsonBtnTexture,
+                DarkFantasyPixelArtTheme.TextIvory);
             newGameButton.OnMouseClick += NewGameButton_OnMouseClick;
             newGameButton.Hotkey = DaggerfallShortcut.GetBinding(DaggerfallShortcut.Buttons.MainMenuStart);
             newGameButton.OnKeyboardEvent += NewGameButton_OnKeyboardEvent;
 
-            multiplayerButton = DaggerfallUI.AddButton(new Vector2(72, 120), new Vector2(147, 16), NativePanel);
-            multiplayerButton.Outline.Enabled = true;
-            multiplayerButton.Outline.Color = new Color(0.70f, 0.55f, 0.22f, 0.85f);
-            multiplayerButton.BackgroundColor = new Color(0.12f, 0.10f, 0.08f, 0.90f);
-            TextLabel mpLabel = DaggerfallUI.AddDefaultTitleTextLabel(new Vector2(0, 2), multiplayerButton);
-            mpLabel.Text = "MULTIPLAYER / TTRPG";
-            mpLabel.TextColor = new Color(0.95f, 0.85f, 0.40f);
-            mpLabel.ShadowPosition = Vector2.one;
-            mpLabel.ShadowColor = Color.black;
-            mpLabel.HorizontalAlignment = HorizontalAlignment.Center;
+            // Button 2: Load Saved Game (Crimson Pixel-Art Button)
+            loadGameButton = CreateStyledMenuButton(
+                new Vector2(btnX, 29),
+                new Vector2(btnW, 18),
+                "LOAD SAVED GAME",
+                crimsonBtnTexture,
+                DarkFantasyPixelArtTheme.TextIvory);
+            loadGameButton.OnMouseClick += LoadGameButton_OnMouseClick;
+            loadGameButton.Hotkey = DaggerfallShortcut.GetBinding(DaggerfallShortcut.Buttons.MainMenuLoad);
+            loadGameButton.OnKeyboardEvent += LoadGameButton_OnKeyboardEvent;
+
+            // Button 3: Multiplayer / TTRPG Lobby (Ornate Gold/Bronze Highlight Button)
+            multiplayerButton = CreateStyledMenuButton(
+                new Vector2(btnX, 51),
+                new Vector2(btnW, 20),
+                "MULTIPLAYER LOBBY",
+                goldBtnTexture,
+                DarkFantasyPixelArtTheme.GoldBright);
             multiplayerButton.OnMouseClick += (s, e) => OpenMultiplayerWindow();
 
-            exitButton = DaggerfallUI.AddButton(new Vector2(125, 145), new Vector2(41, 15), DaggerfallUIMessages.dfuiExitGame, NativePanel);
+            // Button 4: Exit Game (Dark Iron Button)
+            exitButton = CreateStyledMenuButton(
+                new Vector2(btnX, 75),
+                new Vector2(btnW, 17),
+                "EXIT TO DESKTOP",
+                darkBtnTexture,
+                DarkFantasyPixelArtTheme.TextMuted);
             exitButton.OnMouseClick += ExitButton_OnMouseClick;
             exitButton.Hotkey = DaggerfallShortcut.GetBinding(DaggerfallShortcut.Buttons.MainMenuExit);
             exitButton.OnKeyboardEvent += ExitButton_OnKeyboardEvent;
+        }
+
+        private Button CreateStyledMenuButton(Vector2 pos, Vector2 size, string labelText, Texture2D bgTex, Color textColor)
+        {
+            Button btn = DaggerfallUI.AddButton(pos, size, menuContainerPanel);
+            btn.BackgroundTexture = bgTex;
+
+            TextLabel label = DaggerfallUI.AddDefaultShadowedTextLabel(new Vector2(0, (size.y - 7f) * 0.5f), btn);
+            label.Text = labelText;
+            label.TextColor = textColor;
+            label.ShadowColor = Color.black;
+            label.ShadowPosition = Vector2.one;
+            label.HorizontalAlignment = HorizontalAlignment.Center;
+
+            return btn;
         }
 
         public override void Update()
@@ -104,6 +222,9 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
 
         void StartNewGame()
         {
+            if (Networking.DFUNetworkManager.Instance != null)
+                Networking.DFUNetworkManager.Instance.isCreatingCharacterForLobby = false;
+
             uiManager.PushWindow(UIWindowFactory.GetInstance(UIWindowType.StartNewGameWizard, uiManager));
         }
 

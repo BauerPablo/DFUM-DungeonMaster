@@ -578,6 +578,30 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
             // Assign character document to player entity
             startGameBehaviour.CharacterDocument = characterDocument;
 
+            // If creating character from the Multiplayer Lobby, register character details and return to Lobby
+            if (Networking.NetworkSession.IsActive &&
+                Networking.DFUNetworkManager.Instance != null &&
+                Networking.DFUNetworkManager.Instance.isCreatingCharacterForLobby)
+            {
+                var netMgr = Networking.DFUNetworkManager.Instance;
+                netMgr.isCreatingCharacterForLobby = false;
+                netMgr.localLobbySelectionMode = 1; // New Character
+                netMgr.localLobbySaveKey = -1;
+                netMgr.localLobbyCharacterName = !string.IsNullOrEmpty(characterDocument.name) ? characterDocument.name : "Adventurer";
+                netMgr.localLobbyRaceName = characterDocument.raceTemplate != null ? characterDocument.raceTemplate.Name : "Breton";
+                netMgr.localLobbyClassName = characterDocument.career != null ? characterDocument.career.Name : "Warrior";
+                netMgr.localLobbyLevel = 1;
+                netMgr.localLobbyIsReady = false;
+                netMgr.SendLocalLobbyUpdate();
+
+                // Close summary window and wizard to return to the Multiplayer Lobby underneath
+                if (uiManager.TopWindow == createCharSummaryWindow)
+                    uiManager.PopWindow();
+                if (uiManager.TopWindow == this)
+                    uiManager.PopWindow();
+                return;
+            }
+
             if (DaggerfallUI.Instance.enableVideos)
             {
                 // Create cinematics

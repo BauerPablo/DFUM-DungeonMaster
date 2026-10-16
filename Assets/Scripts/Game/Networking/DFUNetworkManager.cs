@@ -270,6 +270,8 @@ namespace DaggerfallWorkshop.Game.Networking
             PlayerEnterExit.OnTransitionExterior += HandleOnTransitionExterior;
             PlayerEnterExit.OnTransitionDungeonInterior += HandleOnTransitionDungeonInterior;
             PlayerEnterExit.OnTransitionDungeonExterior += HandleOnTransitionDungeonExterior;
+            SaveLoadManager.OnLoad += HandleSaveLoadManagerOnLoad;
+            StartGameBehaviour.OnStartGame += HandleStartGameBehaviourOnStartGame;
             base.Awake();
         }
 
@@ -280,6 +282,8 @@ namespace DaggerfallWorkshop.Game.Networking
             PlayerEnterExit.OnTransitionExterior -= HandleOnTransitionExterior;
             PlayerEnterExit.OnTransitionDungeonInterior -= HandleOnTransitionDungeonInterior;
             PlayerEnterExit.OnTransitionDungeonExterior -= HandleOnTransitionDungeonExterior;
+            SaveLoadManager.OnLoad -= HandleSaveLoadManagerOnLoad;
+            StartGameBehaviour.OnStartGame -= HandleStartGameBehaviourOnStartGame;
             base.OnDestroy();
         }
 
@@ -305,23 +309,29 @@ namespace DaggerfallWorkshop.Game.Networking
 
             if (ctrlHeld && Input.GetKeyDown(KeyCode.F12))
             {
-                if (showTtrpgSuite && ttrpgSelectedTab == 4)
-                    showTtrpgSuite = false;
-                else
+                if (NetworkSession.IsServer || localLobbyIsDm)
                 {
-                    showTtrpgSuite = true;
-                    ttrpgSelectedTab = 4;
+                    if (showTtrpgSuite && ttrpgSelectedTab == 4)
+                        showTtrpgSuite = false;
+                    else
+                    {
+                        showTtrpgSuite = true;
+                        ttrpgSelectedTab = 4;
+                    }
                 }
             }
 
             if (ctrlHeld && Input.GetKeyDown(KeyCode.F7))
             {
-                if (showTtrpgSuite && ttrpgSelectedTab == 3)
-                    showTtrpgSuite = false;
-                else
+                if (NetworkSession.IsServer || localLobbyIsDm)
                 {
-                    showTtrpgSuite = true;
-                    ttrpgSelectedTab = 3;
+                    if (showTtrpgSuite && ttrpgSelectedTab == 3)
+                        showTtrpgSuite = false;
+                    else
+                    {
+                        showTtrpgSuite = true;
+                        ttrpgSelectedTab = 3;
+                    }
                 }
             }
 
@@ -581,6 +591,7 @@ namespace DaggerfallWorkshop.Game.Networking
             NetworkServer.RegisterHandler<MsgCastSpell>(OnServerReceiveCastSpell);
             NetworkServer.RegisterHandler<MsgApplySpellBundle>(OnServerReceiveApplySpellBundle);
             NetworkServer.RegisterHandler<MsgArrowShot>(OnServerReceiveArrowShot);
+            NetworkServer.RegisterHandler<MsgLobbyClientUpdate>(OnServerReceiveLobbyClientUpdate);
             GameManager.OnEnemySpawn += OnServerEnemySpawned;
             WeatherManager.OnWeatherChange += OnServerWeatherChanged;
             worldTimeSyncTimer = 0f;
@@ -591,6 +602,7 @@ namespace DaggerfallWorkshop.Game.Networking
 
             MsgPlayerProfile hostProfile = BuildLocalPlayerProfile(0);
             connectedPlayerProfiles[0] = hostProfile;
+            InitializeServerLobbyHost();
 
             LogNetwork("[DFU Network] Authoritative Server started.");
             OnServerStartedEvent?.Invoke();
@@ -624,6 +636,8 @@ namespace DaggerfallWorkshop.Game.Networking
             NetworkServer.UnregisterHandler<MsgCastSpell>();
             NetworkServer.UnregisterHandler<MsgApplySpellBundle>();
             NetworkServer.UnregisterHandler<MsgArrowShot>();
+            NetworkServer.UnregisterHandler<MsgLobbyClientUpdate>();
+            serverLobbyPlayers.Clear();
             serverPendingTradeCommits.Clear();
             activeDialogueBubbles.Clear();
             remotePlayerReputations.Clear();
@@ -735,6 +749,8 @@ namespace DaggerfallWorkshop.Game.Networking
                 CheckVoteConsensus();
             }
             LogNetwork($"[DFU Network] Client disconnected from server: connectionId={conn.connectionId}");
+            serverLobbyPlayers.Remove(conn.connectionId);
+            BroadcastLobbyState();
             DespawnRemotePlayerPuppet(conn.connectionId);
             if (NetworkServer.active)
             {
@@ -800,6 +816,8 @@ namespace DaggerfallWorkshop.Game.Networking
             NetworkClient.RegisterHandler<MsgPvpStateSync>(OnClientReceivePvpStateSync);
             NetworkClient.RegisterHandler<MsgArrowShot>(OnClientReceiveArrowShot);
             NetworkClient.RegisterHandler<MsgTeachSpell>(OnClientReceiveTeachSpell);
+            NetworkClient.RegisterHandler<MsgLobbyStateSync>(OnClientReceiveLobbyStateSync);
+            NetworkClient.RegisterHandler<MsgLobbyLaunchSession>(OnClientReceiveLobbyLaunchSession);
         }
 
         public override void OnStopClient()
@@ -845,6 +863,8 @@ namespace DaggerfallWorkshop.Game.Networking
             NetworkClient.UnregisterHandler<MsgPvpStateSync>();
             NetworkClient.UnregisterHandler<MsgArrowShot>();
             NetworkClient.UnregisterHandler<MsgTeachSpell>();
+            NetworkClient.UnregisterHandler<MsgLobbyStateSync>();
+            NetworkClient.UnregisterHandler<MsgLobbyLaunchSession>();
             activeDialogueBubbles.Clear();
             ClosePartyVoteWindow();
             showPlayerInteractionWindow = false;
@@ -886,6 +906,7 @@ namespace DaggerfallWorkshop.Game.Networking
                 {
                     MsgPlayerProfile myProfile = BuildLocalPlayerProfile(-1);
                     NetworkClient.Send(myProfile);
+                    SendLocalLobbyUpdate();
                 }
             }
 
@@ -1331,7 +1352,8 @@ namespace DaggerfallWorkshop.Game.Networking
 
         private void SpawnRemotePlayerPuppet(MsgPlayerProfile profile)
         {
-            if (profile.connectionId == localConnectionId)
+            int selfConnId = NetworkSession.IsHost ? 0 : localConnectionId;
+            if (profile.connectionId == selfConnId || (selfConnId != -1 && profile.connectionId == selfConnId))
                 return;
 
             if (remotePlayerPuppets.ContainsKey(profile.connectionId))
@@ -1504,22 +1526,108 @@ namespace DaggerfallWorkshop.Game.Networking
             }
         }
 
+        private void HandleSaveLoadManagerOnLoad(SaveData_v1 saveData)
+        {
+            if (NetworkSession.IsActive)
+            {
+                RefreshLocalAndRemotePuppetsAfterWorldLoad();
+            }
+        }
+
+        private void HandleStartGameBehaviourOnStartGame(object sender, EventArgs e)
+        {
+            if (NetworkSession.IsActive)
+            {
+                RefreshLocalAndRemotePuppetsAfterWorldLoad();
+            }
+        }
+
+        private void RefreshLocalAndRemotePuppetsAfterWorldLoad()
+        {
+            if (InputManager.Instance != null)
+            {
+                InputManager.Instance.ClearAllActions();
+                InputManager.Instance.ToggleAutorun = false;
+            }
+            if (GameManager.Instance != null && GameManager.Instance.PlayerMotor != null)
+            {
+                GameManager.Instance.PlayerMotor.CancelMovement = true;
+            }
+
+            // Rebuild and broadcast our local character profile now that the character/save is loaded in the 3D world
+            int myConnId = NetworkSession.IsHost ? 0 : localConnectionId;
+            MsgPlayerProfile updatedProfile = BuildLocalPlayerProfile(myConnId);
+            connectedPlayerProfiles[myConnId] = updatedProfile;
+
+            if (NetworkSession.IsHost)
+            {
+                if (GameManager.Instance != null && GameManager.Instance.PlayerEntityBehaviour != null)
+                {
+                    RegisterPlayerEntity(GameManager.Instance.PlayerEntityBehaviour);
+                }
+                RegisterExistingSceneEnemies();
+                NetworkServer.SendToAll(updatedProfile);
+            }
+            else if (NetworkClient.isConnected)
+            {
+                PurgeLocalSceneEnemies();
+                NetworkClient.Send(updatedProfile);
+            }
+
+            // Re-spawn or re-parent all remote player puppets so they appear in the active 3D cell
+            RefreshAllRemotePlayerPuppets();
+            lastLocalPlayerPos = (GameManager.Instance != null && GameManager.Instance.PlayerObject != null)
+                ? GameManager.Instance.PlayerObject.transform.position
+                : Vector3.zero;
+            playerHeartbeatTimer = 1.0f;
+            playerStreamTimer = 1.0f;
+            StreamLocalPlayerTransform();
+        }
+
         private void OnClientReceivePlayerInit(MsgPlayerInit msg)
         {
             localConnectionId = msg.assignedConnectionId;
             LogEntity($"[DFU Player] Assigned local connection ID: {localConnectionId}");
+
+            // Safety cleanup: If an avatar was spawned for this connection before ID assignment, despawn it
+            if (remotePlayerPuppets.ContainsKey(localConnectionId))
+            {
+                DespawnRemotePlayerPuppet(localConnectionId);
+            }
+
             SendReputationReportToHost();
         }
 
         private void OnClientReceivePlayerProfile(MsgPlayerProfile msg)
         {
-            SpawnRemotePlayerPuppet(msg);
+            // Always cache the profile on client so auto-recovery and world-load refresh can spawn the puppet
+            connectedPlayerProfiles[msg.connectionId] = msg;
 
-            // If receiving host profile upon joining, synchronize cell location if host is in dungeon or building
-            if (msg.connectionId == 0 && !NetworkSession.IsHost)
+            // Never spawn an avatar for our own local connection
+            int selfConnId = NetworkSession.IsHost ? 0 : localConnectionId;
+            if (msg.connectionId == selfConnId || (selfConnId != -1 && msg.connectionId == selfConnId))
+                return;
+
+            // If we already have a puppet for this peer, update its visual identity / position if needed
+            if (remotePlayerPuppets.TryGetValue(msg.connectionId, out NativePlayerPuppet existingPuppet) && existingPuppet != null && existingPuppet.gameObject != null)
             {
-                PlayerEnterExit pee = GameManager.Instance.PlayerEnterExit;
-                if (pee != null)
+                existingPuppet.Initialize(msg);
+                Transform bestParent = GameObjectHelper.GetBestPuppetParent();
+                if (bestParent != null && existingPuppet.transform.parent != bestParent)
+                    existingPuppet.transform.SetParent(bestParent, true);
+                existingPuppet.gameObject.SetActive(true);
+            }
+            else
+            {
+                SpawnRemotePlayerPuppet(msg);
+            }
+
+            // Do not force-transition if client is currently loading a save, respawning, or launched from the pre-game lobby
+            if (msg.connectionId == 0 && !NetworkSession.IsHost && localLobbySelectionMode == 0)
+            {
+                PlayerEnterExit pee = GameManager.Instance != null ? GameManager.Instance.PlayerEnterExit : null;
+                bool isBusyLoading = pee == null || pee.IsRespawning || (GameManager.Instance.SaveLoadManager != null && GameManager.Instance.SaveLoadManager.LoadInProgress);
+                if (!isBusyLoading && GameManager.Instance.StateManager.CurrentState == StateManager.StateTypes.Game)
                 {
                     if (msg.isInsideDungeon && !pee.IsPlayerInsideDungeon)
                     {
@@ -1539,23 +1647,52 @@ namespace DaggerfallWorkshop.Game.Networking
 
         private void OnClientReceivePlayerTransform(MsgPlayerTransform msg)
         {
-            if (msg.connectionId == localConnectionId)
+            int selfConnId = NetworkSession.IsHost ? 0 : localConnectionId;
+            if (msg.connectionId == selfConnId || (selfConnId != -1 && msg.connectionId == selfConnId))
                 return;
 
             if (!remotePlayerPuppets.TryGetValue(msg.connectionId, out NativePlayerPuppet puppet) || puppet == null || puppet.gameObject == null)
             {
-                if (connectedPlayerProfiles.TryGetValue(msg.connectionId, out MsgPlayerProfile profile))
+                if (!connectedPlayerProfiles.TryGetValue(msg.connectionId, out MsgPlayerProfile profile))
                 {
-                    LogEntity($"[DFU Puppet] Auto-recovering missing puppet for connection {msg.connectionId} ({profile.playerName}).");
+                    // Fallback profile if transform arrived before or without profile packet
+                    profile = new MsgPlayerProfile
+                    {
+                        connectionId = msg.connectionId,
+                        playerName = msg.connectionId == 0 ? "Host" : $"Player {msg.connectionId}",
+                        gender = 0,
+                        careerName = "Warrior",
+                        raceName = "Breton",
+                        position = msg.position,
+                        yaw = msg.yaw,
+                        isInside = msg.isInside,
+                        isInsideDungeon = msg.isInsideDungeon,
+                        buildingKey = msg.buildingKey
+                    };
+                    connectedPlayerProfiles[msg.connectionId] = profile;
+                }
+                else
+                {
                     profile.position = msg.position;
                     profile.yaw = msg.yaw;
-                    SpawnRemotePlayerPuppet(profile);
-                    remotePlayerPuppets.TryGetValue(msg.connectionId, out puppet);
+                    profile.isInside = msg.isInside;
+                    profile.isInsideDungeon = msg.isInsideDungeon;
+                    profile.buildingKey = msg.buildingKey;
+                    connectedPlayerProfiles[msg.connectionId] = profile;
                 }
+
+                LogEntity($"[DFU Puppet] Auto-recovering missing puppet for connection {msg.connectionId} ({profile.playerName}).");
+                SpawnRemotePlayerPuppet(profile);
+                remotePlayerPuppets.TryGetValue(msg.connectionId, out puppet);
             }
 
             if (puppet != null)
             {
+                Transform bestParent = GameObjectHelper.GetBestPuppetParent();
+                if (bestParent != null && puppet.transform.parent != bestParent)
+                {
+                    puppet.transform.SetParent(bestParent, true);
+                }
                 puppet.ApplyTransform(msg.position, msg.yaw, msg.isMoving, msg.isCrouching, msg.isAttacking, msg.weaponType);
                 UpdatePuppetCellVisibility(puppet, msg);
             }
@@ -2016,7 +2153,8 @@ namespace DaggerfallWorkshop.Game.Networking
             foreach (var kvp in connectedPlayerProfiles)
             {
                 int connId = kvp.Key;
-                if (!NetworkSession.IsHost && connId == localConnectionId)
+                int selfConnId = NetworkSession.IsHost ? 0 : localConnectionId;
+                if (connId == selfConnId || (selfConnId != -1 && connId == selfConnId))
                     continue;
 
                 if (!remotePlayerPuppets.TryGetValue(connId, out NativePlayerPuppet puppet) || puppet == null || puppet.gameObject == null)
@@ -2111,7 +2249,11 @@ namespace DaggerfallWorkshop.Game.Networking
         {
             ReparentAllPuppets();
             RefreshAllClientEnemyProxies();
-            lastLocalPlayerPos = Vector3.zero;
+            lastLocalPlayerPos = (GameManager.Instance != null && GameManager.Instance.PlayerObject != null)
+                ? GameManager.Instance.PlayerObject.transform.position
+                : Vector3.zero;
+            playerHeartbeatTimer = 1.0f;
+            playerStreamTimer = 1.0f;
             StreamLocalPlayerTransform();
         }
 
@@ -2119,7 +2261,9 @@ namespace DaggerfallWorkshop.Game.Networking
         {
             ReparentAllPuppets();
             RefreshAllClientEnemyProxies();
-            if (!isSyncingTransition && NetworkSession.IsActive)
+            PlayerEnterExit pee = GameManager.Instance != null ? GameManager.Instance.PlayerEnterExit : null;
+            bool isBusyLoading = (pee != null && pee.IsRespawning) || (GameManager.Instance != null && GameManager.Instance.SaveLoadManager != null && GameManager.Instance.SaveLoadManager.LoadInProgress);
+            if (!isSyncingTransition && !isBusyLoading && NetworkSession.IsActive)
             {
                 BroadcastTransition(PlayerEnterExit.TransitionType.ToDungeonInterior, 0, false);
             }
@@ -2129,7 +2273,9 @@ namespace DaggerfallWorkshop.Game.Networking
         {
             ReparentAllPuppets();
             RefreshAllClientEnemyProxies();
-            if (!isSyncingTransition && NetworkSession.IsActive)
+            PlayerEnterExit pee = GameManager.Instance != null ? GameManager.Instance.PlayerEnterExit : null;
+            bool isBusyLoading = (pee != null && pee.IsRespawning) || (GameManager.Instance != null && GameManager.Instance.SaveLoadManager != null && GameManager.Instance.SaveLoadManager.LoadInProgress);
+            if (!isSyncingTransition && !isBusyLoading && NetworkSession.IsActive)
             {
                 BroadcastTransition(PlayerEnterExit.TransitionType.ToDungeonExterior, 0, false);
             }
@@ -2228,6 +2374,10 @@ namespace DaggerfallWorkshop.Game.Networking
         {
             PlayerEnterExit pee = GameManager.Instance.PlayerEnterExit;
             if (pee == null) return;
+
+            bool isBusyLoading = pee.IsRespawning || (GameManager.Instance.SaveLoadManager != null && GameManager.Instance.SaveLoadManager.LoadInProgress);
+            if (isBusyLoading && !msg.isGatherParty)
+                return;
 
             isSyncingTransition = true;
             try
@@ -2567,97 +2717,134 @@ namespace DaggerfallWorkshop.Game.Networking
 
         private void OnGUI()
         {
-            if (isPartyRestingBlackout)
+            GUISkin prevSkin = GUI.skin;
+            GUISkin darkFantasySkin = DarkFantasyPixelArtTheme.GetOrCreateImGuiSkin(prevSkin);
+            if (darkFantasySkin != null)
+                GUI.skin = darkFantasySkin;
+
+            try
             {
-                GUI.depth = -2000;
-                Color prevColor = GUI.color;
-                GUI.color = Color.black;
-                GUI.DrawTexture(new Rect(0, 0, Screen.width, Screen.height), Texture2D.whiteTexture);
-                GUI.color = Color.white;
-                if (blackoutStyle == null)
+                if (isPartyRestingBlackout)
                 {
-                    blackoutStyle = new GUIStyle(GUI.skin.label);
-                    blackoutStyle.alignment = TextAnchor.MiddleCenter;
-                    blackoutStyle.fontSize = 22;
-                    blackoutStyle.normal.textColor = Color.white;
+                    GUI.depth = -2000;
+                    Color prevColor = GUI.color;
+                    GUI.color = Color.black;
+                    GUI.DrawTexture(new Rect(0, 0, Screen.width, Screen.height), Texture2D.whiteTexture);
+                    GUI.color = Color.white;
+                    if (blackoutStyle == null)
+                    {
+                        blackoutStyle = new GUIStyle(GUI.skin.label);
+                        blackoutStyle.alignment = TextAnchor.MiddleCenter;
+                        blackoutStyle.fontSize = 22;
+                        blackoutStyle.normal.textColor = DarkFantasyPixelArtTheme.GoldHighlight;
+                    }
+                    string actionText = partyRestIsLoiter ? "Loitering" : "Resting";
+                    GUI.Label(new Rect(0, Screen.height / 2 - 30, Screen.width, 60), $"{actionText} with the party... ({partyRestHours} hours)", blackoutStyle);
+                    GUI.color = prevColor;
                 }
-                string actionText = partyRestIsLoiter ? "Loitering" : "Resting";
-                GUI.Label(new Rect(0, Screen.height / 2 - 30, Screen.width, 60), $"{actionText} with the party... ({partyRestHours} hours)", blackoutStyle);
-                GUI.color = prevColor;
-            }
 
-            if (showTtrpgSuite)
-            {
+                if (showTtrpgSuite)
+                {
+                    GUI.depth = -999;
+                    ttrpgSuiteRect = GUI.Window(987653, ttrpgSuiteRect, DrawTtrpgMasterWindow, "✦ DFU TTRPG MASTER SUITE (Ctrl+F11) ✦");
+                }
+
+                if (showDebugGui)
+                {
+                    GUI.depth = -999;
+                    windowRect = GUI.Window(987654, windowRect, DrawNetworkWindow, "✦ DFU Native Multiplayer (Ctrl+F10) ✦");
+                }
+
+                if (showDmGui)
+                {
+                    GUI.depth = -999;
+                    dmWindowRect = GUI.Window(987655, dmWindowRect, DrawDmWindow, "✦ DM Tool (Spawns, Teleport & Weather) ✦");
+                }
+
+                if (showLootGui)
+                {
+                    GUI.depth = -999;
+                    lootWindowRect = GUI.Window(987656, lootWindowRect, DrawLootWindow, "✦ DM Loot Tool (Ctrl+F12) ✦");
+                }
+
+                if (showQuestGui)
+                {
+                    GUI.depth = -999;
+                    questWindowRect = GUI.Window(987657, questWindowRect, DrawQuestWindow, "✦ Quest Creator / Test Menu (Ctrl+F7) ✦");
+                }
+
+                if (showPlayerInteractionWindow && interactionTargetPuppet != null && interactionTargetPuppet.gameObject != null)
+                {
+                    GUI.depth = -1000;
+                    playerInteractionWindowRect = GUI.Window(987658, playerInteractionWindowRect, DrawPlayerInteractionWindow, $"✦ Aventurero: {interactionTargetPuppet.playerName} ✦");
+                }
+
+                if (showTradeInvitePrompt)
+                {
+                    GUI.depth = -1001;
+                    tradeInviteRect = GUI.Window(987659, tradeInviteRect, DrawTradeInvitePromptWindow, "✦ Solicitud de Comercio ✦");
+                }
+
+                if (showTradeWindow)
+                {
+                    GUI.depth = -1000;
+                    tradeWindowRect = GUI.Window(987660, tradeWindowRect, DrawTradeWindow, $"✦ Comercio Bilateral — {activeTradePartnerName} ✦");
+                }
+
                 GUI.depth = -999;
-                ttrpgSuiteRect = GUI.Window(987653, ttrpgSuiteRect, DrawTtrpgMasterWindow, "DFU TTRPG MASTER SUITE (Ctrl+F11)");
+                DrawDialogueBubbles();
             }
-
-            if (showDebugGui)
+            finally
             {
-                GUI.depth = -999;
-                windowRect = GUI.Window(987654, windowRect, DrawNetworkWindow, "DFU Native Multiplayer (Ctrl+F10)");
+                GUI.skin = prevSkin;
             }
-
-            if (showDmGui)
-            {
-                GUI.depth = -999;
-                dmWindowRect = GUI.Window(987655, dmWindowRect, DrawDmWindow, "DM Tool (Spawns, Teleport & Weather) (Ctrl+F11)");
-            }
-
-            if (showLootGui)
-            {
-                GUI.depth = -999;
-                lootWindowRect = GUI.Window(987656, lootWindowRect, DrawLootWindow, "DM Loot Tool (Ctrl+F12)");
-            }
-
-            if (showQuestGui)
-            {
-                GUI.depth = -999;
-                questWindowRect = GUI.Window(987657, questWindowRect, DrawQuestWindow, "Quest Creator / Test Menu (Ctrl+F7)");
-            }
-
-            if (showPlayerInteractionWindow && interactionTargetPuppet != null && interactionTargetPuppet.gameObject != null)
-            {
-                GUI.depth = -1000;
-                playerInteractionWindowRect = GUI.Window(987658, playerInteractionWindowRect, DrawPlayerInteractionWindow, $"Player: {interactionTargetPuppet.playerName}");
-            }
-
-            if (showTradeInvitePrompt)
-            {
-                GUI.depth = -1001;
-                tradeInviteRect = GUI.Window(987659, tradeInviteRect, DrawTradeInvitePromptWindow, "Solicitud de Comercio");
-            }
-
-            if (showTradeWindow)
-            {
-                GUI.depth = -1000;
-                tradeWindowRect = GUI.Window(987660, tradeWindowRect, DrawTradeWindow, $"Comercio con {activeTradePartnerName}");
-            }
-
-            GUI.depth = -999;
-            DrawDialogueBubbles();
         }
 
         private void DrawTtrpgMasterWindow(int windowId)
         {
-            GUILayout.Space(2);
+            DarkFantasyPixelArtTheme.DrawImGuiDivider();
 
-            // Tab bar with pixel-art / retro styling
+            bool canUseDm = NetworkSession.IsServer || localLobbyIsDm;
+            if (!canUseDm && ttrpgSelectedTab != 0)
+            {
+                ttrpgSelectedTab = 0;
+            }
+
+            // Tab bar with Dark Fantasy Pixel-Art beveled tabs
             GUILayout.BeginHorizontal();
             for (int i = 0; i < ttrpgTabNames.Length; i++)
             {
+                bool isDmTab = (i > 0);
+                bool isTabEnabled = canUseDm || !isDmTab;
                 bool isSelected = (ttrpgSelectedTab == i);
-                string tabTitle = isSelected ? $"<b><color=#FFD700>[ {ttrpgTabNames[i]} ]</color></b>" : ttrpgTabNames[i];
-                if (GUILayout.Button(tabTitle, GUILayout.Height(28)))
+
+                GUIStyle tabStyle = isSelected ? DarkFantasyPixelArtTheme.TabActiveStyle : DarkFantasyPixelArtTheme.TabInactiveStyle;
+                string tabTitle = isSelected ? $"✦ {ttrpgTabNames[i]}" : ttrpgTabNames[i];
+                if (!isTabEnabled)
                 {
-                    ttrpgSelectedTab = i;
+                    tabTitle = $"{ttrpgTabNames[i]} <color=#706050>(DM)</color>";
                 }
+
+                bool prevEnabled = GUI.enabled;
+                if (!isTabEnabled)
+                    GUI.enabled = false;
+
+                if (GUILayout.Button(tabTitle, tabStyle, GUILayout.Height(30)))
+                {
+                    if (isTabEnabled)
+                    {
+                        ttrpgSelectedTab = i;
+                    }
+                }
+
+                GUI.enabled = prevEnabled;
             }
             GUILayout.EndHorizontal();
 
-            GUILayout.Space(6);
+            DarkFantasyPixelArtTheme.DrawImGuiDivider();
 
-            // Scroll view for tab content
+            // Recessed Dark Fantasy container for tab content
+            GUILayout.BeginVertical(GUI.skin.box);
             ttrpgSuiteScrollPos = GUILayout.BeginScrollView(ttrpgSuiteScrollPos);
 
             switch (ttrpgSelectedTab)
@@ -2683,11 +2870,12 @@ namespace DaggerfallWorkshop.Game.Networking
             }
 
             GUILayout.EndScrollView();
+            GUILayout.EndVertical();
 
-            GUILayout.Space(6);
+            GUILayout.Space(4);
             GUILayout.BeginHorizontal();
-            GUILayout.Label($"<color=#AAAAAA>Role: {NetworkSession.GetStatusString()}</color>", GUILayout.ExpandWidth(true));
-            if (GUILayout.Button("Cerrar (Esc / Ctrl+F11)", GUILayout.Width(170), GUILayout.Height(24)))
+            GUILayout.Label($"<color=#C6AC71><b>Rol:</b> {NetworkSession.GetStatusString()}</color>", GUILayout.ExpandWidth(true));
+            if (GUILayout.Button("Cerrar (Esc / Ctrl+F11)", DarkFantasyPixelArtTheme.CrimsonButtonStyle, GUILayout.Width(175), GUILayout.Height(26)))
             {
                 showTtrpgSuite = false;
             }
@@ -2698,9 +2886,10 @@ namespace DaggerfallWorkshop.Game.Networking
 
         private void DrawNetworkWindow(int windowId)
         {
+            DarkFantasyPixelArtTheme.DrawImGuiDivider();
             DrawNetworkWindowContent();
             GUILayout.Space(8);
-            if (GUILayout.Button("Quest Creator / Test Menu (Ctrl+F7)", GUILayout.Height(26)))
+            if (GUILayout.Button("Quest Creator / Test Menu (Ctrl+F7)", DarkFantasyPixelArtTheme.GoldButtonStyle, GUILayout.Height(26)))
             {
                 showQuestGui = !showQuestGui;
             }
@@ -2709,8 +2898,10 @@ namespace DaggerfallWorkshop.Game.Networking
 
         private void DrawNetworkWindowContent()
         {
-            GUILayout.Space(5);
-            GUILayout.Label($"<b>Status:</b> {NetworkSession.GetStatusString()}");
+            GUILayout.Space(4);
+            GUILayout.Label("✦ ESTADO DE CONEXIÓN & SESIÓN ✦", DarkFantasyPixelArtTheme.SectionBannerStyle, GUILayout.ExpandWidth(true));
+            GUILayout.Space(4);
+            GUILayout.Label($"<b>Estado actual:</b> <color=#FFDF78>{NetworkSession.GetStatusString()}</color>");
 
             if (NetworkSession.IsSinglePlayer)
             {
@@ -2729,12 +2920,12 @@ namespace DaggerfallWorkshop.Game.Networking
                 ushort.TryParse(guiPort, out ushort port);
                 if (port == 0) port = defaultPort;
 
-                if (GUILayout.Button("Start Host (Server + Client)"))
+                if (GUILayout.Button("Start Host (Server + Client)", DarkFantasyPixelArtTheme.EmeraldButtonStyle, GUILayout.Height(28)))
                 {
                     StartHosting(port);
                 }
 
-                if (GUILayout.Button("Connect as Client"))
+                if (GUILayout.Button("Connect as Client", DarkFantasyPixelArtTheme.GoldButtonStyle, GUILayout.Height(28)))
                 {
                     ConnectToServer(guiAddress, port);
                 }
@@ -2744,23 +2935,24 @@ namespace DaggerfallWorkshop.Game.Networking
                 GUILayout.Space(5);
                 if (NetworkSession.IsServer)
                 {
-                    GUILayout.Label($"Connected Peers: {connectedClients.Count}");
+                    GUILayout.Label($"Connected Peers: <b>{connectedClients.Count}</b>");
                 }
 
-                if (GUILayout.Button("Disconnect"))
+                if (GUILayout.Button("Disconnect Session", DarkFantasyPixelArtTheme.CrimsonButtonStyle, GUILayout.Height(28)))
                 {
                     DisconnectSession();
                 }
             }
 
             GUILayout.Space(10);
-            GUILayout.Label("<b>Console Logging Filters:</b>");
-            LogTimeEnabled = GUILayout.Toggle(LogTimeEnabled, "Time Sync ([DFU Time])");
-            LogWeatherEnabled = GUILayout.Toggle(LogWeatherEnabled, "Weather ([DFU Weather])");
-            LogEntitiesEnabled = GUILayout.Toggle(LogEntitiesEnabled, "Entities/Puppets");
-            LogSpawnsEnabled = GUILayout.Toggle(LogSpawnsEnabled, "Spawns/Despawns");
-            LogLootEnabled = GUILayout.Toggle(LogLootEnabled, "Loot Containers");
-            LogTransitionsEnabled = GUILayout.Toggle(LogTransitionsEnabled, "Transitions");
+            GUILayout.Label("✦ FILTROS DE REGISTRO (CONSOLA) ✦", DarkFantasyPixelArtTheme.SectionBannerStyle, GUILayout.ExpandWidth(true));
+            GUILayout.Space(4);
+            LogTimeEnabled = GUILayout.Toggle(LogTimeEnabled, " Time Sync ([DFU Time])");
+            LogWeatherEnabled = GUILayout.Toggle(LogWeatherEnabled, " Weather ([DFU Weather])");
+            LogEntitiesEnabled = GUILayout.Toggle(LogEntitiesEnabled, " Entities / Puppets");
+            LogSpawnsEnabled = GUILayout.Toggle(LogSpawnsEnabled, " Spawns / Despawns");
+            LogLootEnabled = GUILayout.Toggle(LogLootEnabled, " Loot Containers");
+            LogTransitionsEnabled = GUILayout.Toggle(LogTransitionsEnabled, " Transitions");
         }
 
         public void ToggleDmInvisibility()
@@ -2920,6 +3112,7 @@ namespace DaggerfallWorkshop.Game.Networking
 
         private void DrawDmWindow(int windowId)
         {
+            DarkFantasyPixelArtTheme.DrawImGuiDivider();
             dmScrollPosition = GUILayout.BeginScrollView(dmScrollPosition);
 
             GUILayout.Space(5);
@@ -2940,13 +3133,13 @@ namespace DaggerfallWorkshop.Game.Networking
             }
 
             GUILayout.Space(5);
-            if (GUILayout.Button("Quest Creator / Test Menu (Ctrl+F7)", GUILayout.Height(24)))
+            if (GUILayout.Button("Quest Creator / Test Menu (Ctrl+F7)", DarkFantasyPixelArtTheme.GoldButtonStyle, GUILayout.Height(24)))
             {
                 showQuestGui = !showQuestGui;
             }
 
             GUILayout.Space(5);
-            if (GUILayout.Button("Close (dm_gui)"))
+            if (GUILayout.Button("Close (dm_gui)", DarkFantasyPixelArtTheme.CrimsonButtonStyle))
             {
                 showDmGui = false;
             }
@@ -2958,16 +3151,17 @@ namespace DaggerfallWorkshop.Game.Networking
 
         private void DrawSpawnsTabContent()
         {
-            GUILayout.Space(5);
+            GUILayout.Space(4);
             if (!NetworkSession.ShouldHandleSpawns)
             {
                 GUILayout.Label("Spawns & NPC controls are only allowed on the Host/Server (or DM).", GUI.skin.box);
                 return;
             }
 
-            GUILayout.Label("<b><color=#FFD700>--- Enemy & Monster Spawner ---</color></b>");
+            GUILayout.Label("✦ INVOCADOR DE ENEMIGOS & MONSTRUOS ✦", DarkFantasyPixelArtTheme.SectionBannerStyle, GUILayout.ExpandWidth(true));
+            GUILayout.Space(4);
             MobileTypes currentEnemy = dmEnemies[selectedDmIndex];
-            GUILayout.Label($"Selected Enemy: <b>{currentEnemy}</b>");
+            GUILayout.Label($"Selected Enemy: <color=#FFDF78><b>{currentEnemy}</b></color>");
 
             GUILayout.BeginHorizontal();
             if (GUILayout.Button("< Prev") && selectedDmIndex > 0)
@@ -2981,7 +3175,7 @@ namespace DaggerfallWorkshop.Game.Networking
             GUILayout.EndHorizontal();
 
             GUILayout.Space(5);
-            if (GUILayout.Button($"Spawn {currentEnemy} (2m Front)", GUILayout.Height(30)))
+            if (GUILayout.Button($"✦ Spawn {currentEnemy} (2m Front) ✦", DarkFantasyPixelArtTheme.EmeraldButtonStyle, GUILayout.Height(30)))
             {
                 SpawnEnemyInFrontOfPlayer(currentEnemy);
             }
@@ -3007,13 +3201,14 @@ namespace DaggerfallWorkshop.Game.Networking
             GUILayout.EndHorizontal();
 
             GUILayout.Space(8);
-            GUILayout.Label("<b>Authoritative Despawn:</b>");
+            GUILayout.Label("✦ DESPAWN AUTORITATIVO ✦", DarkFantasyPixelArtTheme.SectionBannerStyle, GUILayout.ExpandWidth(true));
+            GUILayout.Space(4);
             GUILayout.BeginHorizontal();
-            if (GUILayout.Button("Despawn Last", GUILayout.Height(24)))
+            if (GUILayout.Button("Despawn Last", DarkFantasyPixelArtTheme.CrimsonButtonStyle, GUILayout.Height(26)))
             {
                 DespawnLastEnemy();
             }
-            if (GUILayout.Button("Despawn All", GUILayout.Height(24)))
+            if (GUILayout.Button("Despawn All", DarkFantasyPixelArtTheme.CrimsonButtonStyle, GUILayout.Height(26)))
             {
                 DespawnAllSpawnedEnemies();
             }
@@ -3022,7 +3217,7 @@ namespace DaggerfallWorkshop.Game.Networking
 
         private void DrawWorldTabContent()
         {
-            GUILayout.Space(5);
+            GUILayout.Space(4);
             if (!NetworkSession.ShouldHandleSpawns)
             {
                 GUILayout.Label("World controls & DM teleportation are only allowed on the Host/Server (or DM).", GUI.skin.box);
@@ -3030,11 +3225,12 @@ namespace DaggerfallWorkshop.Game.Networking
             }
 
             // World Time controls
-            GUILayout.Label("<b><color=#FFD700>--- World Time ---</color></b>");
+            GUILayout.Label("✦ TIEMPO DEL MUNDO ✦", DarkFantasyPixelArtTheme.SectionBannerStyle, GUILayout.ExpandWidth(true));
+            GUILayout.Space(4);
             if (DaggerfallUnity.Instance != null && DaggerfallUnity.Instance.WorldTime != null)
             {
                 var wt = DaggerfallUnity.Instance.WorldTime;
-                GUILayout.Label($"Time: {wt.Now.ShortTimeString()} {wt.Now.DateString()} ({wt.TimeScale}x)");
+                GUILayout.Label($"Time: <color=#FFDF78>{wt.Now.ShortTimeString()} {wt.Now.DateString()}</color> ({wt.TimeScale}x)");
             }
             else
             {
@@ -3061,10 +3257,11 @@ namespace DaggerfallWorkshop.Game.Networking
 
             // Weather controls
             GUILayout.Space(8);
-            GUILayout.Label("<b><color=#FFD700>--- Weather ---</color></b>");
+            GUILayout.Label("✦ CLIMA & ATMÓSFERA ✦", DarkFantasyPixelArtTheme.SectionBannerStyle, GUILayout.ExpandWidth(true));
+            GUILayout.Space(4);
             WeatherManager wm = GameManager.Instance != null ? GameManager.Instance.WeatherManager : null;
             string weatherName = wm != null ? wm.CurrentWeather.ToString() : "Unknown";
-            GUILayout.Label($"Current Weather: <b>{weatherName}</b>");
+            GUILayout.Label($"Current Weather: <color=#FFDF78><b>{weatherName}</b></color>");
 
             GUILayout.BeginHorizontal();
             if (GUILayout.Button("Sunny")) SetWorldWeather(WeatherType.Sunny);
@@ -3081,13 +3278,14 @@ namespace DaggerfallWorkshop.Game.Networking
 
             // DM Teleportation
             GUILayout.Space(8);
-            GUILayout.Label("<b><color=#FFD700>--- DM Teleportation ---</color></b>");
+            GUILayout.Label("✦ TELETRANSPORTE DM & PARTY ✦", DarkFantasyPixelArtTheme.SectionBannerStyle, GUILayout.ExpandWidth(true));
+            GUILayout.Space(4);
 
             DFPosition curPixel = GameManager.Instance.PlayerGPS != null ? GameManager.Instance.PlayerGPS.CurrentMapPixel : new DFPosition(0, 0);
             string curLoc = GameManager.Instance.PlayerGPS != null && GameManager.Instance.PlayerGPS.CurrentLocation.Loaded
                 ? GameManager.Instance.PlayerGPS.CurrentLocation.Name
                 : "Wilderness";
-            GUILayout.Label($"Current: ({curPixel.X}, {curPixel.Y}) - {curLoc}");
+            GUILayout.Label($"Current: <b>({curPixel.X}, {curPixel.Y}) - {curLoc}</b>");
 
             GUILayout.BeginHorizontal();
             GUILayout.Label("Map X:", GUILayout.Width(45));
@@ -3105,12 +3303,12 @@ namespace DaggerfallWorkshop.Game.Networking
             int.TryParse(dmTpInputY, out int dmTargetY);
 
             GUILayout.BeginHorizontal();
-            if (GUILayout.Button($"TP Me ({dmTargetX}, {dmTargetY})", GUILayout.Height(24)))
+            if (GUILayout.Button($"TP Me ({dmTargetX}, {dmTargetY})", DarkFantasyPixelArtTheme.GoldButtonStyle, GUILayout.Height(26)))
             {
                 TeleportLocalPlayer(dmTargetX, dmTargetY);
                 DaggerfallUI.AddHUDText($"[DM TP] Teleported to ({dmTargetX}, {dmTargetY})");
             }
-            if (GUILayout.Button($"Warp Party ({dmTargetX}, {dmTargetY})", GUILayout.Height(24)))
+            if (GUILayout.Button($"Warp Party ({dmTargetX}, {dmTargetY})", DarkFantasyPixelArtTheme.EmeraldButtonStyle, GUILayout.Height(26)))
             {
                 if (NetworkSession.IsHost)
                 {
@@ -3155,12 +3353,12 @@ namespace DaggerfallWorkshop.Game.Networking
                             DFPosition objCoords = MapsFile.LongitudeLatitudeToMapPixel(dfLoc.MapTableData.Longitude, dfLoc.MapTableData.Latitude);
                             GUILayout.Space(2);
                             GUILayout.BeginHorizontal();
-                            if (GUILayout.Button($"TP Quest: {site.locationName}", GUILayout.Height(22)))
+                            if (GUILayout.Button($"TP Quest: {site.locationName}", DarkFantasyPixelArtTheme.GoldButtonStyle, GUILayout.Height(24)))
                             {
                                 TeleportLocalPlayer(objCoords.X, objCoords.Y);
                                 DaggerfallUI.AddHUDText($"[DM TP] Teleported to {site.locationName} ({objCoords.X}, {objCoords.Y})");
                             }
-                            if (GUILayout.Button("Warp Party", GUILayout.Width(80), GUILayout.Height(22)))
+                            if (GUILayout.Button("Warp Party", DarkFantasyPixelArtTheme.EmeraldButtonStyle, GUILayout.Width(90), GUILayout.Height(24)))
                             {
                                 if (NetworkSession.IsHost)
                                 {
@@ -3178,17 +3376,18 @@ namespace DaggerfallWorkshop.Game.Networking
             }
 
             GUILayout.Space(8);
-            GUILayout.Label("<b><color=#FFD700>--- God Mode & Observer ---</color></b>");
+            GUILayout.Label("✦ MODO DIOS & CÁMARA LIBRE ✦", DarkFantasyPixelArtTheme.SectionBannerStyle, GUILayout.ExpandWidth(true));
+            GUILayout.Space(4);
             bool godOn = GameManager.Instance != null && GameManager.Instance.PlayerEntity != null && GameManager.Instance.PlayerEntity.GodMode;
-            string godLabel = godOn ? "God Mode (Invincible): [ON]" : "God Mode (Invincible): [OFF]";
-            if (GUILayout.Button(godLabel, GUILayout.Height(24)))
+            string godLabel = godOn ? "✦ God Mode (Invincible): [ON]" : "God Mode (Invincible): [OFF]";
+            if (GUILayout.Button(godLabel, godOn ? DarkFantasyPixelArtTheme.EmeraldButtonStyle : GUI.skin.button, GUILayout.Height(26)))
             {
                 ToggleDmGodMode();
             }
 
             bool freeCamOn = FreeCamController.Instance != null && FreeCamController.Instance.IsActive;
-            string freeCamLabel = freeCamOn ? "Eagle Eye / FreeCam (Ctrl+F8): [ACTIVE]" : "Eagle Eye / FreeCam (Ctrl+F8): [INACTIVE]";
-            if (GUILayout.Button(freeCamLabel, GUILayout.Height(24)))
+            string freeCamLabel = freeCamOn ? "✦ Eagle Eye / FreeCam (Ctrl+F8): [ACTIVE]" : "Eagle Eye / FreeCam (Ctrl+F8): [INACTIVE]";
+            if (GUILayout.Button(freeCamLabel, freeCamOn ? DarkFantasyPixelArtTheme.EmeraldButtonStyle : GUI.skin.button, GUILayout.Height(26)))
             {
                 if (FreeCamController.Instance != null)
                     FreeCamController.Instance.ToggleFreeCam();
@@ -3197,22 +3396,24 @@ namespace DaggerfallWorkshop.Game.Networking
 
         private void DrawPartyDmTabContent()
         {
-            GUILayout.Space(5);
-            GUILayout.Label("<b><color=#FFD700>--- DM Tools & Stealth ---</color></b>");
-            string invisLabel = isDmInvisible ? "DM Invisibility: [ON]" : "DM Invisibility: [OFF]";
-            if (GUILayout.Button(invisLabel, GUILayout.Height(24)))
+            GUILayout.Space(4);
+            GUILayout.Label("✦ HERRAMIENTAS DM & SIGILO ✦", DarkFantasyPixelArtTheme.SectionBannerStyle, GUILayout.ExpandWidth(true));
+            GUILayout.Space(4);
+            string invisLabel = isDmInvisible ? "✦ DM Invisibility: [ON]" : "DM Invisibility: [OFF]";
+            if (GUILayout.Button(invisLabel, isDmInvisible ? DarkFantasyPixelArtTheme.EmeraldButtonStyle : GUI.skin.button, GUILayout.Height(26)))
             {
                 ToggleDmInvisibility();
             }
 
             GUILayout.Space(4);
-            if (GUILayout.Button("Gather Party to Host", GUILayout.Height(24)))
+            if (GUILayout.Button("✦ Gather Party to Host ✦", DarkFantasyPixelArtTheme.GoldButtonStyle, GUILayout.Height(28)))
             {
                 GatherPartyToHost();
             }
 
             GUILayout.Space(8);
-            GUILayout.Label("<b><color=#FFD700>--- PvP & Friendly Fire ---</color></b>");
+            GUILayout.Label("✦ COMBATE PVP & FUEGO AMIGO ✦", DarkFantasyPixelArtTheme.SectionBannerStyle, GUILayout.ExpandWidth(true));
+            GUILayout.Space(4);
             bool newPvp = GUILayout.Toggle(isPvpAllowed, " Friendly Fire / PvP (net_pvp)");
             if (newPvp != isPvpAllowed)
             {
@@ -3220,7 +3421,8 @@ namespace DaggerfallWorkshop.Game.Networking
             }
 
             GUILayout.Space(8);
-            GUILayout.Label("<b><color=#FFD700>--- Grant / Teach Spells ---</color></b>");
+            GUILayout.Label("✦ GRIMORIO DM: ENSEÑAR HECHIZOS ✦", DarkFantasyPixelArtTheme.SectionBannerStyle, GUILayout.ExpandWidth(true));
+            GUILayout.Space(4);
             GUILayout.Label("Teach spells to yourself or connected party members:");
 
             List<int> targetOptions = new List<int> { 0 };
@@ -3239,7 +3441,7 @@ namespace DaggerfallWorkshop.Game.Networking
             if (GUILayout.Button("<", GUILayout.Width(24)) && selectedDmSpellTargetIndex > 0)
                 selectedDmSpellTargetIndex--;
             selectedDmSpellTargetIndex = Mathf.Clamp(selectedDmSpellTargetIndex, 0, targetOptions.Count - 1);
-            GUILayout.Label($"<b>{targetNames[selectedDmSpellTargetIndex]}</b>", GUILayout.ExpandWidth(true));
+            GUILayout.Label($"<color=#FFDF78><b>{targetNames[selectedDmSpellTargetIndex]}</b></color>", GUILayout.ExpandWidth(true));
             if (GUILayout.Button(">", GUILayout.Width(24)) && selectedDmSpellTargetIndex < targetOptions.Count - 1)
                 selectedDmSpellTargetIndex++;
             GUILayout.EndHorizontal();
@@ -3276,7 +3478,7 @@ namespace DaggerfallWorkshop.Game.Networking
             GUILayout.BeginHorizontal();
             GUILayout.Label("Search:", GUILayout.Width(50));
             dmSpellFilter = GUILayout.TextField(dmSpellFilter ?? "", GUILayout.ExpandWidth(true));
-            if (GUILayout.Button("X", GUILayout.Width(22))) dmSpellFilter = "";
+            if (GUILayout.Button("X", DarkFantasyPixelArtTheme.CrimsonButtonStyle, GUILayout.Width(24))) dmSpellFilter = "";
             GUILayout.EndHorizontal();
 
             if (!string.IsNullOrEmpty(dmSpellFilter) && dmSpellFilter.Length >= 2 && GameManager.Instance.EntityEffectBroker != null)
@@ -3289,7 +3491,7 @@ namespace DaggerfallWorkshop.Game.Networking
                         s.spellName.IndexOf(dmSpellFilter, StringComparison.OrdinalIgnoreCase) >= 0)
                     {
                         matches++;
-                        if (GUILayout.Button($"Teach: {s.spellName}"))
+                        if (GUILayout.Button($"✦ Teach: {s.spellName}", DarkFantasyPixelArtTheme.EmeraldButtonStyle))
                         {
                             TeachDmSpellToTarget(targetConnId, s.spellName, s.index);
                         }
@@ -3304,9 +3506,10 @@ namespace DaggerfallWorkshop.Game.Networking
 
         private void DrawLootWindow(int windowId)
         {
+            DarkFantasyPixelArtTheme.DrawImGuiDivider();
             DrawLootWindowContent();
             GUILayout.Space(8);
-            if (GUILayout.Button("Close (Ctrl+F12 / loot_gui)"))
+            if (GUILayout.Button("Close (Ctrl+F12 / loot_gui)", DarkFantasyPixelArtTheme.CrimsonButtonStyle))
             {
                 showLootGui = false;
             }
@@ -3315,8 +3518,8 @@ namespace DaggerfallWorkshop.Game.Networking
 
         private void DrawLootWindowContent()
         {
-            GUILayout.Space(5);
-            GUILayout.Label($"Role: {NetworkSession.GetStatusString()}");
+            GUILayout.Space(4);
+            GUILayout.Label($"Role: <color=#FFDF78>{NetworkSession.GetStatusString()}</color>");
 
             if (!NetworkSession.ShouldHandleSpawns)
             {
@@ -3327,9 +3530,10 @@ namespace DaggerfallWorkshop.Game.Networking
             {
                 // Section 1: Spawn Corpse
                 GUILayout.Space(5);
-                GUILayout.Label("<b><color=#FFD700>--- Section 1: Spawn Corpse ---</color></b>");
+                GUILayout.Label("✦ 1. GENERADOR DE CADÁVERES CON BOTÍN ✦", DarkFantasyPixelArtTheme.SectionBannerStyle, GUILayout.ExpandWidth(true));
+                GUILayout.Space(4);
                 MobileTypes currentEnemy = lootEnemies[selectedLootEnemyIndex];
-                GUILayout.Label($"Corpse: <b>{currentEnemy}</b>");
+                GUILayout.Label($"Corpse: <color=#FFDF78><b>{currentEnemy}</b></color>");
 
                 GUILayout.BeginHorizontal();
                 if (GUILayout.Button("< Prev") && selectedLootEnemyIndex > 0)
@@ -3343,7 +3547,7 @@ namespace DaggerfallWorkshop.Game.Networking
                 GUILayout.EndHorizontal();
 
                 GUILayout.Space(5);
-                if (GUILayout.Button($"Spawn Corpse: {currentEnemy}", GUILayout.Height(30)))
+                if (GUILayout.Button($"✦ Spawn Corpse: {currentEnemy} ✦", DarkFantasyPixelArtTheme.EmeraldButtonStyle, GUILayout.Height(30)))
                 {
                     SpawnCorpseInFrontOfPlayer(currentEnemy);
                 }
@@ -3370,33 +3574,35 @@ namespace DaggerfallWorkshop.Game.Networking
 
                 // Section 2: Spawn Chests & Treasures
                 GUILayout.Space(8);
-                GUILayout.Label("<b><color=#FFD700>--- Section 2: Chests & Treasures ---</color></b>");
-                if (GUILayout.Button("Spawn Dungeon Chest (Treasure Mix)", GUILayout.Height(25)))
+                GUILayout.Label("✦ 2. COFRES & TESOROS ✦", DarkFantasyPixelArtTheme.SectionBannerStyle, GUILayout.ExpandWidth(true));
+                GUILayout.Space(4);
+                if (GUILayout.Button("Spawn Dungeon Chest (Treasure Mix)", DarkFantasyPixelArtTheme.GoldButtonStyle, GUILayout.Height(26)))
                 {
                     SpawnChestInFrontOfPlayer("Dungeon Chest");
                 }
-                if (GUILayout.Button("Spawn Gold Pile (500 Gold)", GUILayout.Height(25)))
+                if (GUILayout.Button("Spawn Gold Pile (500 Gold)", DarkFantasyPixelArtTheme.GoldButtonStyle, GUILayout.Height(26)))
                 {
                     SpawnChestInFrontOfPlayer("Gold Pile");
                 }
-                if (GUILayout.Button("Spawn Weapon Cache (Assorted Weapons)", GUILayout.Height(25)))
+                if (GUILayout.Button("Spawn Weapon Cache (Assorted Weapons)", DarkFantasyPixelArtTheme.GoldButtonStyle, GUILayout.Height(26)))
                 {
                     SpawnChestInFrontOfPlayer("Weapon Cache");
                 }
-                if (GUILayout.Button("Spawn Magic & Potions Stash", GUILayout.Height(25)))
+                if (GUILayout.Button("Spawn Magic & Potions Stash", DarkFantasyPixelArtTheme.GoldButtonStyle, GUILayout.Height(26)))
                 {
                     SpawnChestInFrontOfPlayer("Magic & Potions");
                 }
 
                 // Section 3: Despawn Spawned Loot
                 GUILayout.Space(8);
-                GUILayout.Label("<b><color=#FFD700>--- Section 3: Despawn Spawned Loot ---</color></b>");
+                GUILayout.Label("✦ 3. LIMPIEZA DE BOTÍN ✦", DarkFantasyPixelArtTheme.SectionBannerStyle, GUILayout.ExpandWidth(true));
+                GUILayout.Space(4);
                 GUILayout.BeginHorizontal();
-                if (GUILayout.Button("Despawn Last", GUILayout.Height(24)))
+                if (GUILayout.Button("Despawn Last", DarkFantasyPixelArtTheme.CrimsonButtonStyle, GUILayout.Height(26)))
                 {
                     DespawnLastLoot();
                 }
-                if (GUILayout.Button("Despawn All", GUILayout.Height(24)))
+                if (GUILayout.Button("Despawn All", DarkFantasyPixelArtTheme.CrimsonButtonStyle, GUILayout.Height(26)))
                 {
                     DespawnAllLoot();
                 }
@@ -3443,10 +3649,13 @@ namespace DaggerfallWorkshop.Game.Networking
 
         private void DrawQuestWindow(int windowId)
         {
+            GUILayout.Space(4);
+            DarkFantasyPixelArtTheme.DrawImGuiDivider();
             questScrollPos = GUILayout.BeginScrollView(questScrollPos);
             DrawQuestWindowContent();
             GUILayout.Space(8);
-            if (GUILayout.Button("Close (Ctrl+F7 / quest_gui)", GUILayout.Height(24)))
+            DarkFantasyPixelArtTheme.DrawImGuiDivider();
+            if (GUILayout.Button("Close (Ctrl+F7 / quest_gui)", DarkFantasyPixelArtTheme.CrimsonButtonStyle, GUILayout.Height(26)))
             {
                 showQuestGui = false;
             }
@@ -3460,16 +3669,16 @@ namespace DaggerfallWorkshop.Game.Networking
             GUILayout.Label($"<b>Status:</b> {NetworkSession.GetStatusString()}");
             if (NetworkSession.IsActive)
             {
-                GUILayout.Label("<color=#ADD8E6>Party Quests use Opt-In voting. Members who accept start the quest.</color>");
+                GUILayout.Label("<color=#E8C266>Party Quests use Opt-In voting. Members who accept start the quest.</color>");
             }
             else
             {
-                GUILayout.Label("<color=#CCCCCC>Singleplayer mode: quests start locally on your character.</color>");
+                GUILayout.Label("<color=#D4C8AA>Singleplayer mode: quests start locally on your character.</color>");
             }
 
             // Section 1: Presets
             GUILayout.Space(8);
-            GUILayout.Label("<b>--- 1. Quick Test Presets ---</b>");
+            GUILayout.Label("I. QUICK TEST PRESETS", DarkFantasyPixelArtTheme.SectionBannerStyle);
 
             GUILayout.BeginHorizontal();
             if (GUILayout.Button("Fighters: Giant Hunt\n(M0B00Y00)"))
@@ -3538,7 +3747,7 @@ namespace DaggerfallWorkshop.Game.Networking
 
             // Section 2: Deterministic Seed & Geolocation Targeting
             GUILayout.Space(8);
-            GUILayout.Label("<b>--- 2. Deterministic Seed & Geolocation ---</b>");
+            GUILayout.Label("II. DETERMINISTIC SEED & GEOLOCATION", DarkFantasyPixelArtTheme.SectionBannerStyle);
 
             GUILayout.BeginHorizontal();
             GUILayout.Label("Quest Seed:", GUILayout.Width(80));
@@ -3557,9 +3766,9 @@ namespace DaggerfallWorkshop.Game.Networking
             GUILayout.Space(4);
             GUILayout.Label("<b>Origin & Destination Mode:</b>");
             GUILayout.BeginHorizontal();
-            if (GUILayout.Toggle(questCreatorMode == 0, "Cercanía (Local Town)", "Button"))
+            if (GUILayout.Button("Cercanía (Local Town)", questCreatorMode == 0 ? DarkFantasyPixelArtTheme.TabActiveStyle : DarkFantasyPixelArtTheme.TabInactiveStyle))
                 questCreatorMode = 0;
-            if (GUILayout.Toggle(questCreatorMode == 1, "Destino Remoto", "Button"))
+            if (GUILayout.Button("Destino Remoto", questCreatorMode == 1 ? DarkFantasyPixelArtTheme.TabActiveStyle : DarkFantasyPixelArtTheme.TabInactiveStyle))
                 questCreatorMode = 1;
             GUILayout.EndHorizontal();
 
@@ -3635,7 +3844,7 @@ namespace DaggerfallWorkshop.Game.Networking
                     GUILayout.EndHorizontal();
 
                     GUILayout.BeginHorizontal();
-                    if (GUILayout.Button($"Warp Party to {sel.name}", GUILayout.Height(24)))
+                    if (GUILayout.Button($"Warp Party to {sel.name}", DarkFantasyPixelArtTheme.GoldButtonStyle, GUILayout.Height(24)))
                     {
                         if (NetworkSession.IsHost)
                         {
@@ -3652,7 +3861,7 @@ namespace DaggerfallWorkshop.Game.Networking
 
             // Section 3: Custom Selection & Trigger
             GUILayout.Space(8);
-            GUILayout.Label("<b>--- 3. Quest Offer & Start ---</b>");
+            GUILayout.Label("III. QUEST OFFER & START", DarkFantasyPixelArtTheme.SectionBannerStyle);
             GUILayout.BeginHorizontal();
             GUILayout.Label("Quest Name:", GUILayout.Width(80));
             questInputName = GUILayout.TextField(questInputName);
@@ -3683,7 +3892,7 @@ namespace DaggerfallWorkshop.Game.Networking
 
             GUILayout.Space(5);
             GUILayout.BeginHorizontal();
-            if (GUILayout.Button("Offer to Party (Vote)", GUILayout.Height(30)))
+            if (GUILayout.Button("Offer to Party (Vote)", DarkFantasyPixelArtTheme.GoldButtonStyle, GUILayout.Height(30)))
             {
                 if (QuestMachine.Instance != null && QuestMachine.Instance.LastNPCClicked == null)
                 {
@@ -3693,7 +3902,7 @@ namespace DaggerfallWorkshop.Game.Networking
                 }
                 InitiatePartyQuestOffer(questInputName.Trim(), parsedFactionId, customSeed);
             }
-            if (GUILayout.Button("Start Locally", GUILayout.Height(30)))
+            if (GUILayout.Button("Start Locally", DarkFantasyPixelArtTheme.EmeraldButtonStyle, GUILayout.Height(30)))
             {
                 try
                 {
@@ -3718,7 +3927,7 @@ namespace DaggerfallWorkshop.Game.Networking
 
             // Section 4: Active Running Quests
             GUILayout.Space(8);
-            GUILayout.Label("<b>--- 4. Active Running Quests ---</b>");
+            GUILayout.Label("IV. ACTIVE RUNNING QUESTS", DarkFantasyPixelArtTheme.SectionBannerStyle);
             ulong[] activeQuestUIDs = QuestMachine.Instance != null ? QuestMachine.Instance.GetAllActiveQuests() : new ulong[0];
             if (activeQuestUIDs == null || activeQuestUIDs.Length == 0)
             {
@@ -3739,12 +3948,12 @@ namespace DaggerfallWorkshop.Game.Networking
 
                     GUILayout.BeginHorizontal();
                     GUILayout.Label($"<b>{q.QuestName}</b> - {displayName}\n<size=9>UID: {uid} | Faction: {q.FactionId}</size>", GUILayout.ExpandWidth(true));
-                    if (GUILayout.Button(isExpanded ? "Hide" : "View", GUILayout.Width(45), GUILayout.Height(28)))
+                    if (GUILayout.Button(isExpanded ? "Hide" : "View", GUILayout.Width(52), GUILayout.Height(28)))
                     {
                         if (isExpanded) expandedQuestDetails.Remove(uid);
                         else expandedQuestDetails.Add(uid);
                     }
-                    if (GUILayout.Button("Cancel", GUILayout.Width(50), GUILayout.Height(28)))
+                    if (GUILayout.Button("Cancel", DarkFantasyPixelArtTheme.CrimsonButtonStyle, GUILayout.Width(72), GUILayout.Height(28)))
                     {
                         string qName = q.QuestName;
                         int fId = q.FactionId;
@@ -3756,7 +3965,7 @@ namespace DaggerfallWorkshop.Game.Networking
                         DaggerfallUI.AddHUDText($"[Quest] Canceled '{qName}'.");
                         BroadcastPartyQuestComplete(qName, fId, false);
                     }
-                    if (GUILayout.Button("Complete", GUILayout.Width(65), GUILayout.Height(28)))
+                    if (GUILayout.Button("Complete", DarkFantasyPixelArtTheme.EmeraldButtonStyle, GUILayout.Width(84), GUILayout.Height(28)))
                     {
                         QuestResource[] items = q.GetAllResources(typeof(Item));
                         if (items != null)
@@ -3845,7 +4054,7 @@ namespace DaggerfallWorkshop.Game.Networking
 
                             if (hasCoords)
                             {
-                                if (GUILayout.Button($"TP to Objective ({objSite.locationName})", GUILayout.Height(22)))
+                                if (GUILayout.Button($"TP to Objective ({objSite.locationName})", DarkFantasyPixelArtTheme.GoldButtonStyle, GUILayout.Height(22)))
                                 {
                                     TeleportLocalPlayer(objPos.X, objPos.Y);
                                     DaggerfallUI.AddHUDText($"[Quest TP] Teleported to {objSite.locationName} ({objPos.X}, {objPos.Y})");
@@ -3891,7 +4100,7 @@ namespace DaggerfallWorkshop.Game.Networking
                                 string qBName = !string.IsNullOrEmpty(qSite.buildingName) ? $" - {qSite.buildingName}" : "";
                                 GUILayout.Label($"<size=9>Location: {qSite.locationName}{qBName} ({qSite.regionName}) at ({qPos.X}, {qPos.Y})</size>");
 
-                                if (GUILayout.Button($"TP to Questor ({qSite.locationName})", GUILayout.Height(22)))
+                                if (GUILayout.Button($"TP to Questor ({qSite.locationName})", DarkFantasyPixelArtTheme.GoldButtonStyle, GUILayout.Height(22)))
                                 {
                                     TeleportLocalPlayer(qPos.X, qPos.Y);
                                     DaggerfallUI.AddHUDText($"[Quest TP] Teleported to Questor at {qSite.locationName} ({qPos.X}, {qPos.Y})");
@@ -3904,7 +4113,7 @@ namespace DaggerfallWorkshop.Game.Networking
                 }
 
                 GUILayout.Space(4);
-                if (GUILayout.Button("End All Active Quests", GUILayout.Height(24)))
+                if (GUILayout.Button("End All Active Quests", DarkFantasyPixelArtTheme.CrimsonButtonStyle, GUILayout.Height(24)))
                 {
                     foreach (ulong uid in activeQuestUIDs)
                     {
@@ -3918,7 +4127,7 @@ namespace DaggerfallWorkshop.Game.Networking
 
             // Section 5: Guild & Faction Reputation
             GUILayout.Space(8);
-            GUILayout.Label("<b>--- 5. Guild & Faction Reputation ---</b>");
+            GUILayout.Label("V. GUILD & FACTION REPUTATION", DarkFantasyPixelArtTheme.SectionBannerStyle);
 
             // Build list of connected party members
             List<int> repPartyIds = new List<int>();
@@ -5725,24 +5934,28 @@ namespace DaggerfallWorkshop.Game.Networking
             if (GameManager.Instance.PlayerObject != null)
                 dist = Vector3.Distance(GameManager.Instance.PlayerObject.transform.position, interactionTargetPuppet.transform.position);
 
-            GUILayout.Space(6);
-            GUILayout.Label($"<b>Jugador:</b> {interactionTargetPuppet.playerName}", GUILayout.ExpandWidth(true));
+            GUILayout.Space(4);
+            DarkFantasyPixelArtTheme.DrawImGuiDivider();
+            GUILayout.BeginVertical(GUI.skin.box);
+            GUILayout.Label($"<b><color=#FFD96B>{interactionTargetPuppet.playerName}</color></b>", GUILayout.ExpandWidth(true));
             GUILayout.Label($"<size=11>Clase: <b>{interactionTargetPuppet.careerName}</b> | Distancia: <b>{dist:F1}m</b></size>");
-            GUILayout.Space(10);
+            GUILayout.EndVertical();
+            GUILayout.Space(8);
 
-            if (GUILayout.Button("Compartir Mapa y Descubrimientos", GUILayout.Height(34)))
+            if (GUILayout.Button("Compartir Mapa y Descubrimientos", DarkFantasyPixelArtTheme.GoldButtonStyle, GUILayout.Height(34)))
             {
                 SendMapDiscoveriesToTarget(interactionTargetPuppet);
             }
 
             GUILayout.Space(4);
-            if (GUILayout.Button("Iniciar Comercio Bilateral (Trade)", GUILayout.Height(34)))
+            if (GUILayout.Button("Iniciar Comercio Bilateral (Trade)", DarkFantasyPixelArtTheme.EmeraldButtonStyle, GUILayout.Height(34)))
             {
                 InitiateTradeInvite(interactionTargetPuppet);
             }
 
-            GUILayout.Space(10);
-            if (GUILayout.Button("Cerrar", GUILayout.Height(24)))
+            GUILayout.Space(8);
+            DarkFantasyPixelArtTheme.DrawImGuiDivider();
+            if (GUILayout.Button("Cerrar", DarkFantasyPixelArtTheme.CrimsonButtonStyle, GUILayout.Height(26)))
             {
                 showPlayerInteractionWindow = false;
             }
@@ -5971,19 +6184,21 @@ namespace DaggerfallWorkshop.Game.Networking
 
         private void DrawTradeInvitePromptWindow(int windowId)
         {
-            GUILayout.Space(8);
-            GUILayout.Label($"<b><color=#FFD700>{pendingTradeInviteSenderName}</color></b> desea iniciar un intercambio comercial contigo.", GUILayout.ExpandWidth(true));
+            GUILayout.Space(4);
+            DarkFantasyPixelArtTheme.DrawImGuiDivider();
+            GUILayout.Label($"<b><color=#FFD96B>{pendingTradeInviteSenderName}</color></b> desea iniciar un intercambio comercial contigo.", GUILayout.ExpandWidth(true));
             GUILayout.Space(4);
             GUILayout.Label($"<size=11>Tiempo restante: <b>{Mathf.CeilToInt(tradeInviteTimeout)}s</b></size>");
-            GUILayout.Space(12);
+            GUILayout.Space(8);
+            DarkFantasyPixelArtTheme.DrawImGuiDivider();
 
             GUILayout.BeginHorizontal();
-            if (GUILayout.Button("Aceptar", GUILayout.Height(30)))
+            if (GUILayout.Button("Aceptar", DarkFantasyPixelArtTheme.EmeraldButtonStyle, GUILayout.Height(30)))
             {
                 showTradeInvitePrompt = false;
                 RespondToTradeInvite(pendingTradeInviteSenderConnId, true);
             }
-            if (GUILayout.Button("Rechazar", GUILayout.Height(30)))
+            if (GUILayout.Button("Rechazar", DarkFantasyPixelArtTheme.CrimsonButtonStyle, GUILayout.Height(30)))
             {
                 showTradeInvitePrompt = false;
                 RespondToTradeInvite(pendingTradeInviteSenderConnId, false);
@@ -6022,8 +6237,9 @@ namespace DaggerfallWorkshop.Game.Networking
 
             int playerGold = playerEntity.GoldPieces;
 
-            GUILayout.Space(6);
-            GUILayout.Label($"<b>COMERCIO BILATERAL</b> — Compañero: <color=#ADD8E6>{activeTradePartnerName}</color>", GUILayout.ExpandWidth(true));
+            GUILayout.Space(4);
+            DarkFantasyPixelArtTheme.DrawImGuiDivider();
+            GUILayout.Label($"<b>COMERCIO BILATERAL</b> — Compañero: <color=#FFD96B>{activeTradePartnerName}</color>", GUILayout.ExpandWidth(true));
             GUILayout.Space(6);
 
             GUILayout.BeginHorizontal();
@@ -6032,7 +6248,7 @@ namespace DaggerfallWorkshop.Game.Networking
             // LEFT COLUMN: TU OFERTA (345px)
             // ==========================================
             GUILayout.BeginVertical(GUI.skin.box, GUILayout.Width(345));
-            GUILayout.Label("<b>--- TU OFERTA ---</b>");
+            GUILayout.Label("TU OFERTA", DarkFantasyPixelArtTheme.SectionBannerStyle);
 
             // Gold offer
             GUILayout.Label($"Oro ofrecido: <color=#FFD700>{localTradeGold} gp</color> <size=10>(Tienes: {playerGold} gp)</size>");
@@ -6042,8 +6258,8 @@ namespace DaggerfallWorkshop.Game.Networking
                 if (GUILayout.Button("+10", GUILayout.Width(38), GUILayout.Height(20))) AddLocalTradeGold(10, playerGold);
                 if (GUILayout.Button("+100", GUILayout.Width(44), GUILayout.Height(20))) AddLocalTradeGold(100, playerGold);
                 if (GUILayout.Button("+1000", GUILayout.Width(50), GUILayout.Height(20))) AddLocalTradeGold(1000, playerGold);
-                if (GUILayout.Button("Max", GUILayout.Width(40), GUILayout.Height(20))) SetLocalTradeGold(playerGold, playerGold);
-                if (GUILayout.Button("0", GUILayout.Width(25), GUILayout.Height(20))) SetLocalTradeGold(0, playerGold);
+                if (GUILayout.Button("Max", DarkFantasyPixelArtTheme.GoldButtonStyle, GUILayout.Width(40), GUILayout.Height(20))) SetLocalTradeGold(playerGold, playerGold);
+                if (GUILayout.Button("0", DarkFantasyPixelArtTheme.CrimsonButtonStyle, GUILayout.Width(25), GUILayout.Height(20))) SetLocalTradeGold(0, playerGold);
                 GUILayout.EndHorizontal();
             }
 
@@ -6068,7 +6284,7 @@ namespace DaggerfallWorkshop.Game.Networking
                     string safeName = GetSafeItemName(itm);
                     string itmTitle = itm.stackCount > 1 ? $"{safeName} x{itm.stackCount}" : safeName;
                     GUILayout.Label($"• {itmTitle} ({itm.weightInKg:F1}kg)", GUILayout.ExpandWidth(true));
-                    if (!localTradeLocked && GUILayout.Button("X", GUILayout.Width(22), GUILayout.Height(18)))
+                    if (!localTradeLocked && GUILayout.Button("X", DarkFantasyPixelArtTheme.CrimsonButtonStyle, GUILayout.Width(22), GUILayout.Height(18)))
                     {
                         localTradeItems.RemoveAt(i);
                         localTradeLocked = false;
@@ -6083,7 +6299,7 @@ namespace DaggerfallWorkshop.Game.Networking
 
             if (!localTradeLocked)
             {
-                if (GUILayout.Button(showInventoryPicker ? "▲ Ocultar Inventario" : "▼ + Agregar Ítems del Inventario", GUILayout.Height(24)))
+                if (GUILayout.Button(showInventoryPicker ? "▲ Ocultar Inventario" : "▼ + Agregar Ítems del Inventario", DarkFantasyPixelArtTheme.GoldButtonStyle, GUILayout.Height(24)))
                 {
                     showInventoryPicker = !showInventoryPicker;
                 }
@@ -6140,7 +6356,7 @@ namespace DaggerfallWorkshop.Game.Networking
             // RIGHT COLUMN: OFERTA DEL COMPAÑERO (345px)
             // ==========================================
             GUILayout.BeginVertical(GUI.skin.box, GUILayout.Width(345));
-            GUILayout.Label($"<b>--- OFERTA DE {activeTradePartnerName.ToUpper()} ---</b>");
+            GUILayout.Label($"OFERTA DE {activeTradePartnerName.ToUpper()}", DarkFantasyPixelArtTheme.SectionBannerStyle);
 
             // Remote gold
             GUILayout.Label($"Oro a recibir: <color=#FFD700>{remoteTradeGold} gp</color>");
@@ -6186,6 +6402,7 @@ namespace DaggerfallWorkshop.Game.Networking
             GUILayout.EndHorizontal();
 
             GUILayout.FlexibleSpace();
+            DarkFantasyPixelArtTheme.DrawImGuiDivider();
 
             // ==========================================
             // BOTTOM ACTION BAR
@@ -6194,7 +6411,7 @@ namespace DaggerfallWorkshop.Game.Networking
 
             if (!localTradeLocked)
             {
-                if (GUILayout.Button("Bloquear Oferta", GUILayout.Height(32)))
+                if (GUILayout.Button("Bloquear Oferta", DarkFantasyPixelArtTheme.GoldButtonStyle, GUILayout.Height(32)))
                 {
                     localTradeLocked = true;
                     localTradeAccepted = false;
@@ -6213,13 +6430,13 @@ namespace DaggerfallWorkshop.Game.Networking
 
             GUI.enabled = (localTradeLocked && remoteTradeLocked && !localTradeAccepted);
             string acceptBtnText = localTradeAccepted ? "Esperando al Compañero..." : "Aceptar Intercambio";
-            if (GUILayout.Button(acceptBtnText, GUILayout.Height(32)))
+            if (GUILayout.Button(acceptBtnText, DarkFantasyPixelArtTheme.EmeraldButtonStyle, GUILayout.Height(32)))
             {
                 AcceptLocalTrade();
             }
             GUI.enabled = true;
 
-            if (GUILayout.Button("Cancelar Comercio", GUILayout.Height(32), GUILayout.Width(140)))
+            if (GUILayout.Button("Cancelar Comercio", DarkFantasyPixelArtTheme.CrimsonButtonStyle, GUILayout.Height(32), GUILayout.Width(140)))
             {
                 CancelTrade("Comercio cancelado por el jugador.");
             }
@@ -7237,21 +7454,21 @@ namespace DaggerfallWorkshop.Game.Networking
                 Rect bubbleRect = new Rect(rx, ry, bubbleWidth, totalHeight);
 
                 // Bubble box styling
-                GUI.color = new Color(0.06f, 0.06f, 0.08f, 0.85f * finalAlpha);
-                GUI.Box(bubbleRect, GUIContent.none, bubbleBoxStyle);
+                GUI.color = new Color(1.0f, 1.0f, 1.0f, 0.94f * finalAlpha);
+                GUI.Box(bubbleRect, GUIContent.none, DarkFantasyPixelArtTheme.SpeechBubbleBoxStyle);
 
                 // Speaker Header styling
                 if (b.speakerType == 0)
-                    bubbleHeaderStyle.normal.textColor = new Color(1.0f, 0.85f, 0.3f, finalAlpha); // Gold for players
+                    bubbleHeaderStyle.normal.textColor = new Color(1.0f, 0.85f, 0.42f, finalAlpha); // Gold for players
                 else
-                    bubbleHeaderStyle.normal.textColor = new Color(0.4f, 0.9f, 1.0f, finalAlpha);  // Cyan for NPCs
+                    bubbleHeaderStyle.normal.textColor = new Color(0.55f, 0.90f, 0.85f, finalAlpha); // Arcane teal for NPCs
 
                 Rect headerRect = new Rect(bubbleRect.x + 8f, bubbleRect.y + 4f, bubbleWidth - 16f, 18f);
                 GUI.color = Color.white;
                 GUI.Label(headerRect, $"[{b.speakerName}]", bubbleHeaderStyle);
 
                 // Spoken text styling
-                bubbleTextStyle.normal.textColor = new Color(0.95f, 0.95f, 0.92f, finalAlpha);
+                bubbleTextStyle.normal.textColor = new Color(0.95f, 0.90f, 0.78f, finalAlpha);
                 Rect textRect = new Rect(bubbleRect.x + 8f, bubbleRect.y + 22f, bubbleWidth - 16f, textHeight + 4f);
                 GUI.Label(textRect, b.text, bubbleTextStyle);
             }
@@ -7312,6 +7529,7 @@ namespace DaggerfallWorkshop.Game.Networking
                     isGuard = item.npc.IsGuard,
                     nameNPC = item.npc.NameNPC ?? string.Empty,
                     position = item.npc.transform.position,
+                    yaw = item.npc.transform.eulerAngles.y,
                     isIdle = isIdle,
                     moveCount = moves
                 });
@@ -7379,7 +7597,7 @@ namespace DaggerfallWorkshop.Game.Networking
                     if (poolItem.npc.Motor != null)
                     {
                         poolItem.npc.Motor.isClientProxy = true;
-                        poolItem.npc.Motor.SetNetworkTarget(civ.position, civ.isIdle, civ.moveCount);
+                        poolItem.npc.Motor.SetNetworkTarget(civ.position, civ.yaw, civ.isIdle, civ.moveCount);
                     }
 
                     // Synchronize identity and appearance whenever any attribute differs
@@ -8007,6 +8225,335 @@ namespace DaggerfallWorkshop.Game.Networking
         {
             isPvpAllowed = msg.isPvpAllowed;
             DaggerfallUI.AddHUDText($"[PvP] Friendly Fire is now {(isPvpAllowed ? "ENABLED" : "DISABLED")}.");
+        }
+
+        #endregion
+
+        #region Pre-Game Multiplayer Lobby & Mod Compatibility Verification
+
+        public readonly Dictionary<int, LobbyPlayerDTO> serverLobbyPlayers = new Dictionary<int, LobbyPlayerDTO>();
+        public LobbyRosterBundle currentLobbyRoster = new LobbyRosterBundle();
+        public event Action OnLobbyRosterUpdatedEvent;
+
+        // Local player's selected character & lobby state
+        public bool localLobbyIsDm = false;
+        public int localLobbySelectionMode = 0; // 0 = None, 1 = New Character, 2 = Saved Character
+        public int localLobbySaveKey = -1;
+        public string localLobbyCharacterName = "";
+        public string localLobbyRaceName = "";
+        public string localLobbyClassName = "";
+        public int localLobbyLevel = 1;
+        public bool localLobbyIsReady = false;
+        public bool isCreatingCharacterForLobby = false;
+
+        /// <summary>
+        /// Collects all currently enabled .dfmod filenames on this machine.
+        /// </summary>
+        public string[] GetLocalActiveModList()
+        {
+            List<string> modList = new List<string>();
+            if (DaggerfallWorkshop.Game.Utility.ModSupport.ModManager.Instance != null &&
+                DaggerfallWorkshop.Game.Utility.ModSupport.ModManager.Instance.Mods != null)
+            {
+                foreach (var mod in DaggerfallWorkshop.Game.Utility.ModSupport.ModManager.Instance.Mods)
+                {
+                    if (mod != null && mod.Enabled && !string.IsNullOrEmpty(mod.FileName))
+                    {
+                        modList.Add($"{mod.FileName} ({mod.ModInfo?.ModVersion ?? "1.0"})");
+                    }
+                }
+            }
+            return modList.ToArray();
+        }
+
+        public void InitializeServerLobbyHost()
+        {
+            serverLobbyPlayers.Clear();
+            string[] hostMods = GetLocalActiveModList();
+
+            string pName = PlayerPrefs.GetString("DFU_LastPlayerName", "Host / DM");
+            if (GameManager.Instance != null && GameManager.Instance.PlayerEntity != null && !string.IsNullOrEmpty(GameManager.Instance.PlayerEntity.Name))
+                pName = GameManager.Instance.PlayerEntity.Name;
+
+            LobbyPlayerDTO hostDto = new LobbyPlayerDTO
+            {
+                connectionId = 0,
+                playerName = pName,
+                isHost = true,
+                isDm = localLobbyIsDm,
+                selectionMode = localLobbySelectionMode,
+                saveKey = localLobbySaveKey,
+                characterName = localLobbyCharacterName,
+                raceName = localLobbyRaceName,
+                className = localLobbyClassName,
+                level = localLobbyLevel,
+                isReady = localLobbyIsReady,
+                modsCompatible = true,
+                modMismatchSummary = "Anfitrión (Base de referencia)",
+                activeMods = hostMods
+            };
+
+            serverLobbyPlayers[0] = hostDto;
+            BroadcastLobbyState();
+        }
+
+        public void SendLocalLobbyUpdate()
+        {
+            string pName = PlayerPrefs.GetString("DFU_LastPlayerName", "Adventurer");
+            if (!string.IsNullOrEmpty(localLobbyCharacterName))
+                pName = localLobbyCharacterName;
+            else if (GameManager.Instance != null && GameManager.Instance.PlayerEntity != null && !string.IsNullOrEmpty(GameManager.Instance.PlayerEntity.Name))
+                pName = GameManager.Instance.PlayerEntity.Name;
+
+            string[] localMods = GetLocalActiveModList();
+
+            if (NetworkServer.active)
+            {
+                // Update Host entry directly
+                if (!serverLobbyPlayers.TryGetValue(0, out LobbyPlayerDTO hostDto))
+                {
+                    hostDto = new LobbyPlayerDTO { connectionId = 0, isHost = true };
+                    serverLobbyPlayers[0] = hostDto;
+                }
+                hostDto.playerName = pName;
+                hostDto.isDm = localLobbyIsDm;
+                hostDto.selectionMode = localLobbySelectionMode;
+                hostDto.saveKey = localLobbySaveKey;
+                hostDto.characterName = localLobbyCharacterName;
+                hostDto.raceName = localLobbyRaceName;
+                hostDto.className = localLobbyClassName;
+                hostDto.level = localLobbyLevel;
+                hostDto.isReady = localLobbyIsReady;
+                hostDto.modsCompatible = true;
+                hostDto.modMismatchSummary = "Anfitrión (Base de referencia)";
+                hostDto.activeMods = localMods;
+
+                BroadcastLobbyState();
+            }
+            else if (NetworkClient.isConnected)
+            {
+                MsgLobbyClientUpdate updateMsg = new MsgLobbyClientUpdate
+                {
+                    playerName = pName,
+                    isDm = localLobbyIsDm,
+                    selectionMode = localLobbySelectionMode,
+                    saveKey = localLobbySaveKey,
+                    characterName = localLobbyCharacterName,
+                    raceName = localLobbyRaceName,
+                    className = localLobbyClassName,
+                    level = localLobbyLevel,
+                    isReady = localLobbyIsReady,
+                    activeModsJson = string.Join("|", localMods)
+                };
+                NetworkClient.Send(updateMsg);
+            }
+        }
+
+        private void OnServerReceiveLobbyClientUpdate(NetworkConnection conn, MsgLobbyClientUpdate msg)
+        {
+            if (conn == null) return;
+
+            string[] clientMods = string.IsNullOrEmpty(msg.activeModsJson)
+                ? new string[0]
+                : msg.activeModsJson.Split(new char[] { '|' }, StringSplitOptions.RemoveEmptyEntries);
+
+            string[] hostMods = GetLocalActiveModList();
+            EvaluateModCompatibility(hostMods, clientMods, out bool isCompat, out string summary);
+
+            LobbyPlayerDTO dto = new LobbyPlayerDTO
+            {
+                connectionId = conn.connectionId,
+                playerName = string.IsNullOrEmpty(msg.playerName) ? $"Jugador #{conn.connectionId}" : msg.playerName,
+                isHost = false,
+                isDm = msg.isDm,
+                selectionMode = msg.selectionMode,
+                saveKey = msg.saveKey,
+                characterName = msg.characterName,
+                raceName = msg.raceName,
+                className = msg.className,
+                level = msg.level,
+                isReady = msg.isReady,
+                modsCompatible = isCompat,
+                modMismatchSummary = summary,
+                activeMods = clientMods
+            };
+
+            serverLobbyPlayers[conn.connectionId] = dto;
+
+            // Also keep connectedPlayerProfiles updated with chosen character details
+            if (connectedPlayerProfiles.TryGetValue(conn.connectionId, out MsgPlayerProfile prof))
+            {
+                if (!string.IsNullOrEmpty(msg.characterName))
+                    prof.playerName = msg.characterName;
+                if (!string.IsNullOrEmpty(msg.raceName))
+                    prof.raceName = msg.raceName;
+                if (!string.IsNullOrEmpty(msg.className))
+                    prof.careerName = msg.className;
+                connectedPlayerProfiles[conn.connectionId] = prof;
+            }
+
+            BroadcastLobbyState();
+        }
+
+        private void EvaluateModCompatibility(string[] hostMods, string[] clientMods, out bool compatible, out string summary)
+        {
+            HashSet<string> hostSet = new HashSet<string>(hostMods ?? new string[0], StringComparer.OrdinalIgnoreCase);
+            HashSet<string> clientSet = new HashSet<string>(clientMods ?? new string[0], StringComparer.OrdinalIgnoreCase);
+
+            List<string> missing = new List<string>();
+            List<string> extra = new List<string>();
+
+            foreach (string hm in hostSet)
+            {
+                if (!clientSet.Contains(hm))
+                    missing.Add(hm);
+            }
+            foreach (string cm in clientSet)
+            {
+                if (!hostSet.Contains(cm))
+                    extra.Add(cm);
+            }
+
+            if (missing.Count == 0 && extra.Count == 0)
+            {
+                compatible = true;
+                summary = $"OK ({hostSet.Count} mods sincronizados)";
+            }
+            else
+            {
+                compatible = false;
+                List<string> parts = new List<string>();
+                if (missing.Count > 0)
+                    parts.Add($"Faltan {missing.Count}: {string.Join(", ", missing.ToArray())}");
+                if (extra.Count > 0)
+                    parts.Add($"Extra {extra.Count}: {string.Join(", ", extra.ToArray())}");
+                summary = string.Join(" | ", parts.ToArray());
+            }
+        }
+
+        public void BroadcastLobbyState()
+        {
+            if (!NetworkServer.active)
+                return;
+
+            LobbyRosterBundle bundle = new LobbyRosterBundle
+            {
+                sessionMode = localLobbySelectionMode,
+                hostRequiredMods = GetLocalActiveModList(),
+                players = new List<LobbyPlayerDTO>(serverLobbyPlayers.Values)
+            };
+
+            currentLobbyRoster = bundle;
+            string json = SaveLoadManager.Serialize(typeof(LobbyRosterBundle), bundle, false);
+            NetworkServer.SendToAll(new MsgLobbyStateSync { rosterBundleJson = json });
+            OnLobbyRosterUpdatedEvent?.Invoke();
+        }
+
+        private void OnClientReceiveLobbyStateSync(MsgLobbyStateSync msg)
+        {
+            if (string.IsNullOrEmpty(msg.rosterBundleJson))
+                return;
+
+            try
+            {
+                LobbyRosterBundle bundle = SaveLoadManager.Deserialize(typeof(LobbyRosterBundle), msg.rosterBundleJson) as LobbyRosterBundle;
+                if (bundle != null)
+                {
+                    currentLobbyRoster = bundle;
+                    OnLobbyRosterUpdatedEvent?.Invoke();
+                }
+            }
+            catch (Exception ex)
+            {
+                LogNetwork($"[DFU Lobby] Error deserializing LobbyRosterBundle: {ex.Message}");
+            }
+        }
+
+        public bool AreAllLobbyPlayersReady(out int dominantMode)
+        {
+            dominantMode = localLobbySelectionMode;
+            if (currentLobbyRoster == null || currentLobbyRoster.players == null || currentLobbyRoster.players.Count == 0)
+                return false;
+
+            foreach (var p in currentLobbyRoster.players)
+            {
+                if (!p.isReady || p.selectionMode == 0)
+                    return false;
+            }
+            return true;
+        }
+
+        public void HostLaunchLobbySession()
+        {
+            if (!NetworkServer.active)
+                return;
+
+            int launchMode = localLobbySelectionMode != 0 ? localLobbySelectionMode : 2;
+            NetworkServer.SendToAll(new MsgLobbyLaunchSession
+            {
+                sessionMode = launchMode,
+                hostSaveKey = localLobbySaveKey
+            });
+        }
+
+        private void OnClientReceiveLobbyLaunchSession(MsgLobbyLaunchSession msg)
+        {
+            LogNetwork($"[DFU Lobby] Launching multiplayer session into 3D world (Mode={msg.sessionMode})...");
+            ExecuteLocalLobbyLaunch();
+        }
+
+        public void ExecuteLocalLobbyLaunch()
+        {
+            isCreatingCharacterForLobby = false;
+
+            if (InputManager.Instance != null)
+            {
+                InputManager.Instance.ClearAllActions();
+                InputManager.Instance.ToggleAutorun = false;
+            }
+            if (GameManager.Instance != null && GameManager.Instance.PlayerMotor != null)
+            {
+                GameManager.Instance.PlayerMotor.CancelMovement = true;
+            }
+
+            // Update local profile name before entering world
+            if (!string.IsNullOrEmpty(localLobbyCharacterName) && GameManager.Instance.PlayerEntity != null)
+            {
+                GameManager.Instance.PlayerEntity.Name = localLobbyCharacterName;
+            }
+
+            if (DaggerfallUI.Instance != null && DaggerfallUI.UIManager != null)
+            {
+                DaggerfallUI.Instance.PopToHUD();
+            }
+
+            StartGameBehaviour startGameBehaviour = FindObjectOfType<StartGameBehaviour>();
+
+            if (localLobbySelectionMode == 1 && startGameBehaviour != null && startGameBehaviour.CharacterDocument != null)
+            {
+                // Launch newly created character from wizard
+                startGameBehaviour.StartMethod = StartGameBehaviour.StartMethods.NewCharacter;
+            }
+            else if (localLobbySelectionMode == 2 && localLobbySaveKey >= 0 && GameManager.Instance.SaveLoadManager != null)
+            {
+                // Load selected saved character
+                GameManager.Instance.SaveLoadManager.EnumerateSaves();
+                GameManager.Instance.SaveLoadManager.Load(localLobbySaveKey);
+            }
+            else if (GameManager.Instance.SaveLoadManager != null)
+            {
+                // Fallback: load most recent save or start new character
+                GameManager.Instance.SaveLoadManager.EnumerateSaves();
+                int recentKey = GameManager.Instance.SaveLoadManager.FindMostRecentSave();
+                if (recentKey >= 0)
+                {
+                    GameManager.Instance.SaveLoadManager.Load(recentKey);
+                }
+                else if (startGameBehaviour != null)
+                {
+                    startGameBehaviour.StartMethod = StartGameBehaviour.StartMethods.NewCharacter;
+                }
+            }
         }
 
         #endregion

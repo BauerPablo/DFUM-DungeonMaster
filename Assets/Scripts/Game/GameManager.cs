@@ -610,15 +610,18 @@ namespace DaggerfallWorkshop.Game
                 DaggerfallUI.PostMessage(DaggerfallUIMessages.dfuiOpenAutomap);
             }
 
-            // Handle quick save and load
-            if (InputManager.Instance.ActionStarted(InputManager.Actions.QuickSave))
+            // Handle quick save and load (ignore if Control modifier is held, e.g. Ctrl+F11 TTRPG Master Suite)
+            bool ctrlHeld = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl) ||
+                            Input.GetKey(KeyCode.LeftCommand) || Input.GetKey(KeyCode.RightCommand);
+
+            if (!ctrlHeld && InputManager.Instance.ActionStarted(InputManager.Actions.QuickSave))
             {
                 if (SaveLoadManager.IsSavingPrevented)
                     DaggerfallUI.MessageBox(TextManager.Instance.GetLocalizedText("cannotSaveNow"));
                 else
                     SaveLoadManager.Instance.QuickSave();
             }
-            else if (InputManager.Instance.ActionStarted(InputManager.Actions.QuickLoad))
+            else if (!ctrlHeld && InputManager.Instance.ActionStarted(InputManager.Actions.QuickLoad))
             {
                 if (SaveLoadManager.Instance.HasQuickSave(GameManager.Instance.PlayerEntity.Name))
                 {

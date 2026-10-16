@@ -6,6 +6,8 @@
 
 using UnityEngine;
 using System;
+using System.IO;
+using System.Linq;
 using System.Collections.Generic;
 using DaggerfallWorkshop.Game.UserInterface;
 using DaggerfallWorkshop.Game.Networking;
@@ -14,23 +16,26 @@ using DaggerfallWorkshop.Game.Serialization;
 namespace DaggerfallWorkshop.Game.UserInterfaceWindows
 {
     /// <summary>
-    /// Native Daggerfall Retro Window for launching, hosting, and connecting to Multiplayer / TTRPG sessions.
-    /// Accessible directly from the main start menu and pause menu.
+    /// Native Daggerfall Window refactored with Dark Fantasy Pixel-Art framing for launching,
+    /// hosting, connecting, and staging players in a pre-game Lobby with live Mod Compatibility
+    /// and Character Selection (New Character or Load Saved Character with Name, Race, and Class preview).
     /// </summary>
     public class DaggerfallMultiplayerWindow : DaggerfallPopupWindow
     {
-        #region UI Rects & Constants
+        #region UI Constants & Cached Textures
 
-        private const float MainWidth = 280f;
-        private const float MainHeight = 175f;
+        private const int MainWidth = 304;
+        private const int MainHeight = 190;
 
-        private readonly Color mainBackgroundColor = new Color(0.12f, 0.10f, 0.08f, 0.95f);
-        private readonly Color panelOutlineColor = new Color(0.70f, 0.55f, 0.22f, 0.90f);
-        private readonly Color tabActiveColor = new Color(0.28f, 0.22f, 0.12f, 1f);
-        private readonly Color tabInactiveColor = new Color(0.16f, 0.14f, 0.12f, 0.85f);
-        private readonly Color goldTextColor = new Color(0.95f, 0.85f, 0.40f);
-        private readonly Color buttonGreenColor = new Color(0.15f, 0.45f, 0.15f, 0.90f);
-        private readonly Color buttonRedColor = new Color(0.50f, 0.15f, 0.15f, 0.90f);
+        private Texture2D mainFrameTex;
+        private Texture2D contentRecessedTex;
+        private Texture2D parchmentCardTex;
+        private Texture2D tabActiveTex;
+        private Texture2D tabInactiveTex;
+        private Texture2D crimsonBtnTex;
+        private Texture2D emeraldBtnTex;
+        private Texture2D ironBtnTex;
+        private Texture2D goldBtnTex;
 
         #endregion
 
@@ -41,10 +46,12 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
 
         private Button joinTabButton;
         private Button hostTabButton;
+        private Button lobbyTabButton;
         private Button historyTabButton;
         private Button modsTabButton;
 
-        private int activeTab = 0; // 0=Join, 1=Host, 2=History, 3=Mods
+        // 0 = Join, 1 = Host, 2 = Lobby (Pre-Game Room), 3 = History, 4 = Mods
+        private int activeTab = 0;
 
         // Tab 0: Join
         private TextBox joinIpTextBox;
@@ -62,12 +69,32 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
         private bool hostAsDm = true;
         private TextLabel hostStatusLabel;
 
-        // Tab 2: History
+        // Tab 2: Pre-Game Lobby & Character Selection
+        private bool showingSavePickerModal = false;
+        private ListBox characterNamesListBox;
+        private ListBox characterSavesListBox;
+        private readonly List<string> enumeratedCharNames = new List<string>();
+        private readonly List<int> enumeratedCharSaveKeys = new List<int>();
+        private int selectedSaveKeyPreview = -1;
+        private string previewCharName = "";
+        private string previewRaceName = "";
+        private string previewClassName = "";
+        private int previewCharLevel = 1;
+        private string previewSaveCaption = "";
+
+        private TextLabel previewNameLabel;
+        private TextLabel previewRaceLabel;
+        private TextLabel previewClassLabel;
+        private TextLabel previewLevelLabel;
+        private TextLabel previewSaveNameLabel;
+
+        // Tab 3: History
         private ListBox historyListBox;
         private readonly List<string> recentServers = new List<string>();
 
-        // Tab 3: Mods
-        private TextLabel modsSummaryLabel;
+        private bool needsLobbyUiRefresh = false;
+        private float lobbyPollTimer = 0f;
+        private int lastKnownRosterCount = -1;
 
         #endregion
 
@@ -81,77 +108,176 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
 
         #endregion
 
-        #region Setup
+        #region Lifecycle & Setup
 
         protected override void Setup()
         {
             base.Setup();
 
-            ParentPanel.BackgroundColor = ScreenDimColor;
+            ParentPanel.BackgroundColor = new Color(0.03f, 0.02f, 0.04f, 0.85f);
 
-            // Main Background Panel
+            GeneratePixelArtAssets();
+
+            // Main Ornate Dark Fantasy Frame
             mainPanel.HorizontalAlignment = HorizontalAlignment.Center;
             mainPanel.VerticalAlignment = VerticalAlignment.Middle;
             mainPanel.Size = new Vector2(MainWidth, MainHeight);
-            mainPanel.Outline.Enabled = true;
-            mainPanel.Outline.Color = panelOutlineColor;
-            mainPanel.BackgroundColor = mainBackgroundColor;
+            mainPanel.BackgroundTexture = mainFrameTex;
             NativePanel.Components.Add(mainPanel);
 
-            // Title Label
-            TextLabel titleLabel = DaggerfallUI.AddDefaultTitleTextLabel(new Vector2(0, 4), mainPanel);
-            titleLabel.Text = "DAGGERFALL MULTIPLAYER & TTRPG";
-            titleLabel.TextColor = goldTextColor;
+            // Title Banner
+            TextLabel titleLabel = DaggerfallUI.AddDefaultShadowedTextLabel(new Vector2(0, 6), mainPanel);
+            titleLabel.Text = "DARK FANTASY MULTIPLAYER & TTRPG LOBBY";
+            titleLabel.TextColor = DarkFantasyPixelArtTheme.TextGold;
             titleLabel.HorizontalAlignment = HorizontalAlignment.Center;
             titleLabel.ShadowPosition = Vector2.one;
             titleLabel.ShadowColor = Color.black;
 
-            // Tab Buttons
-            float tabY = 18f;
-            float tabWidth = 66f;
-            float tabHeight = 13f;
+            // Top Navigation Tabs
+            float tabY = 17f;
+            float tabW = 56f;
+            float tabH = 13f;
 
-            joinTabButton = CreateTabButton(new Vector2(6, tabY), new Vector2(tabWidth, tabHeight), "UNIRSE", 0);
-            hostTabButton = CreateTabButton(new Vector2(74, tabY), new Vector2(tabWidth, tabHeight), "CREAR (HOST)", 1);
-            historyTabButton = CreateTabButton(new Vector2(142, tabY), new Vector2(tabWidth, tabHeight), "HISTORIAL", 2);
-            modsTabButton = CreateTabButton(new Vector2(210, tabY), new Vector2(tabWidth, tabHeight), "MODS", 3);
+            joinTabButton = CreateTabButton(new Vector2(7, tabY), new Vector2(tabW, tabH), "JOIN", 0);
+            hostTabButton = CreateTabButton(new Vector2(65, tabY), new Vector2(tabW, tabH), "HOST", 1);
+            lobbyTabButton = CreateTabButton(new Vector2(123, tabY), new Vector2(tabW, tabH), "LOBBY", 2);
+            historyTabButton = CreateTabButton(new Vector2(181, tabY), new Vector2(tabW, tabH), "SERVERS", 3);
+            modsTabButton = CreateTabButton(new Vector2(239, tabY), new Vector2(tabW, tabH), "MODS", 4);
 
-            // Content Panel Area
-            contentPanel.Position = new Vector2(6, 34);
-            contentPanel.Size = new Vector2(MainWidth - 12, MainHeight - 52);
-            contentPanel.Outline.Enabled = true;
-            contentPanel.Outline.Color = new Color(0.4f, 0.35f, 0.25f, 0.7f);
-            contentPanel.BackgroundColor = new Color(0.08f, 0.07f, 0.06f, 0.9f);
+            // Recessed Interior Content Area
+            contentPanel.Position = new Vector2(7, 32);
+            contentPanel.Size = new Vector2(MainWidth - 14, MainHeight - 50);
+            contentPanel.BackgroundTexture = contentRecessedTex;
             mainPanel.Components.Add(contentPanel);
 
-            // Bottom Bar: Close Button
-            Button closeButton = DaggerfallUI.AddButton(new Vector2(6, MainHeight - 15), new Vector2(MainWidth - 12, 12), mainPanel);
-            closeButton.Outline.Enabled = true;
-            closeButton.Outline.Color = panelOutlineColor;
-            closeButton.BackgroundColor = buttonRedColor;
-            TextLabel closeLabel = DaggerfallUI.AddDefaultTitleTextLabel(new Vector2(0, 1), closeButton);
-            closeLabel.Text = "VOLVER / BACK (ESC)";
-            closeLabel.TextColor = Color.white;
+            // Bottom Bar: Return / Disconnect
+            Button closeButton = DaggerfallUI.AddButton(new Vector2(7, MainHeight - 16), new Vector2(MainWidth - 14, 11), mainPanel);
+            closeButton.BackgroundTexture = crimsonBtnTex;
+            TextLabel closeLabel = DaggerfallUI.AddDefaultShadowedTextLabel(new Vector2(0, 2), closeButton);
+            closeLabel.Text = "RETURN TO MAIN MENU (ESC)";
+            closeLabel.TextColor = DarkFantasyPixelArtTheme.TextIvory;
             closeLabel.HorizontalAlignment = HorizontalAlignment.Center;
             closeButton.OnMouseClick += (s, e) => CloseWindow();
 
             LoadRecentServers();
-            SwitchTab(0);
+
+            // Subscribe to network events so Lobby refreshes automatically
+            if (DFUNetworkManager.Instance != null)
+            {
+                DFUNetworkManager.Instance.OnLobbyRosterUpdatedEvent -= HandleLobbyRosterUpdated;
+                DFUNetworkManager.Instance.OnLobbyRosterUpdatedEvent += HandleLobbyRosterUpdated;
+                DFUNetworkManager.Instance.OnClientConnectedToHostEvent -= HandleLobbyRosterUpdated;
+                DFUNetworkManager.Instance.OnClientConnectedToHostEvent += HandleLobbyRosterUpdated;
+            }
+
+            if (NetworkSession.IsActive)
+                SwitchTab(2);
+            else
+                SwitchTab(0);
+        }
+
+        public override void OnPush()
+        {
+            base.OnPush();
+            if (NetworkSession.IsActive && IsSetup)
+            {
+                showingSavePickerModal = false;
+                SwitchTab(2);
+            }
+        }
+
+        public override void OnReturn()
+        {
+            base.OnReturn();
+            // When returning from StartNewGameWizard after creating a character for the Lobby
+            if (NetworkSession.IsActive)
+            {
+                showingSavePickerModal = false;
+                SwitchTab(2);
+            }
+        }
+
+        public override void OnPop()
+        {
+            if (DFUNetworkManager.Instance != null)
+            {
+                DFUNetworkManager.Instance.OnLobbyRosterUpdatedEvent -= HandleLobbyRosterUpdated;
+                DFUNetworkManager.Instance.OnClientConnectedToHostEvent -= HandleLobbyRosterUpdated;
+            }
+            base.OnPop();
+        }
+
+        public override void Update()
+        {
+            base.Update();
+
+            lobbyPollTimer += Time.realtimeSinceStartup > 0 ? 0.016f : 0.016f;
+            if (activeTab == 2 && !showingSavePickerModal)
+            {
+                int currentCount = (DFUNetworkManager.Instance != null && DFUNetworkManager.Instance.currentLobbyRoster != null && DFUNetworkManager.Instance.currentLobbyRoster.players != null)
+                    ? DFUNetworkManager.Instance.currentLobbyRoster.players.Count
+                    : 0;
+                if (currentCount != lastKnownRosterCount)
+                {
+                    lastKnownRosterCount = currentCount;
+                    needsLobbyUiRefresh = true;
+                }
+            }
+
+            if (needsLobbyUiRefresh)
+            {
+                needsLobbyUiRefresh = false;
+                if (activeTab == 2 && !showingSavePickerModal)
+                {
+                    SwitchTab(2);
+                }
+            }
+        }
+
+        private void HandleLobbyRosterUpdated()
+        {
+            needsLobbyUiRefresh = true;
+        }
+
+        private void GeneratePixelArtAssets()
+        {
+            if (mainFrameTex == null)
+                mainFrameTex = DarkFantasyPixelArtTheme.CreateOrnateWindowTexture(MainWidth, MainHeight, DarkFantasyPixelArtTheme.ObsidianBg, false);
+            if (contentRecessedTex == null)
+                contentRecessedTex = DarkFantasyPixelArtTheme.CreateRecessedPanelTexture(MainWidth - 14, MainHeight - 50, false);
+            if (parchmentCardTex == null)
+                parchmentCardTex = DarkFantasyPixelArtTheme.CreateOrnateWindowTexture(140, 88, DarkFantasyPixelArtTheme.ParchmentBase, true);
+
+            if (tabActiveTex == null)
+                tabActiveTex = DarkFantasyPixelArtTheme.CreatePixelButtonTexture(56, 13, new Color32(110, 78, 34, 255), DarkFantasyPixelArtTheme.GoldHighlight, new Color32(48, 32, 12, 255), false);
+            if (tabInactiveTex == null)
+                tabInactiveTex = DarkFantasyPixelArtTheme.CreatePixelButtonTexture(56, 13, DarkFantasyPixelArtTheme.IronButtonBase, DarkFantasyPixelArtTheme.IronButtonHighlight, DarkFantasyPixelArtTheme.IronButtonShadow, false);
+
+            if (crimsonBtnTex == null)
+                crimsonBtnTex = DarkFantasyPixelArtTheme.CreatePixelButtonTexture(120, 15, DarkFantasyPixelArtTheme.CrimsonBase, DarkFantasyPixelArtTheme.CrimsonHighlight, DarkFantasyPixelArtTheme.CrimsonShadow);
+            if (emeraldBtnTex == null)
+                emeraldBtnTex = DarkFantasyPixelArtTheme.CreatePixelButtonTexture(120, 15, DarkFantasyPixelArtTheme.EmeraldBase, DarkFantasyPixelArtTheme.EmeraldHighlight, DarkFantasyPixelArtTheme.EmeraldShadow);
+            if (ironBtnTex == null)
+                ironBtnTex = DarkFantasyPixelArtTheme.CreatePixelButtonTexture(120, 15, DarkFantasyPixelArtTheme.IronButtonBase, DarkFantasyPixelArtTheme.IronButtonHighlight, DarkFantasyPixelArtTheme.IronButtonShadow);
+            if (goldBtnTex == null)
+                goldBtnTex = DarkFantasyPixelArtTheme.CreatePixelButtonTexture(120, 15, new Color32(128, 92, 34, 255), DarkFantasyPixelArtTheme.GoldBright, new Color32(62, 42, 14, 255));
         }
 
         private Button CreateTabButton(Vector2 pos, Vector2 size, string text, int tabIndex)
         {
             Button btn = DaggerfallUI.AddButton(pos, size, mainPanel);
-            btn.Outline.Enabled = true;
-            btn.Outline.Color = panelOutlineColor;
-            btn.BackgroundColor = (activeTab == tabIndex) ? tabActiveColor : tabInactiveColor;
+            btn.BackgroundTexture = (activeTab == tabIndex) ? tabActiveTex : tabInactiveTex;
 
-            TextLabel label = DaggerfallUI.AddDefaultTitleTextLabel(new Vector2(0, 1), btn);
+            TextLabel label = DaggerfallUI.AddDefaultShadowedTextLabel(new Vector2(0, 3), btn);
             label.Text = text;
-            label.TextColor = (activeTab == tabIndex) ? goldTextColor : new Color(0.7f, 0.7f, 0.7f);
+            label.TextColor = (activeTab == tabIndex) ? DarkFantasyPixelArtTheme.GoldBright : DarkFantasyPixelArtTheme.TextMuted;
             label.HorizontalAlignment = HorizontalAlignment.Center;
 
-            btn.OnMouseClick += (s, e) => SwitchTab(tabIndex);
+            btn.OnMouseClick += (s, e) =>
+            {
+                showingSavePickerModal = false;
+                SwitchTab(tabIndex);
+            };
             return btn;
         }
 
@@ -171,9 +297,12 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
                     SetupHostTab();
                     break;
                 case 2:
-                    SetupHistoryTab();
+                    SetupLobbyTab();
                     break;
                 case 3:
+                    SetupHistoryTab();
+                    break;
+                case 4:
                     SetupModsTab();
                     break;
             }
@@ -183,17 +312,18 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
         {
             SetTabStyle(joinTabButton, 0);
             SetTabStyle(hostTabButton, 1);
-            SetTabStyle(historyTabButton, 2);
-            SetTabStyle(modsTabButton, 3);
+            SetTabStyle(lobbyTabButton, 2);
+            SetTabStyle(historyTabButton, 3);
+            SetTabStyle(modsTabButton, 4);
         }
 
         private void SetTabStyle(Button btn, int tabIndex)
         {
             if (btn == null) return;
-            btn.BackgroundColor = (activeTab == tabIndex) ? tabActiveColor : tabInactiveColor;
+            btn.BackgroundTexture = (activeTab == tabIndex) ? tabActiveTex : tabInactiveTex;
             if (btn.Components.Count > 0 && btn.Components[0] is TextLabel label)
             {
-                label.TextColor = (activeTab == tabIndex) ? goldTextColor : new Color(0.7f, 0.7f, 0.7f);
+                label.TextColor = (activeTab == tabIndex) ? DarkFantasyPixelArtTheme.GoldBright : DarkFantasyPixelArtTheme.TextMuted;
             }
         }
 
@@ -203,54 +333,50 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
 
         private void SetupJoinTab()
         {
-            float y = 4f;
+            float y = 6f;
 
-            AddFormLabel("DIRECCIÓN IP DEL SERVIDOR (HOST IP):", new Vector2(8, y));
+            AddFormLabel("SERVER ADDRESS (HOST IP):", new Vector2(10, y));
+            AddFormLabel("UDP PORT:", new Vector2(188, y));
             y += 10f;
-            joinIpTextBox = AddFormInput(new Vector2(8, y), 160f, "127.0.0.1", 32);
-
-            AddFormLabel("PUERTO (PORT):", new Vector2(176, y - 10f));
-            joinPortTextBox = AddFormInput(new Vector2(176, y), 80f, "7777", 6);
+            joinIpTextBox = AddFormInput(new Vector2(10, y), 170f, "127.0.0.1", 32);
+            joinPortTextBox = AddFormInput(new Vector2(188, y), 90f, "7777", 6);
             y += 18f;
 
-            AddFormLabel("NOMBRE EN PARTIDA:", new Vector2(8, y));
+            AddFormLabel("PLAYER ALIAS IN LOBBY:", new Vector2(10, y));
             y += 10f;
             string defaultName = GetDefaultPlayerName();
-            joinNameTextBox = AddFormInput(new Vector2(8, y), 248f, defaultName, 24);
+            joinNameTextBox = AddFormInput(new Vector2(10, y), 268f, defaultName, 24);
             y += 18f;
 
-            AddFormLabel("ROL AL INGRESAR:", new Vector2(8, y));
+            AddFormLabel("ROLE UPON ENTERING LOBBY:", new Vector2(10, y));
             y += 10f;
-            joinRoleButton = DaggerfallUI.AddButton(new Vector2(8, y), new Vector2(248f, 13f), contentPanel);
-            joinRoleButton.Outline.Enabled = true;
-            joinRoleButton.Outline.Color = panelOutlineColor;
-            joinRoleButton.BackgroundColor = new Color(0.2f, 0.2f, 0.25f, 0.9f);
-            TextLabel roleLabel = DaggerfallUI.AddDefaultTitleTextLabel(new Vector2(0, 1), joinRoleButton);
-            roleLabel.Text = joinAsDm ? "ROL: [ DUNGEON MASTER (DM) ]" : "ROL: [ JUGADOR (PLAYER) ]";
-            roleLabel.TextColor = joinAsDm ? goldTextColor : Color.white;
+            joinRoleButton = DaggerfallUI.AddButton(new Vector2(10, y), new Vector2(268f, 14f), contentPanel);
+            joinRoleButton.BackgroundTexture = joinAsDm ? goldBtnTex : ironBtnTex;
+            TextLabel roleLabel = DaggerfallUI.AddDefaultShadowedTextLabel(new Vector2(0, 3), joinRoleButton);
+            roleLabel.Text = joinAsDm ? "ROLE: [ DUNGEON MASTER (DM) ]" : "ROLE: [ ADVENTURER (PLAYER) ]";
+            roleLabel.TextColor = joinAsDm ? DarkFantasyPixelArtTheme.GoldBright : DarkFantasyPixelArtTheme.TextIvory;
             roleLabel.HorizontalAlignment = HorizontalAlignment.Center;
 
             joinRoleButton.OnMouseClick += (s, e) =>
             {
                 joinAsDm = !joinAsDm;
-                roleLabel.Text = joinAsDm ? "ROL: [ DUNGEON MASTER (DM) ]" : "ROL: [ JUGADOR (PLAYER) ]";
-                roleLabel.TextColor = joinAsDm ? goldTextColor : Color.white;
+                joinRoleButton.BackgroundTexture = joinAsDm ? goldBtnTex : ironBtnTex;
+                roleLabel.Text = joinAsDm ? "ROLE: [ DUNGEON MASTER (DM) ]" : "ROLE: [ ADVENTURER (PLAYER) ]";
+                roleLabel.TextColor = joinAsDm ? DarkFantasyPixelArtTheme.GoldBright : DarkFantasyPixelArtTheme.TextIvory;
             };
-            y += 18f;
-
-            Button connectButton = DaggerfallUI.AddButton(new Vector2(8, y), new Vector2(248f, 16f), contentPanel);
-            connectButton.Outline.Enabled = true;
-            connectButton.Outline.Color = panelOutlineColor;
-            connectButton.BackgroundColor = buttonGreenColor;
-            TextLabel connectLabel = DaggerfallUI.AddDefaultTitleTextLabel(new Vector2(0, 2), connectButton);
-            connectLabel.Text = "CONECTAR A LA PARTIDA";
-            connectLabel.TextColor = Color.white;
-            connectLabel.HorizontalAlignment = HorizontalAlignment.Center;
-            connectButton.OnMouseClick += (s, e) => ExecuteJoinSession();
             y += 20f;
 
-            joinStatusLabel = DaggerfallUI.AddTextLabel(new Vector2(8, y), "Estado: Listo para conectar", contentPanel);
-            joinStatusLabel.TextColor = new Color(0.7f, 0.7f, 0.7f);
+            Button connectButton = DaggerfallUI.AddButton(new Vector2(10, y), new Vector2(268f, 17f), contentPanel);
+            connectButton.BackgroundTexture = emeraldBtnTex;
+            TextLabel connectLabel = DaggerfallUI.AddDefaultShadowedTextLabel(new Vector2(0, 4), connectButton);
+            connectLabel.Text = "CONNECT & ENTER LOBBY";
+            connectLabel.TextColor = DarkFantasyPixelArtTheme.TextIvory;
+            connectLabel.HorizontalAlignment = HorizontalAlignment.Center;
+            connectButton.OnMouseClick += (s, e) => ExecuteJoinSession();
+            y += 22f;
+
+            joinStatusLabel = DaggerfallUI.AddTextLabel(DaggerfallUI.DefaultFont, new Vector2(10, y), "Status: Ready to connect to Host Lobby.", contentPanel);
+            joinStatusLabel.TextColor = DarkFantasyPixelArtTheme.TextMuted;
         }
 
         private void ExecuteJoinSession()
@@ -262,25 +388,33 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
             if (port == 0) port = 7777;
 
             string playerName = joinNameTextBox.Text.Trim();
-            if (!string.IsNullOrEmpty(playerName) && GameManager.Instance.PlayerEntity != null)
+            if (!string.IsNullOrEmpty(playerName))
             {
-                GameManager.Instance.PlayerEntity.Name = playerName;
+                PlayerPrefs.SetString("DFU_LastPlayerName", playerName);
+                if (GameManager.Instance.PlayerEntity != null)
+                    GameManager.Instance.PlayerEntity.Name = playerName;
             }
 
             SaveRecentServer($"{ip}:{port}");
 
             if (DFUNetworkManager.Instance != null)
             {
-                joinStatusLabel.Text = $"Conectando a {ip}:{port}...";
-                joinStatusLabel.TextColor = goldTextColor;
+                var netMgr = DFUNetworkManager.Instance;
+                netMgr.localLobbyIsDm = joinAsDm;
+                netMgr.localLobbyIsReady = false;
+                if (string.IsNullOrEmpty(netMgr.localLobbyCharacterName))
+                    netMgr.localLobbyCharacterName = playerName;
 
-                DFUNetworkManager.Instance.ConnectToServer(ip, port);
-                CloseWindow();
+                netMgr.ConnectToServer(ip, port);
+
+                // Transition immediately to the Pre-Game Lobby room instead of closing to the main menu
+                showingSavePickerModal = false;
+                SwitchTab(2);
             }
             else
             {
-                joinStatusLabel.Text = "Error: DFUNetworkManager no inicializado.";
-                joinStatusLabel.TextColor = Color.red;
+                joinStatusLabel.Text = "Error: DFUNetworkManager not initialized.";
+                joinStatusLabel.TextColor = DarkFantasyPixelArtTheme.TextErrorRed;
             }
         }
 
@@ -290,63 +424,57 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
 
         private void SetupHostTab()
         {
-            float y = 4f;
+            float y = 6f;
 
-            AddFormLabel("PUERTO LOCAL (KCP UDP PORT):", new Vector2(8, y));
+            AddFormLabel("LOCAL KCP UDP PORT:", new Vector2(10, y));
             y += 10f;
-            hostPortTextBox = AddFormInput(new Vector2(8, y), 248f, "7777", 6);
+            hostPortTextBox = AddFormInput(new Vector2(10, y), 268f, "7777", 6);
             y += 18f;
 
-            AddFormLabel("ROL DEL ANFITRIÓN:", new Vector2(8, y));
+            AddFormLabel("HOST / AUTHORITY ROLE:", new Vector2(10, y));
             y += 10f;
-            hostRoleButton = DaggerfallUI.AddButton(new Vector2(8, y), new Vector2(248f, 13f), contentPanel);
-            hostRoleButton.Outline.Enabled = true;
-            hostRoleButton.Outline.Color = panelOutlineColor;
-            hostRoleButton.BackgroundColor = new Color(0.2f, 0.2f, 0.25f, 0.9f);
-            TextLabel hostRoleLabel = DaggerfallUI.AddDefaultTitleTextLabel(new Vector2(0, 1), hostRoleButton);
-            hostRoleLabel.Text = hostAsDm ? "ROL ANFITRIÓN: [ DUNGEON MASTER (DM) ]" : "ROL ANFITRIÓN: [ JUGADOR (PLAYER) ]";
-            hostRoleLabel.TextColor = hostAsDm ? goldTextColor : Color.white;
+            hostRoleButton = DaggerfallUI.AddButton(new Vector2(10, y), new Vector2(268f, 14f), contentPanel);
+            hostRoleButton.BackgroundTexture = hostAsDm ? goldBtnTex : ironBtnTex;
+            TextLabel hostRoleLabel = DaggerfallUI.AddDefaultShadowedTextLabel(new Vector2(0, 3), hostRoleButton);
+            hostRoleLabel.Text = hostAsDm ? "HOST ROLE: [ DUNGEON MASTER (DM) ]" : "HOST ROLE: [ ADVENTURER (PLAYER) ]";
+            hostRoleLabel.TextColor = hostAsDm ? DarkFantasyPixelArtTheme.GoldBright : DarkFantasyPixelArtTheme.TextIvory;
             hostRoleLabel.HorizontalAlignment = HorizontalAlignment.Center;
             hostRoleButton.OnMouseClick += (s, e) =>
             {
                 hostAsDm = !hostAsDm;
-                hostRoleLabel.Text = hostAsDm ? "ROL ANFITRIÓN: [ DUNGEON MASTER (DM) ]" : "ROL ANFITRIÓN: [ JUGADOR (PLAYER) ]";
-                hostRoleLabel.TextColor = hostAsDm ? goldTextColor : Color.white;
+                hostRoleButton.BackgroundTexture = hostAsDm ? goldBtnTex : ironBtnTex;
+                hostRoleLabel.Text = hostAsDm ? "HOST ROLE: [ DUNGEON MASTER (DM) ]" : "HOST ROLE: [ ADVENTURER (PLAYER) ]";
+                hostRoleLabel.TextColor = hostAsDm ? DarkFantasyPixelArtTheme.GoldBright : DarkFantasyPixelArtTheme.TextIvory;
             };
             y += 18f;
 
-            AddFormLabel("REGLAS DE COMBATE (PVP / FUEGO AMIGO):", new Vector2(8, y));
+            AddFormLabel("COMBAT RULES (FRIENDLY FIRE / PVP):", new Vector2(10, y));
             y += 10f;
-            hostPvpButton = DaggerfallUI.AddButton(new Vector2(8, y), new Vector2(248f, 13f), contentPanel);
-            hostPvpButton.Outline.Enabled = true;
-            hostPvpButton.Outline.Color = panelOutlineColor;
-            hostPvpButton.BackgroundColor = hostPvpEnabled ? new Color(0.5f, 0.2f, 0.2f, 0.9f) : new Color(0.2f, 0.35f, 0.2f, 0.9f);
-            TextLabel pvpLabel = DaggerfallUI.AddDefaultTitleTextLabel(new Vector2(0, 1), hostPvpButton);
-            pvpLabel.Text = hostPvpEnabled ? "FUEGO AMIGO: ACTIVADO (PVP ON)" : "FUEGO AMIGO: DESACTIVADO (COOP SEGURO)";
-            pvpLabel.TextColor = hostPvpEnabled ? new Color(1f, 0.5f, 0.5f) : new Color(0.6f, 1f, 0.6f);
+            hostPvpButton = DaggerfallUI.AddButton(new Vector2(10, y), new Vector2(268f, 14f), contentPanel);
+            hostPvpButton.BackgroundTexture = hostPvpEnabled ? crimsonBtnTex : emeraldBtnTex;
+            TextLabel pvpLabel = DaggerfallUI.AddDefaultShadowedTextLabel(new Vector2(0, 3), hostPvpButton);
+            pvpLabel.Text = hostPvpEnabled ? "FRIENDLY FIRE: ENABLED (PVP ON)" : "FRIENDLY FIRE: DISABLED (CO-OP SAFE)";
+            pvpLabel.TextColor = DarkFantasyPixelArtTheme.TextIvory;
             pvpLabel.HorizontalAlignment = HorizontalAlignment.Center;
             hostPvpButton.OnMouseClick += (s, e) =>
             {
                 hostPvpEnabled = !hostPvpEnabled;
-                pvpLabel.Text = hostPvpEnabled ? "FUEGO AMIGO: ACTIVADO (PVP ON)" : "FUEGO AMIGO: DESACTIVADO (COOP SEGURO)";
-                pvpLabel.TextColor = hostPvpEnabled ? new Color(1f, 0.5f, 0.5f) : new Color(0.6f, 1f, 0.6f);
-                hostPvpButton.BackgroundColor = hostPvpEnabled ? new Color(0.5f, 0.2f, 0.2f, 0.9f) : new Color(0.2f, 0.35f, 0.2f, 0.9f);
+                hostPvpButton.BackgroundTexture = hostPvpEnabled ? crimsonBtnTex : emeraldBtnTex;
+                pvpLabel.Text = hostPvpEnabled ? "FRIENDLY FIRE: ENABLED (PVP ON)" : "FRIENDLY FIRE: DISABLED (CO-OP SAFE)";
             };
-            y += 18f;
-
-            Button startHostButton = DaggerfallUI.AddButton(new Vector2(8, y), new Vector2(248f, 16f), contentPanel);
-            startHostButton.Outline.Enabled = true;
-            startHostButton.Outline.Color = panelOutlineColor;
-            startHostButton.BackgroundColor = buttonGreenColor;
-            TextLabel startHostLabel = DaggerfallUI.AddDefaultTitleTextLabel(new Vector2(0, 2), startHostButton);
-            startHostLabel.Text = "INICIAR SERVIDOR (START HOST)";
-            startHostLabel.TextColor = Color.white;
-            startHostLabel.HorizontalAlignment = HorizontalAlignment.Center;
-            startHostButton.OnMouseClick += (s, e) => ExecuteHostSession();
             y += 20f;
 
-            hostStatusLabel = DaggerfallUI.AddTextLabel(new Vector2(8, y), "Listo para crear sesión en este equipo.", contentPanel);
-            hostStatusLabel.TextColor = new Color(0.7f, 0.7f, 0.7f);
+            Button startHostButton = DaggerfallUI.AddButton(new Vector2(10, y), new Vector2(268f, 17f), contentPanel);
+            startHostButton.BackgroundTexture = emeraldBtnTex;
+            TextLabel startHostLabel = DaggerfallUI.AddDefaultShadowedTextLabel(new Vector2(0, 4), startHostButton);
+            startHostLabel.Text = "CREATE SERVER & OPEN LOBBY";
+            startHostLabel.TextColor = DarkFantasyPixelArtTheme.TextIvory;
+            startHostLabel.HorizontalAlignment = HorizontalAlignment.Center;
+            startHostButton.OnMouseClick += (s, e) => ExecuteHostSession();
+            y += 22f;
+
+            hostStatusLabel = DaggerfallUI.AddTextLabel(DaggerfallUI.DefaultFont, new Vector2(10, y), "Creates an authoritative Host Lobby and waits for the party.", contentPanel);
+            hostStatusLabel.TextColor = DarkFantasyPixelArtTheme.TextMuted;
         }
 
         private void ExecuteHostSession()
@@ -356,43 +484,530 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
 
             if (DFUNetworkManager.Instance != null)
             {
-                hostStatusLabel.Text = $"Iniciando Servidor en puerto {port}...";
-                hostStatusLabel.TextColor = goldTextColor;
+                var netMgr = DFUNetworkManager.Instance;
+                netMgr.localLobbyIsDm = hostAsDm;
+                netMgr.localLobbyIsReady = false;
+                netMgr.SetPvpAllowed(hostPvpEnabled);
+                netMgr.StartHosting(port);
+                netMgr.SendLocalLobbyUpdate();
 
-                DFUNetworkManager.Instance.SetPvpAllowed(hostPvpEnabled);
-                DFUNetworkManager.Instance.StartHosting(port);
-                CloseWindow();
+                // Transition directly to the Pre-Game Lobby room instead of closing to the main menu
+                showingSavePickerModal = false;
+                SwitchTab(2);
             }
             else
             {
-                hostStatusLabel.Text = "Error: DFUNetworkManager no disponible.";
-                hostStatusLabel.TextColor = Color.red;
+                hostStatusLabel.Text = "Error: DFUNetworkManager unavailable.";
+                hostStatusLabel.TextColor = DarkFantasyPixelArtTheme.TextErrorRed;
             }
         }
 
         #endregion
 
-        #region Tab 2: History (Recent Servers)
+        #region Tab 2: Pre-Game Lobby, Character Selection & Mod Compatibility
+
+        private void SetupLobbyTab()
+        {
+            if (!NetworkSession.IsActive || DFUNetworkManager.Instance == null)
+            {
+                AddFormLabel("NO ACTIVE SESSION YET", new Vector2(10, 14));
+                TextLabel hint = DaggerfallUI.AddTextLabel(DaggerfallUI.DefaultFont, new Vector2(10, 28),
+                    "Use the JOIN or HOST tab first to open a Lobby session.", contentPanel);
+                hint.TextColor = DarkFantasyPixelArtTheme.TextMuted;
+
+                Button goHostBtn = DaggerfallUI.AddButton(new Vector2(10, 48), new Vector2(128, 16), contentPanel);
+                goHostBtn.BackgroundTexture = goldBtnTex;
+                TextLabel ghLabel = DaggerfallUI.AddDefaultShadowedTextLabel(new Vector2(0, 4), goHostBtn);
+                ghLabel.Text = "GO TO HOST TAB";
+                ghLabel.TextColor = DarkFantasyPixelArtTheme.GoldBright;
+                ghLabel.HorizontalAlignment = HorizontalAlignment.Center;
+                goHostBtn.OnMouseClick += (s, e) => SwitchTab(1);
+
+                Button goJoinBtn = DaggerfallUI.AddButton(new Vector2(148, 48), new Vector2(128, 16), contentPanel);
+                goJoinBtn.BackgroundTexture = emeraldBtnTex;
+                TextLabel gjLabel = DaggerfallUI.AddDefaultShadowedTextLabel(new Vector2(0, 4), goJoinBtn);
+                gjLabel.Text = "GO TO JOIN TAB";
+                gjLabel.TextColor = DarkFantasyPixelArtTheme.TextIvory;
+                gjLabel.HorizontalAlignment = HorizontalAlignment.Center;
+                goJoinBtn.OnMouseClick += (s, e) => SwitchTab(0);
+                return;
+            }
+
+            if (showingSavePickerModal)
+            {
+                SetupSavedCharacterPickerView();
+                return;
+            }
+
+            var netMgr = DFUNetworkManager.Instance;
+
+            // Top Session Status Banner
+            string connBanner = NetworkSession.IsHost
+                ? $"SESSION: HOSTING ON UDP PORT {netMgr.defaultPort}  |  ROLE: {(netMgr.localLobbyIsDm ? "DM" : "PLAYER")}"
+                : (Mirror.NetworkClient.isConnected
+                    ? $"SESSION: CONNECTED TO {netMgr.networkAddress} (ID #{netMgr.localConnectionId})"
+                    : $"SESSION: CONNECTING TO {netMgr.networkAddress}...");
+
+            TextLabel bannerLabel = DaggerfallUI.AddDefaultShadowedTextLabel(new Vector2(8, 4), contentPanel);
+            bannerLabel.Text = connBanner;
+            bannerLabel.TextColor = Mirror.NetworkClient.isConnected || NetworkSession.IsHost
+                ? DarkFantasyPixelArtTheme.TextReadyGreen
+                : DarkFantasyPixelArtTheme.TextWarnAmber;
+
+            Button disconnectBtn = DaggerfallUI.AddButton(new Vector2(218, 2), new Vector2(64, 11), contentPanel);
+            disconnectBtn.BackgroundTexture = crimsonBtnTex;
+            TextLabel discLabel = DaggerfallUI.AddDefaultShadowedTextLabel(new Vector2(0, 2), disconnectBtn);
+            discLabel.Text = "DISCONNECT";
+            discLabel.TextColor = DarkFantasyPixelArtTheme.TextIvory;
+            discLabel.HorizontalAlignment = HorizontalAlignment.Center;
+            disconnectBtn.OnMouseClick += (s, e) =>
+            {
+                netMgr.DisconnectSession();
+                SwitchTab(0);
+            };
+
+            // Left Column: Party Roster & Mod Compatibility Status
+            AddFormLabel("PARTY ROSTER & MOD SYNC:", new Vector2(8, 16));
+
+            Panel rosterBox = new Panel();
+            rosterBox.Position = new Vector2(8, 25);
+            rosterBox.Size = new Vector2(166, 86);
+            rosterBox.Outline.Enabled = true;
+            rosterBox.Outline.Color = DarkFantasyPixelArtTheme.BronzeOuter;
+            rosterBox.BackgroundColor = new Color32(10, 9, 12, 235);
+            contentPanel.Components.Add(rosterBox);
+
+            List<LobbyPlayerDTO> players = (netMgr.currentLobbyRoster != null && netMgr.currentLobbyRoster.players != null)
+                ? netMgr.currentLobbyRoster.players
+                : new List<LobbyPlayerDTO>();
+
+            float rowY = 4f;
+            if (players.Count == 0)
+            {
+                TextLabel waitLbl = DaggerfallUI.AddTextLabel(DaggerfallUI.DefaultFont, new Vector2(6, rowY), "Waiting for handshake...", rosterBox);
+                waitLbl.TextColor = DarkFantasyPixelArtTheme.TextMuted;
+            }
+            else
+            {
+                foreach (var p in players)
+                {
+                    string roleTag = p.isHost ? (p.isDm ? "[HOST/DM]" : "[HOST]") : (p.isDm ? "[DM]" : "[PLY]");
+                    string charSummary = p.selectionMode == 1
+                        ? $"{p.characterName} (New: {p.raceName} {p.className})"
+                        : (p.selectionMode == 2
+                            ? $"{p.characterName} ({p.raceName} {p.className} L{p.level})"
+                            : "No character selected");
+
+                    string readyTag = p.isReady ? "[READY]" : "[WAIT]";
+                    TextLabel line1 = DaggerfallUI.AddTextLabel(DaggerfallUI.DefaultFont, new Vector2(4, rowY),
+                        $"{roleTag} {charSummary}", rosterBox);
+                    line1.TextColor = p.isReady ? DarkFantasyPixelArtTheme.TextReadyGreen : DarkFantasyPixelArtTheme.TextIvory;
+                    line1.TextScale = 0.85f;
+                    rowY += 7f;
+
+                    string modTag = p.modsCompatible ? $"Mods: OK  |  Estado: {readyTag}" : $"Mods: MISMATCH ({p.modMismatchSummary})";
+                    TextLabel line2 = DaggerfallUI.AddTextLabel(DaggerfallUI.DefaultFont, new Vector2(8, rowY), modTag, rosterBox);
+                    line2.TextColor = p.modsCompatible
+                        ? (p.isReady ? DarkFantasyPixelArtTheme.TextGold : DarkFantasyPixelArtTheme.TextMuted)
+                        : DarkFantasyPixelArtTheme.TextErrorRed;
+                    line2.TextScale = 0.80f;
+                    rowY += 10f;
+                }
+            }
+
+            // Right Column: Parchment Character Card (Ventanas.png inspired)
+            AddFormLabel("YOUR CHARACTER:", new Vector2(180, 16));
+
+            Panel charCard = new Panel();
+            charCard.Position = new Vector2(180, 25);
+            charCard.Size = new Vector2(102, 54);
+            charCard.BackgroundTexture = parchmentCardTex;
+            contentPanel.Components.Add(charCard);
+
+            string modeTitle = netMgr.localLobbySelectionMode == 1
+                ? "NEW CHARACTER"
+                : (netMgr.localLobbySelectionMode == 2 ? "SAVED CHARACTER" : "UNSELECTED");
+
+            TextLabel cardHeader = DaggerfallUI.AddTextLabel(DaggerfallUI.DefaultFont, new Vector2(6, 5), modeTitle, charCard);
+            cardHeader.TextColor = DarkFantasyPixelArtTheme.ParchmentInk;
+            cardHeader.ShadowPosition = Vector2.zero;
+            cardHeader.TextScale = 0.82f;
+
+            string cName = !string.IsNullOrEmpty(netMgr.localLobbyCharacterName) ? netMgr.localLobbyCharacterName : "None";
+            string cRace = !string.IsNullOrEmpty(netMgr.localLobbyRaceName) ? netMgr.localLobbyRaceName : "-";
+            string cClass = !string.IsNullOrEmpty(netMgr.localLobbyClassName) ? netMgr.localLobbyClassName : "-";
+
+            TextLabel cNameLbl = DaggerfallUI.AddTextLabel(DaggerfallUI.DefaultFont, new Vector2(6, 15), $"Name: {cName}", charCard);
+            cNameLbl.TextColor = DarkFantasyPixelArtTheme.ParchmentInk;
+            cNameLbl.ShadowPosition = Vector2.zero;
+            cNameLbl.TextScale = 0.85f;
+
+            TextLabel cRaceLbl = DaggerfallUI.AddTextLabel(DaggerfallUI.DefaultFont, new Vector2(6, 25), $"Race: {cRace}", charCard);
+            cRaceLbl.TextColor = DarkFantasyPixelArtTheme.ParchmentInk;
+            cRaceLbl.ShadowPosition = Vector2.zero;
+            cRaceLbl.TextScale = 0.85f;
+
+            TextLabel cClassLbl = DaggerfallUI.AddTextLabel(DaggerfallUI.DefaultFont, new Vector2(6, 35), $"Class: {cClass}", charCard);
+            cClassLbl.TextColor = DarkFantasyPixelArtTheme.ParchmentInk;
+            cClassLbl.ShadowPosition = Vector2.zero;
+            cClassLbl.TextScale = 0.85f;
+
+            TextLabel cLvlLbl = DaggerfallUI.AddTextLabel(DaggerfallUI.DefaultFont, new Vector2(6, 44), $"Level: {netMgr.localLobbyLevel}", charCard);
+            cLvlLbl.TextColor = DarkFantasyPixelArtTheme.ParchmentInk;
+            cLvlLbl.ShadowPosition = Vector2.zero;
+            cLvlLbl.TextScale = 0.82f;
+
+            // Character Mode Radio Selection: [ (•) NEW CHARACTER ] vs [ ( ) LOAD CHARACTER ]
+            bool isNewChar = netMgr.localLobbySelectionMode == 1;
+            bool isLoadChar = netMgr.localLobbySelectionMode == 2;
+
+            Button newCharBtn = DaggerfallUI.AddButton(new Vector2(180, 81), new Vector2(102, 14), contentPanel);
+            newCharBtn.BackgroundTexture = isNewChar ? goldBtnTex : ironBtnTex;
+
+            Panel radio1Dot = new Panel();
+            radio1Dot.Position = new Vector2(4, 2);
+            radio1Dot.Size = new Vector2(10, 10);
+            radio1Dot.BackgroundTexture = isNewChar ? DarkFantasyPixelArtTheme.RadioButtonCheckedTex : DarkFantasyPixelArtTheme.RadioButtonUncheckedTex;
+            newCharBtn.Components.Add(radio1Dot);
+
+            TextLabel ncLabel = DaggerfallUI.AddDefaultShadowedTextLabel(new Vector2(18, 3), newCharBtn);
+            ncLabel.Text = "NEW CHARACTER";
+            ncLabel.TextColor = isNewChar ? DarkFantasyPixelArtTheme.GoldBright : DarkFantasyPixelArtTheme.TextIvory;
+            newCharBtn.OnMouseClick += (s, e) => LaunchNewCharacterWizardForLobby();
+
+            Button loadCharBtn = DaggerfallUI.AddButton(new Vector2(180, 97), new Vector2(102, 14), contentPanel);
+            loadCharBtn.BackgroundTexture = isLoadChar ? goldBtnTex : ironBtnTex;
+
+            Panel radio2Dot = new Panel();
+            radio2Dot.Position = new Vector2(4, 2);
+            radio2Dot.Size = new Vector2(10, 10);
+            radio2Dot.BackgroundTexture = isLoadChar ? DarkFantasyPixelArtTheme.RadioButtonCheckedTex : DarkFantasyPixelArtTheme.RadioButtonUncheckedTex;
+            loadCharBtn.Components.Add(radio2Dot);
+
+            TextLabel lcLabel = DaggerfallUI.AddDefaultShadowedTextLabel(new Vector2(18, 3), loadCharBtn);
+            lcLabel.Text = "LOAD CHARACTER";
+            lcLabel.TextColor = isLoadChar ? DarkFantasyPixelArtTheme.GoldBright : DarkFantasyPixelArtTheme.TextIvory;
+            loadCharBtn.OnMouseClick += (s, e) =>
+            {
+                showingSavePickerModal = true;
+                SwitchTab(2);
+            };
+
+            // Bottom Action Bar: Ready Toggle & DM Launch Button
+            bool hasSelectedChar = netMgr.localLobbySelectionMode != 0;
+            Button readyBtn = DaggerfallUI.AddButton(new Vector2(8, 116), new Vector2(132, 18), contentPanel);
+            readyBtn.BackgroundTexture = !hasSelectedChar
+                ? ironBtnTex
+                : (netMgr.localLobbyIsReady ? emeraldBtnTex : goldBtnTex);
+
+            TextLabel readyLbl = DaggerfallUI.AddDefaultShadowedTextLabel(new Vector2(0, 5), readyBtn);
+            readyLbl.Text = !hasSelectedChar
+                ? "SELECT CHAR FIRST"
+                : (netMgr.localLobbyIsReady ? "STATUS: READY [OK]" : "MARK AS READY");
+            readyLbl.TextColor = !hasSelectedChar ? DarkFantasyPixelArtTheme.TextMuted : DarkFantasyPixelArtTheme.TextIvory;
+            readyLbl.HorizontalAlignment = HorizontalAlignment.Center;
+
+            readyBtn.OnMouseClick += (s, e) =>
+            {
+                if (netMgr.localLobbySelectionMode == 0)
+                    return;
+                netMgr.localLobbyIsReady = !netMgr.localLobbyIsReady;
+                netMgr.SendLocalLobbyUpdate();
+                SwitchTab(2);
+            };
+
+            // Host / DM Launch Button (Enabled only when ALL party members in Lobby are Ready)
+            bool allReady = netMgr.AreAllLobbyPlayersReady(out int domMode);
+            Button launchBtn = DaggerfallUI.AddButton(new Vector2(146, 116), new Vector2(136, 18), contentPanel);
+
+            if (NetworkSession.IsHost)
+            {
+                launchBtn.BackgroundTexture = allReady ? emeraldBtnTex : ironBtnTex;
+                string launchCaption = !allReady
+                    ? "WAITING FOR PARTY..."
+                    : (netMgr.localLobbySelectionMode == 1 ? "START NEW GAME (DM)" : "LOAD PARTY GAME (DM)");
+
+                TextLabel launchLbl = DaggerfallUI.AddDefaultShadowedTextLabel(new Vector2(0, 5), launchBtn);
+                launchLbl.Text = launchCaption;
+                launchLbl.TextColor = allReady ? DarkFantasyPixelArtTheme.GoldBright : DarkFantasyPixelArtTheme.TextMuted;
+                launchLbl.HorizontalAlignment = HorizontalAlignment.Center;
+
+                launchBtn.OnMouseClick += (s, e) =>
+                {
+                    if (netMgr.AreAllLobbyPlayersReady(out _))
+                    {
+                        netMgr.HostLaunchLobbySession();
+                    }
+                };
+            }
+            else
+            {
+                launchBtn.BackgroundTexture = ironBtnTex;
+                TextLabel waitHostLbl = DaggerfallUI.AddDefaultShadowedTextLabel(new Vector2(0, 5), launchBtn);
+                waitHostLbl.Text = allReady ? "WAITING FOR DM LAUNCH" : "WAITING FOR PARTY...";
+                waitHostLbl.TextColor = allReady ? DarkFantasyPixelArtTheme.TextReadyGreen : DarkFantasyPixelArtTheme.TextMuted;
+                waitHostLbl.HorizontalAlignment = HorizontalAlignment.Center;
+            }
+        }
+
+        private void LaunchNewCharacterWizardForLobby()
+        {
+            if (DFUNetworkManager.Instance != null)
+            {
+                DFUNetworkManager.Instance.isCreatingCharacterForLobby = true;
+                DFUNetworkManager.Instance.localLobbyIsReady = false;
+                DFUNetworkManager.Instance.SendLocalLobbyUpdate();
+            }
+
+            uiManager.PushWindow(UIWindowFactory.GetInstance(UIWindowType.StartNewGameWizard, uiManager));
+        }
+
+        /// <summary>
+        /// Sub-view inside the Lobby to pick a saved character and inspect Name, Race, Class, and Level before confirming.
+        /// </summary>
+        private void SetupSavedCharacterPickerView()
+        {
+            AddFormLabel("SELECT SAVED CHARACTER FOR LOBBY:", new Vector2(8, 4));
+
+            GameManager.Instance.SaveLoadManager.EnumerateSaves();
+            enumeratedCharNames.Clear();
+            enumeratedCharNames.AddRange(GameManager.Instance.SaveLoadManager.GetCharacterNames());
+
+            // Left Panel: Character Names
+            Panel charListPanel = new Panel();
+            charListPanel.Position = new Vector2(8, 14);
+            charListPanel.Size = new Vector2(86, 96);
+            charListPanel.Outline.Enabled = true;
+            charListPanel.Outline.Color = DarkFantasyPixelArtTheme.BronzeOuter;
+            charListPanel.BackgroundColor = new Color32(10, 9, 12, 240);
+            contentPanel.Components.Add(charListPanel);
+
+            characterNamesListBox = new ListBox();
+            characterNamesListBox.Position = new Vector2(2, 2);
+            characterNamesListBox.Size = new Vector2(82, 92);
+            characterNamesListBox.RowsDisplayed = 10;
+            characterNamesListBox.TextColor = DarkFantasyPixelArtTheme.TextGold;
+            charListPanel.Components.Add(characterNamesListBox);
+
+            foreach (string cName in enumeratedCharNames)
+            {
+                characterNamesListBox.AddItem(cName);
+            }
+
+            // Middle Panel: Saves for Selected Character
+            Panel saveListPanel = new Panel();
+            saveListPanel.Position = new Vector2(98, 14);
+            saveListPanel.Size = new Vector2(84, 96);
+            saveListPanel.Outline.Enabled = true;
+            saveListPanel.Outline.Color = DarkFantasyPixelArtTheme.BronzeOuter;
+            saveListPanel.BackgroundColor = new Color32(10, 9, 12, 240);
+            contentPanel.Components.Add(saveListPanel);
+
+            characterSavesListBox = new ListBox();
+            characterSavesListBox.Position = new Vector2(2, 2);
+            characterSavesListBox.Size = new Vector2(80, 92);
+            characterSavesListBox.RowsDisplayed = 10;
+            characterSavesListBox.TextColor = DarkFantasyPixelArtTheme.TextIvory;
+            saveListPanel.Components.Add(characterSavesListBox);
+
+            // Right Panel: Parchment Sheet Inspecting Name, Race, Class & Level
+            Panel inspectCard = new Panel();
+            inspectCard.Position = new Vector2(186, 14);
+            inspectCard.Size = new Vector2(96, 96);
+            inspectCard.BackgroundTexture = parchmentCardTex;
+            contentPanel.Components.Add(inspectCard);
+
+            TextLabel sheetTitle = DaggerfallUI.AddTextLabel(DaggerfallUI.DefaultFont, new Vector2(6, 6), "CHARACTER SHEET", inspectCard);
+            sheetTitle.TextColor = DarkFantasyPixelArtTheme.ParchmentInk;
+            sheetTitle.ShadowPosition = Vector2.zero;
+            sheetTitle.TextScale = 0.85f;
+
+            previewNameLabel = DaggerfallUI.AddTextLabel(DaggerfallUI.DefaultFont, new Vector2(6, 20), "Name: -", inspectCard);
+            previewNameLabel.TextColor = DarkFantasyPixelArtTheme.ParchmentInk;
+            previewNameLabel.ShadowPosition = Vector2.zero;
+            previewNameLabel.TextScale = 0.85f;
+
+            previewRaceLabel = DaggerfallUI.AddTextLabel(DaggerfallUI.DefaultFont, new Vector2(6, 33), "Race: -", inspectCard);
+            previewRaceLabel.TextColor = DarkFantasyPixelArtTheme.ParchmentInk;
+            previewRaceLabel.ShadowPosition = Vector2.zero;
+            previewRaceLabel.TextScale = 0.85f;
+
+            previewClassLabel = DaggerfallUI.AddTextLabel(DaggerfallUI.DefaultFont, new Vector2(6, 46), "Class: -", inspectCard);
+            previewClassLabel.TextColor = DarkFantasyPixelArtTheme.ParchmentInk;
+            previewClassLabel.ShadowPosition = Vector2.zero;
+            previewClassLabel.TextScale = 0.85f;
+
+            previewLevelLabel = DaggerfallUI.AddTextLabel(DaggerfallUI.DefaultFont, new Vector2(6, 59), "Level: -", inspectCard);
+            previewLevelLabel.TextColor = DarkFantasyPixelArtTheme.ParchmentInk;
+            previewLevelLabel.ShadowPosition = Vector2.zero;
+            previewLevelLabel.TextScale = 0.85f;
+
+            previewSaveNameLabel = DaggerfallUI.AddTextLabel(DaggerfallUI.DefaultFont, new Vector2(6, 74), "Save: -", inspectCard);
+            previewSaveNameLabel.TextColor = DarkFantasyPixelArtTheme.ParchmentInk;
+            previewSaveNameLabel.ShadowPosition = Vector2.zero;
+            previewSaveNameLabel.TextScale = 0.78f;
+
+            characterNamesListBox.OnSelectItem += () =>
+            {
+                PopulateCharacterSavesList();
+            };
+
+            characterSavesListBox.OnSelectItem += () =>
+            {
+                InspectSelectedSaveSlot();
+            };
+
+            if (enumeratedCharNames.Count > 0)
+            {
+                characterNamesListBox.SelectIndex(0);
+                PopulateCharacterSavesList();
+            }
+
+            // Bottom Confirm / Cancel Buttons
+            Button confirmCharBtn = DaggerfallUI.AddButton(new Vector2(8, 116), new Vector2(168, 18), contentPanel);
+            confirmCharBtn.BackgroundTexture = emeraldBtnTex;
+            TextLabel confLbl = DaggerfallUI.AddDefaultShadowedTextLabel(new Vector2(0, 5), confirmCharBtn);
+            confLbl.Text = "SELECT THIS CHARACTER FOR LOBBY";
+            confLbl.TextColor = DarkFantasyPixelArtTheme.TextIvory;
+            confLbl.HorizontalAlignment = HorizontalAlignment.Center;
+            confirmCharBtn.OnMouseClick += (s, e) =>
+            {
+                if (selectedSaveKeyPreview >= 0 && DFUNetworkManager.Instance != null)
+                {
+                    var netMgr = DFUNetworkManager.Instance;
+                    netMgr.localLobbySelectionMode = 2; // Saved Character
+                    netMgr.localLobbySaveKey = selectedSaveKeyPreview;
+                    netMgr.localLobbyCharacterName = previewCharName;
+                    netMgr.localLobbyRaceName = previewRaceName;
+                    netMgr.localLobbyClassName = previewClassName;
+                    netMgr.localLobbyLevel = previewCharLevel;
+                    netMgr.localLobbyIsReady = true; // Automatically mark ready upon picking saved character
+                    netMgr.SendLocalLobbyUpdate();
+                }
+                showingSavePickerModal = false;
+                SwitchTab(2);
+            };
+
+            Button cancelPickerBtn = DaggerfallUI.AddButton(new Vector2(182, 116), new Vector2(100, 18), contentPanel);
+            cancelPickerBtn.BackgroundTexture = crimsonBtnTex;
+            TextLabel cancLbl = DaggerfallUI.AddDefaultShadowedTextLabel(new Vector2(0, 5), cancelPickerBtn);
+            cancLbl.Text = "BACK TO LOBBY";
+            cancLbl.TextColor = DarkFantasyPixelArtTheme.TextIvory;
+            cancLbl.HorizontalAlignment = HorizontalAlignment.Center;
+            cancelPickerBtn.OnMouseClick += (s, e) =>
+            {
+                showingSavePickerModal = false;
+                SwitchTab(2);
+            };
+        }
+
+        private void PopulateCharacterSavesList()
+        {
+            characterSavesListBox.ClearItems();
+            enumeratedCharSaveKeys.Clear();
+            selectedSaveKeyPreview = -1;
+
+            if (characterNamesListBox.SelectedIndex < 0 || characterNamesListBox.SelectedIndex >= enumeratedCharNames.Count)
+                return;
+
+            string charName = enumeratedCharNames[characterNamesListBox.SelectedIndex];
+            int[] keys = GameManager.Instance.SaveLoadManager.GetCharacterSaveKeys(charName);
+
+            List<KeyValuePair<int, SaveInfo_v1>> ordered = new List<KeyValuePair<int, SaveInfo_v1>>();
+            foreach (int k in keys)
+            {
+                SaveInfo_v1 info = GameManager.Instance.SaveLoadManager.GetSaveInfo(k);
+                ordered.Add(new KeyValuePair<int, SaveInfo_v1>(k, info));
+            }
+
+            ordered = ordered.OrderByDescending(kv => kv.Value.dateAndTime != null ? kv.Value.dateAndTime.realTime : 0).ToList();
+
+            foreach (var kv in ordered)
+            {
+                enumeratedCharSaveKeys.Add(kv.Key);
+                characterSavesListBox.AddItem(string.IsNullOrEmpty(kv.Value.saveName) ? $"Save #{kv.Key}" : kv.Value.saveName);
+            }
+
+            if (enumeratedCharSaveKeys.Count > 0)
+            {
+                characterSavesListBox.SelectIndex(0);
+                InspectSelectedSaveSlot();
+            }
+        }
+
+        private void InspectSelectedSaveSlot()
+        {
+            if (characterSavesListBox.SelectedIndex < 0 || characterSavesListBox.SelectedIndex >= enumeratedCharSaveKeys.Count)
+                return;
+
+            int key = enumeratedCharSaveKeys[characterSavesListBox.SelectedIndex];
+            selectedSaveKeyPreview = key;
+
+            SaveInfo_v1 info = GameManager.Instance.SaveLoadManager.GetSaveInfo(key);
+            previewCharName = !string.IsNullOrEmpty(info.characterName) ? info.characterName : "Adventurer";
+            previewSaveCaption = !string.IsNullOrEmpty(info.saveName) ? info.saveName : $"SAVE{key}";
+            previewRaceName = "Breton";
+            previewClassName = "Adventurer";
+            previewCharLevel = 1;
+
+            // Read SaveData.txt from the save folder to extract exact Race, Class, and Level
+            try
+            {
+                string folder = GameManager.Instance.SaveLoadManager.GetSaveFolder(key);
+                string saveDataPath = Path.Combine(folder, "SaveData.txt");
+                if (File.Exists(saveDataPath))
+                {
+                    string json = File.ReadAllText(saveDataPath);
+                    SaveData_v1 saveData = SaveLoadManager.Deserialize(typeof(SaveData_v1), json) as SaveData_v1;
+                    if (saveData != null && saveData.playerData != null && saveData.playerData.playerEntity != null)
+                    {
+                        var pe = saveData.playerData.playerEntity;
+                        if (!string.IsNullOrEmpty(pe.name))
+                            previewCharName = pe.name;
+                        if (pe.raceTemplate != null && !string.IsNullOrEmpty(pe.raceTemplate.Name))
+                            previewRaceName = pe.raceTemplate.Name;
+                        if (pe.careerTemplate != null && !string.IsNullOrEmpty(pe.careerTemplate.Name))
+                            previewClassName = pe.careerTemplate.Name;
+                        if (pe.level > 0)
+                            previewCharLevel = pe.level;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                DaggerfallUnity.LogMessage($"[DFU Lobby] Failed to inspect SaveData.txt for key {key}: {ex.Message}");
+            }
+
+            if (previewNameLabel != null) previewNameLabel.Text = $"Name: {previewCharName}";
+            if (previewRaceLabel != null) previewRaceLabel.Text = $"Race: {previewRaceName}";
+            if (previewClassLabel != null) previewClassLabel.Text = $"Class: {previewClassName}";
+            if (previewLevelLabel != null) previewLevelLabel.Text = $"Level: {previewCharLevel}";
+            if (previewSaveNameLabel != null) previewSaveNameLabel.Text = $"Save: {previewSaveCaption}";
+        }
+
+        #endregion
+
+        #region Tab 3: History (Recent Servers)
 
         private void SetupHistoryTab()
         {
-            float y = 4f;
-            AddFormLabel("SERVIDORES RECIENTES Y FAVORITOS:", new Vector2(8, y));
+            float y = 6f;
+            AddFormLabel("RECENT & FAVORITE SERVERS:", new Vector2(10, y));
             y += 10f;
 
             Panel listPanel = new Panel();
-            listPanel.Position = new Vector2(8, y);
-            listPanel.Size = new Vector2(248, 70);
+            listPanel.Position = new Vector2(10, y);
+            listPanel.Size = new Vector2(268, 86);
             listPanel.Outline.Enabled = true;
-            listPanel.Outline.Color = panelOutlineColor;
-            listPanel.BackgroundColor = new Color(0.04f, 0.04f, 0.04f, 0.95f);
+            listPanel.Outline.Color = DarkFantasyPixelArtTheme.BronzeOuter;
+            listPanel.BackgroundColor = new Color32(10, 9, 12, 240);
             contentPanel.Components.Add(listPanel);
 
             historyListBox = new ListBox();
             historyListBox.Position = new Vector2(2, 2);
-            historyListBox.Size = new Vector2(244, 66);
-            historyListBox.RowsDisplayed = 6;
-            historyListBox.TextColor = goldTextColor;
+            historyListBox.Size = new Vector2(264, 82);
+            historyListBox.RowsDisplayed = 8;
+            historyListBox.TextColor = DarkFantasyPixelArtTheme.TextGold;
             listPanel.Components.Add(historyListBox);
 
             foreach (string s in recentServers)
@@ -402,15 +1017,13 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
             if (recentServers.Count > 0)
                 historyListBox.SelectedIndex = 0;
 
-            y += 74f;
+            y += 92f;
 
-            Button quickConnectBtn = DaggerfallUI.AddButton(new Vector2(8, y), new Vector2(120, 14), contentPanel);
-            quickConnectBtn.Outline.Enabled = true;
-            quickConnectBtn.Outline.Color = panelOutlineColor;
-            quickConnectBtn.BackgroundColor = buttonGreenColor;
-            TextLabel qcLabel = DaggerfallUI.AddDefaultTitleTextLabel(new Vector2(0, 1), quickConnectBtn);
-            qcLabel.Text = "CONECTAR SELECCIONADO";
-            qcLabel.TextColor = Color.white;
+            Button quickConnectBtn = DaggerfallUI.AddButton(new Vector2(10, y), new Vector2(130, 16), contentPanel);
+            quickConnectBtn.BackgroundTexture = emeraldBtnTex;
+            TextLabel qcLabel = DaggerfallUI.AddDefaultShadowedTextLabel(new Vector2(0, 4), quickConnectBtn);
+            qcLabel.Text = "SELECT SERVER";
+            qcLabel.TextColor = DarkFantasyPixelArtTheme.TextIvory;
             qcLabel.HorizontalAlignment = HorizontalAlignment.Center;
             quickConnectBtn.OnMouseClick += (s, e) =>
             {
@@ -418,21 +1031,19 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
                 {
                     string entry = recentServers[historyListBox.SelectedIndex];
                     string[] parts = entry.Split(':');
+                    SwitchTab(0);
                     if (parts.Length > 0 && joinIpTextBox != null)
                         joinIpTextBox.Text = parts[0];
                     if (parts.Length > 1 && joinPortTextBox != null)
                         joinPortTextBox.Text = parts[1];
-                    SwitchTab(0);
                 }
             };
 
-            Button deleteBtn = DaggerfallUI.AddButton(new Vector2(136, y), new Vector2(120, 14), contentPanel);
-            deleteBtn.Outline.Enabled = true;
-            deleteBtn.Outline.Color = panelOutlineColor;
-            deleteBtn.BackgroundColor = buttonRedColor;
-            TextLabel delLabel = DaggerfallUI.AddDefaultTitleTextLabel(new Vector2(0, 1), deleteBtn);
-            delLabel.Text = "BORRAR ENTRADA";
-            delLabel.TextColor = Color.white;
+            Button deleteBtn = DaggerfallUI.AddButton(new Vector2(148, y), new Vector2(130, 16), contentPanel);
+            deleteBtn.BackgroundTexture = crimsonBtnTex;
+            TextLabel delLabel = DaggerfallUI.AddDefaultShadowedTextLabel(new Vector2(0, 4), deleteBtn);
+            delLabel.Text = "REMOVE ENTRY";
+            delLabel.TextColor = DarkFantasyPixelArtTheme.TextIvory;
             delLabel.HorizontalAlignment = HorizontalAlignment.Center;
             deleteBtn.OnMouseClick += (s, e) =>
             {
@@ -440,7 +1051,7 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
                 {
                     recentServers.RemoveAt(historyListBox.SelectedIndex);
                     SaveRecentServersList();
-                    SwitchTab(2);
+                    SwitchTab(3);
                 }
             };
         }
@@ -476,32 +1087,58 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
 
         #endregion
 
-        #region Tab 3: Mods & Compatibility
+        #region Tab 4: Mods & Compatibility Inspector
 
         private void SetupModsTab()
         {
             float y = 6f;
-            AddFormLabel("ESTADO DEL SISTEMA MODS CATCHER:", new Vector2(8, y));
-            y += 12f;
+            AddFormLabel("ACTIVE LOCAL & HOST MODS (.DFMOD):", new Vector2(10, y));
+            y += 10f;
 
             Panel infoBox = new Panel();
-            infoBox.Position = new Vector2(8, y);
-            infoBox.Size = new Vector2(248, 85);
+            infoBox.Position = new Vector2(10, y);
+            infoBox.Size = new Vector2(268, 114);
             infoBox.Outline.Enabled = true;
-            infoBox.Outline.Color = panelOutlineColor;
-            infoBox.BackgroundColor = new Color(0.04f, 0.04f, 0.04f, 0.95f);
+            infoBox.Outline.Color = DarkFantasyPixelArtTheme.BronzeOuter;
+            infoBox.BackgroundColor = new Color32(10, 9, 12, 240);
             contentPanel.Components.Add(infoBox);
 
-            string modInfo = "<b>• Mods Catcher:</b> ACTIVO (Protocolo 1:1)\n" +
-                             "<b>• Validación de Partida:</b> Automática en Handshake\n" +
-                             "<b>• Replicación Config:</b> modsettings.json (Host)\n" +
-                             "<b>• Modding TTRPG:</b> Climates & Calories compatible\n" +
-                             "<b>• Verificación de Archivos:</b> .dfmod y scripts nativos\n\n" +
-                             "<i>Los clientes deben contar con los mismos mods del host\n" +
-                             "para evitar inconsistencias en el mundo de juego.</i>";
+            ListBox modsListBox = new ListBox();
+            modsListBox.Position = new Vector2(4, 4);
+            modsListBox.Size = new Vector2(260, 106);
+            modsListBox.RowsDisplayed = 11;
+            modsListBox.TextColor = DarkFantasyPixelArtTheme.TextIvory;
+            infoBox.Components.Add(modsListBox);
 
-            modsSummaryLabel = DaggerfallUI.AddTextLabel(new Vector2(4, 4), modInfo, infoBox);
-            modsSummaryLabel.TextColor = new Color(0.85f, 0.85f, 0.85f);
+            string[] localMods = DFUNetworkManager.Instance != null
+                ? DFUNetworkManager.Instance.GetLocalActiveModList()
+                : new string[0];
+
+            modsListBox.AddItem($"--- Local Active Mods ({localMods.Length}) ---");
+            if (localMods.Length == 0)
+            {
+                modsListBox.AddItem("  (Vanilla DFU - No active .dfmod bundles)");
+            }
+            else
+            {
+                foreach (string m in localMods)
+                    modsListBox.AddItem($"  * {m}");
+            }
+
+            if (NetworkSession.IsActive && DFUNetworkManager.Instance != null && DFUNetworkManager.Instance.currentLobbyRoster != null)
+            {
+                string[] hostMods = DFUNetworkManager.Instance.currentLobbyRoster.hostRequiredMods ?? new string[0];
+                modsListBox.AddItem($"--- Host Required Mods ({hostMods.Length}) ---");
+                if (hostMods.Length == 0)
+                {
+                    modsListBox.AddItem("  (Host is running Vanilla DFU)");
+                }
+                else
+                {
+                    foreach (string hm in hostMods)
+                        modsListBox.AddItem($"  [HOST] {hm}");
+                }
+            }
         }
 
         #endregion
@@ -510,8 +1147,8 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
 
         private void AddFormLabel(string text, Vector2 pos)
         {
-            TextLabel label = DaggerfallUI.AddTextLabel(pos, text, contentPanel);
-            label.TextColor = goldTextColor;
+            TextLabel label = DaggerfallUI.AddTextLabel(DaggerfallUI.DefaultFont, pos, text, contentPanel);
+            label.TextColor = DarkFantasyPixelArtTheme.TextGold;
             label.ShadowPosition = Vector2.one;
             label.ShadowColor = Color.black;
         }
@@ -522,17 +1159,19 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
             inputPanel.Position = pos;
             inputPanel.Size = new Vector2(width, 12f);
             inputPanel.Outline.Enabled = true;
-            inputPanel.Outline.Color = new Color(0.5f, 0.45f, 0.35f, 0.8f);
-            inputPanel.BackgroundColor = new Color(0.02f, 0.02f, 0.02f, 0.95f);
+            inputPanel.Outline.Color = DarkFantasyPixelArtTheme.BronzeOuter;
+            inputPanel.BackgroundColor = new Color32(10, 9, 12, 245);
             contentPanel.Components.Add(inputPanel);
 
             TextBox textBox = new TextBox();
-            textBox.Position = new Vector2(2, 1);
-            textBox.Size = new Vector2(width - 4, 10f);
+            textBox.Position = new Vector2(2, 2);
+            textBox.Size = new Vector2(width - 4, 8f);
+            textBox.FixedSize = true;
+            textBox.UseFocus = true;
             textBox.MaxCharacters = maxChars;
             textBox.Text = defaultText;
             textBox.DefaultText = defaultText;
-            textBox.TextColor = Color.white;
+            textBox.DefaultTextColor = DarkFantasyPixelArtTheme.TextMuted;
             inputPanel.Components.Add(textBox);
 
             return textBox;

@@ -664,6 +664,7 @@ namespace DaggerfallWorkshop.Game.Networking
         public bool isGuard;
         public string nameNPC;
         public Vector3 position;
+        public float yaw;
         public bool isIdle;
         public int moveCount;
     }
@@ -739,8 +740,80 @@ namespace DaggerfallWorkshop.Game.Networking
 
     #endregion
 
+    #region Multiplayer Pre-Game Lobby & Mod Verification
+
+    /// <summary>
+    /// Represents a single player's state inside the pre-game Multiplayer Lobby.
+    /// </summary>
+    [Serializable]
+    public class LobbyPlayerDTO
+    {
+        public int connectionId;
+        public string playerName;
+        public bool isHost;
+        public bool isDm;
+        public int selectionMode; // 0 = None, 1 = New Character, 2 = Saved Character
+        public int saveKey;       // Local save folder key
+        public string characterName;
+        public string raceName;
+        public string className;
+        public int level;
+        public bool isReady;
+        public bool modsCompatible;
+        public string modMismatchSummary;
+        public string[] activeMods;
+    }
+
+    /// <summary>
+    /// Serializable container for broadcasting the full lobby roster and host mod list.
+    /// </summary>
+    [Serializable]
+    public class LobbyRosterBundle
+    {
+        public int sessionMode; // 0 = Undecided/Mixed, 1 = New Game, 2 = Load Game
+        public string[] hostRequiredMods;
+        public List<LobbyPlayerDTO> players = new List<LobbyPlayerDTO>();
+    }
+
+    /// <summary>
+    /// Sent from Client to Server whenever the client updates its lobby character selection, role, mod list, or ready state.
+    /// </summary>
+    public struct MsgLobbyClientUpdate : NetworkMessage
+    {
+        public string playerName;
+        public bool isDm;
+        public int selectionMode; // 0 = None, 1 = New Character, 2 = Saved Character
+        public int saveKey;
+        public string characterName;
+        public string raceName;
+        public string className;
+        public int level;
+        public bool isReady;
+        public string activeModsJson; // Pipe-separated or JSON array of enabled .dfmod filenames
+    }
+
+    /// <summary>
+    /// Broadcast from Server to all Clients whenever the lobby state or roster changes.
+    /// </summary>
+    public struct MsgLobbyStateSync : NetworkMessage
+    {
+        public string rosterBundleJson;
+    }
+
+    /// <summary>
+    /// Broadcast from Server (Host/DM) to all Clients when all members are Ready and the session launches into the 3D world.
+    /// </summary>
+    public struct MsgLobbyLaunchSession : NetworkMessage
+    {
+        public int sessionMode; // 1 = Start New Character, 2 = Load Saved Character
+        public int hostSaveKey;
+    }
+
+    #endregion
+
     #endregion
 }
+
 
 
 

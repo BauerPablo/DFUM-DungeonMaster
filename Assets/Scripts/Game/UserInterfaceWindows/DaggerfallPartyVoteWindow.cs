@@ -57,16 +57,17 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
             mainPanel.HorizontalAlignment = HorizontalAlignment.Right;
             mainPanel.VerticalAlignment = VerticalAlignment.Top;
             mainPanel.Position = new Vector2(-6, 12);
-            mainPanel.Size = new Vector2(125, 78);
-            DaggerfallUI.Instance.SetDaggerfallPopupStyle(DaggerfallUI.PopupStyle.Parchment, mainPanel);
+            mainPanel.Size = new Vector2(128, 82);
+            mainPanel.BackgroundTexture = DarkFantasyPixelArtTheme.CreateOrnateWindowTexture(128, 82);
+            mainPanel.BackgroundTextureLayout = BackgroundLayout.StretchToFill;
             NativePanel.Components.Add(mainPanel);
 
             // Title label
             titleLabel.Position = new Vector2(0, 4);
             titleLabel.HorizontalAlignment = HorizontalAlignment.Center;
             titleLabel.Text = "[ Party Vote ]";
-            titleLabel.TextColor = DaggerfallUI.DaggerfallDefaultTextColor;
-            titleLabel.ShadowColor = Color.black;
+            titleLabel.TextColor = DarkFantasyPixelArtTheme.GoldBright;
+            titleLabel.ShadowColor = DarkFantasyPixelArtTheme.ShadowBlack;
             titleLabel.ShadowPosition = Vector2.one;
             mainPanel.Components.Add(titleLabel);
 
@@ -74,8 +75,8 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
             infoLabel.Position = new Vector2(0, 13);
             infoLabel.HorizontalAlignment = HorizontalAlignment.Center;
             infoLabel.Text = "Proposal";
-            infoLabel.TextColor = Color.white;
-            infoLabel.ShadowColor = Color.black;
+            infoLabel.TextColor = DarkFantasyPixelArtTheme.TextIvory;
+            infoLabel.ShadowColor = DarkFantasyPixelArtTheme.ShadowBlack;
             infoLabel.ShadowPosition = Vector2.one;
             mainPanel.Components.Add(infoLabel);
 
@@ -83,39 +84,33 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
             consensusLabel.Position = new Vector2(0, 22);
             consensusLabel.HorizontalAlignment = HorizontalAlignment.Center;
             consensusLabel.Text = "Votes: 0/0  (15s)";
-            consensusLabel.TextColor = DaggerfallUI.DaggerfallDefaultTextColor;
-            consensusLabel.ShadowColor = Color.black;
+            consensusLabel.TextColor = DarkFantasyPixelArtTheme.TextMuted;
+            consensusLabel.ShadowColor = DarkFantasyPixelArtTheme.ShadowBlack;
             consensusLabel.ShadowPosition = Vector2.one;
             mainPanel.Components.Add(consensusLabel);
 
             // Voter checklist panel
             checklistPanel.Position = new Vector2(6, 31);
-            checklistPanel.Size = new Vector2(113, 22);
+            checklistPanel.Size = new Vector2(116, 24);
+            checklistPanel.BackgroundTexture = DarkFantasyPixelArtTheme.CreateRecessedPanelTexture(116, 24);
+            checklistPanel.BackgroundTextureLayout = BackgroundLayout.StretchToFill;
             mainPanel.Components.Add(checklistPanel);
 
-            // Button panel for native Yes / No buttons
-            buttonPanel.Position = new Vector2(0, 55);
+            // Button panel for Yes / No buttons
+            buttonPanel.Position = new Vector2(0, 58);
             buttonPanel.HorizontalAlignment = HorizontalAlignment.Center;
             buttonPanel.VerticalAlignment = VerticalAlignment.None;
             mainPanel.Components.Add(buttonPanel);
 
-            // Native buttons from BUTTONS.RCI
-            Texture2D yesTexture = DaggerfallUI.GetTextureFromCifRci(buttonsFilename, (int)DaggerfallMessageBox.MessageBoxButtons.Yes);
-            if (yesTexture != null)
-                cachedYesSize = TextureReplacement.GetSize(yesTexture, buttonsFilename, (int)DaggerfallMessageBox.MessageBoxButtons.Yes);
+            cachedYesSize = new Vector2(44, 15);
+            cachedNoSize = new Vector2(44, 15);
 
             yesButton = DaggerfallUI.AddButton(Vector2.zero, cachedYesSize, buttonPanel);
-            yesButton.BackgroundTexture = yesTexture;
-            yesButton.BackgroundTextureLayout = BackgroundLayout.StretchToFill;
+            DarkFantasyPixelArtTheme.StyleButton(yesButton, "YES (Y)", DarkFantasyPixelArtTheme.ButtonVariant.EmeraldAction, 0.85f);
             yesButton.OnMouseClick += (sender, pos) => SubmitVote(true);
 
-            Texture2D noTexture = DaggerfallUI.GetTextureFromCifRci(buttonsFilename, (int)DaggerfallMessageBox.MessageBoxButtons.No);
-            if (noTexture != null)
-                cachedNoSize = TextureReplacement.GetSize(noTexture, buttonsFilename, (int)DaggerfallMessageBox.MessageBoxButtons.No);
-
             noButton = DaggerfallUI.AddButton(new Vector2(cachedYesSize.x + 8, 0), cachedNoSize, buttonPanel);
-            noButton.BackgroundTexture = noTexture;
-            noButton.BackgroundTextureLayout = BackgroundLayout.StretchToFill;
+            DarkFantasyPixelArtTheme.StyleButton(noButton, "NO (N)", DarkFantasyPixelArtTheme.ButtonVariant.CrimsonDanger, 0.85f);
             noButton.OnMouseClick += (sender, pos) => SubmitVote(false);
 
             buttonPanel.Size = new Vector2(cachedYesSize.x + 8 + cachedNoSize.x, Mathf.Max(cachedYesSize.y, cachedNoSize.y));
@@ -171,7 +166,7 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
             if (!string.IsNullOrEmpty(voterStatuses))
             {
                 string[] entries = voterStatuses.Split(new char[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
-                float currentY = 0;
+                float currentY = 2f;
                 foreach (string entry in entries)
                 {
                     string[] parts = entry.Split(':');
@@ -182,29 +177,29 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
                     string status = parts[1].Trim();
 
                     TextLabel label = new TextLabel();
-                    label.Position = new Vector2(0, currentY);
-                    label.ShadowColor = Color.black;
+                    label.Position = new Vector2(3, currentY);
+                    label.ShadowColor = DarkFantasyPixelArtTheme.ShadowBlack;
                     label.ShadowPosition = Vector2.one;
 
                     if (status.Equals("Yes", StringComparison.OrdinalIgnoreCase))
                     {
                         label.Text = $"[x] {name}";
-                        label.TextColor = new Color32(100, 220, 100, 255);
+                        label.TextColor = DarkFantasyPixelArtTheme.TextReadyGreen;
                     }
                     else if (status.Equals("No", StringComparison.OrdinalIgnoreCase))
                     {
                         label.Text = $"[!] {name} (No)";
-                        label.TextColor = new Color32(230, 80, 80, 255);
+                        label.TextColor = DarkFantasyPixelArtTheme.TextErrorRed;
                     }
                     else
                     {
                         label.Text = $"[ ] {name} (Wait)";
-                        label.TextColor = Color.white;
+                        label.TextColor = DarkFantasyPixelArtTheme.TextIvory;
                     }
 
                     checklistPanel.Components.Add(label);
                     voterLabels.Add(label);
-                    currentY += 8f;
+                    currentY += 7f;
                 }
             }
 

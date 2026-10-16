@@ -99,18 +99,22 @@ namespace DaggerfallWorkshop.Game
             sliding = false;
             // See if surface immediately below should be slid down. We use this normally rather than a ControllerColliderHit point,
             // because that interferes with step climbing amongst other annoyances
-            if (Physics.Raycast(myTransform.position, -Vector3.up, out hit, rayDistance))
+            if (Physics.Raycast(myTransform.position, -Vector3.up, out hit, rayDistance, Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore))
             {
-                if (Vector3.Angle(hit.normal, Vector3.up) > slideLimit)
+                if (hit.collider != null && hit.collider.GetComponent<DaggerfallWorkshop.Game.Networking.NativePlayerPuppet>() == null &&
+                    Vector3.Angle(hit.normal, Vector3.up) > slideLimit)
                     sliding = true;
             }
             // However, just raycasting straight down from the center can fail when on steep slopes
             // So if the above raycast didn't catch anything, raycast down from the stored ControllerColliderHit point instead
             else
             {
-                Physics.Raycast(contactPoint + Vector3.up, -Vector3.up, out hit);
-                if (Vector3.Angle(hit.normal, Vector3.up) > slideLimit)
-                    sliding = true;
+                if (Physics.Raycast(contactPoint + Vector3.up, -Vector3.up, out hit, rayDistance, Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore))
+                {
+                    if (hit.collider != null && hit.collider.GetComponent<DaggerfallWorkshop.Game.Networking.NativePlayerPuppet>() == null &&
+                        Vector3.Angle(hit.normal, Vector3.up) > slideLimit)
+                        sliding = true;
+                }
             }
         }
 

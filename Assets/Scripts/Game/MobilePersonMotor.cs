@@ -64,13 +64,27 @@ namespace DaggerfallWorkshop.Game
         [Header("Multiplayer Client Proxy")]
         public bool isClientProxy = false;
         private Vector3 netTargetPosition = Vector3.zero;
+        private float netTargetYaw = 0f;
         private bool netIsIdle = false;
 
-        public void SetNetworkTarget(Vector3 targetPos, bool isIdle, int moves)
+        public void SetNetworkTarget(Vector3 targetPos, float yaw, bool isIdle, int moves)
         {
+            // Derive facing from movement vector if moving, or use authoritative server yaw
+            Vector3 planarDelta = new Vector3(targetPos.x - transform.position.x, 0f, targetPos.z - transform.position.z);
+            if (!isIdle && transform.position != Vector3.zero && planarDelta.sqrMagnitude > 0.01f && planarDelta.sqrMagnitude < 225f)
+            {
+                netTargetYaw = Quaternion.LookRotation(planarDelta.normalized, Vector3.up).eulerAngles.y;
+            }
+            else
+            {
+                netTargetYaw = yaw;
+            }
+
             netTargetPosition = targetPos;
             netIsIdle = isIdle;
             moveCount = moves;
+
+            transform.rotation = Quaternion.Euler(0f, netTargetYaw, 0f);
 
             if (transform.position == Vector3.zero || Vector3.Distance(transform.position, targetPos) > 15f)
             {
@@ -192,8 +206,11 @@ namespace DaggerfallWorkshop.Game
 
         private void Start()
         {
-            // Init mobile
-            SetFacing(currentDirection);
+            // Init mobile (only randomize facing if not driven by server network sync)
+            if (!isClientProxy)
+            {
+                SetFacing(currentDirection);
+            }
         }
 
         private void Update()
@@ -202,13 +219,19 @@ namespace DaggerfallWorkshop.Game
             if (GameManager.IsGamePaused)
                 return;
 
-            // In multiplayer client mode, lerp smoothly towards authoritative server position
+            // In multiplayer client mode, lerp smoothly towards authoritative server position and facing
             if (isClientProxy)
             {
                 if (netTargetPosition != Vector3.zero)
                 {
+                    Vector3 planarDelta = new Vector3(netTargetPosition.x - transform.position.x, 0f, netTargetPosition.z - transform.position.z);
+                    if (!netIsIdle && planarDelta.sqrMagnitude > 0.0004f)
+                    {
+                        netTargetYaw = Quaternion.LookRotation(planarDelta.normalized, Vector3.up).eulerAngles.y;
+                    }
                     transform.position = Vector3.Lerp(transform.position, netTargetPosition, Time.deltaTime * 6f);
                 }
+                transform.rotation = Quaternion.Euler(0f, netTargetYaw, 0f);
                 if (mobileAsset != null && mobileAsset.IsIdle != netIsIdle)
                 {
                     mobileAsset.IsIdle = netIsIdle;

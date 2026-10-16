@@ -8,7 +8,7 @@ using UnityEditor;
 using UnityEditor.Build.Reporting;
 using UnityEngine;
 
-namespace DaggerfallWorkshop.Editor
+namespace DaggerfallWorkshop
 {
     /// <summary>
     /// Helper for automating standalone Windows Player production builds with Native Multiplayer.

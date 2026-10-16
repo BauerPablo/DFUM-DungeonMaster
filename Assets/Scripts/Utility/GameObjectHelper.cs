@@ -1566,38 +1566,6 @@ namespace DaggerfallWorkshop.Utility
 
             go.transform.rotation = Quaternion.Euler(0, profile.yaw, 0);
 
-            // Strip/disable autonomous enemy components
-            EnemyMotor motor = go.GetComponent<EnemyMotor>();
-            if (motor != null) motor.enabled = false;
-
-            EnemySenses senses = go.GetComponent<EnemySenses>();
-            if (senses != null) senses.enabled = false;
-
-            EnemyAttack attack = go.GetComponent<EnemyAttack>();
-            if (attack != null) attack.enabled = false;
-
-            CharacterController cc = go.GetComponent<CharacterController>();
-            if (cc != null) cc.enabled = false;
-
-            DaggerfallEnemy enemy = go.GetComponent<DaggerfallEnemy>();
-            if (enemy != null) enemy.enabled = false;
-
-            Rigidbody rb = go.GetComponent<Rigidbody>();
-            if (rb != null)
-            {
-                rb.isKinematic = true;
-                rb.detectCollisions = false;
-            }
-
-            // Ensure remote player puppet has an active capsule collider for AI perception & raycasts
-            CapsuleCollider puppetCol = go.GetComponent<CapsuleCollider>();
-            if (puppetCol == null)
-                puppetCol = go.AddComponent<CapsuleCollider>();
-            puppetCol.center = new Vector3(0, 0.9f, 0);
-            puppetCol.height = 1.8f;
-            puppetCol.radius = 0.45f;
-            puppetCol.isTrigger = false;
-
             // Configure visual billboard for player's class and gender
             MobileTypes classType = ResolvePlayerClassMobileType(profile.careerName);
             MobileGender gender = profile.gender == 0 ? MobileGender.Male : MobileGender.Female;
@@ -1608,9 +1576,71 @@ namespace DaggerfallWorkshop.Utility
                 setupEnemy.ApplyEnemySettings(classType, MobileReactions.Passive, gender, alliedToPlayer: true);
             }
 
-            // Attach and initialize NativePlayerPuppet
+            // Attach and initialize NativePlayerPuppet while billboard references are intact
             NativePlayerPuppet puppet = go.AddComponent<NativePlayerPuppet>();
             puppet.Initialize(profile);
+
+            // Strip autonomous enemy AI components and CharacterController in reverse dependency order
+            if (setupEnemy != null)
+                UnityEngine.Object.DestroyImmediate(setupEnemy);
+
+            EnemyMotor motor = go.GetComponent<EnemyMotor>();
+            if (motor != null)
+                UnityEngine.Object.DestroyImmediate(motor);
+
+            EnemyAttack attack = go.GetComponent<EnemyAttack>();
+            if (attack != null)
+                UnityEngine.Object.DestroyImmediate(attack);
+
+            EnemySenses senses = go.GetComponent<EnemySenses>();
+            if (senses != null)
+                UnityEngine.Object.DestroyImmediate(senses);
+
+            EnemySounds sounds = go.GetComponent<EnemySounds>();
+            if (sounds != null)
+                UnityEngine.Object.DestroyImmediate(sounds);
+
+            EnemyBlood blood = go.GetComponent<EnemyBlood>();
+            if (blood != null)
+                UnityEngine.Object.DestroyImmediate(blood);
+
+            EnemyDeath death = go.GetComponent<EnemyDeath>();
+            if (death != null)
+                UnityEngine.Object.DestroyImmediate(death);
+
+            DaggerfallEnemy enemy = go.GetComponent<DaggerfallEnemy>();
+            if (enemy != null)
+                UnityEngine.Object.DestroyImmediate(enemy);
+
+            CharacterController cc = go.GetComponent<CharacterController>();
+            if (cc != null)
+            {
+                cc.enabled = false;
+                cc.radius = 0f;
+                cc.height = 0f;
+                UnityEngine.Object.DestroyImmediate(cc);
+            }
+
+            Rigidbody rb = go.GetComponent<Rigidbody>();
+            if (rb != null)
+            {
+                rb.isKinematic = true;
+                rb.detectCollisions = false;
+            }
+
+            // Ensure remote player puppet has a trigger capsule collider for interaction & raycasts without physically pushing local player
+            CapsuleCollider puppetCol = go.GetComponent<CapsuleCollider>();
+            if (puppetCol == null)
+                puppetCol = go.AddComponent<CapsuleCollider>();
+            puppetCol.center = new Vector3(0, 0.9f, 0);
+            puppetCol.height = 1.8f;
+            puppetCol.radius = 0.45f;
+            puppetCol.isTrigger = true;
+
+            if (GameManager.Instance != null && GameManager.Instance.PlayerController != null)
+            {
+                Physics.IgnoreCollision(GameManager.Instance.PlayerController, puppetCol, true);
+            }
 
             return go;
         }

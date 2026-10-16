@@ -58,6 +58,11 @@ namespace DaggerfallWorkshop.Game.Networking
             raceName = profile.raceName;
             gender = profile.gender;
 
+            isMoving = false;
+            isCrouching = false;
+            isAttacking = false;
+            lastAttacking = false;
+
             targetPosition = profile.position;
             targetRotation = Quaternion.Euler(0, profile.yaw, 0);
 
@@ -65,12 +70,23 @@ namespace DaggerfallWorkshop.Game.Networking
             transform.rotation = targetRotation;
 
             capsuleCollider = GetComponent<CapsuleCollider>();
+            if (capsuleCollider != null)
+            {
+                capsuleCollider.isTrigger = true;
+                if (GameManager.Instance != null && GameManager.Instance.PlayerController != null)
+                {
+                    Physics.IgnoreCollision(GameManager.Instance.PlayerController, capsuleCollider, true);
+                }
+            }
 
             SetupDemoEnemy setup = GetComponent<SetupDemoEnemy>();
             if (setup != null)
                 mobileUnit = setup.GetMobileBillboardChild();
             if (mobileUnit == null)
                 mobileUnit = GetComponentInChildren<MobileUnit>();
+
+            if (mobileUnit != null)
+                mobileUnit.ChangeEnemyState(MobileStates.Idle);
 
             CreateOverheadNameTag();
             InitializeCrouchBillboard();
@@ -196,8 +212,14 @@ namespace DaggerfallWorkshop.Game.Networking
             }
             if (capsuleCollider != null)
             {
+                capsuleCollider.isTrigger = true;
                 capsuleCollider.height = isCrouching ? 0.9f : 1.8f;
                 capsuleCollider.center = isCrouching ? Vector3.zero : new Vector3(0, 0.9f, 0);
+
+                if (capsuleCollider.enabled && GameManager.Instance != null && GameManager.Instance.PlayerController != null && GameManager.Instance.PlayerController.enabled)
+                {
+                    Physics.IgnoreCollision(GameManager.Instance.PlayerController, capsuleCollider, true);
+                }
             }
 
             if (hasCrouchTextures && crouchBillboardObject != null)

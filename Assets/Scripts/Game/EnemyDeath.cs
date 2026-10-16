@@ -48,7 +48,11 @@ namespace DaggerfallWorkshop.Game
 
         private void Start()
         {
-            mobile = GetComponent<DaggerfallEnemy>().MobileUnit;
+            DaggerfallEnemy dfEnemy = GetComponent<DaggerfallEnemy>();
+            if (dfEnemy != null)
+                mobile = dfEnemy.MobileUnit;
+            else
+                mobile = GetComponentInChildren<MobileUnit>();
         }
 
         private void Update()

@@ -72,6 +72,17 @@ namespace DaggerfallWorkshop.Game.UserInterface
             set { checkTextVertOffset = value; }
         }
 
+        bool isRadioButton = false;
+        public bool IsRadioButton
+        {
+            get { return isRadioButton; }
+            set
+            {
+                isRadioButton = value;
+                ReloadTextures();
+            }
+        }
+
         #endregion
 
         #region Constructors
@@ -147,9 +158,29 @@ namespace DaggerfallWorkshop.Game.UserInterface
 
         void LoadResources()
         {
-            uncheckedTexture = Resources.Load<Texture2D>(uncheckedTextureFilename);
-            checkedTexture = Resources.Load<Texture2D>(checkedTextureFilename);
-            checkTextureSize = new Vector2(uncheckedTexture.width, uncheckedTexture.height);
+            ReloadTextures();
+        }
+
+        void ReloadTextures()
+        {
+            if (isRadioButton)
+            {
+                uncheckedTexture = DarkFantasyPixelArtTheme.RadioButtonUncheckedTex;
+                checkedTexture = DarkFantasyPixelArtTheme.RadioButtonCheckedTex;
+            }
+            else
+            {
+                uncheckedTexture = DarkFantasyPixelArtTheme.CheckboxUncheckedTex;
+                checkedTexture = DarkFantasyPixelArtTheme.CheckboxCheckedTex;
+            }
+
+            if (uncheckedTexture == null)
+                uncheckedTexture = Resources.Load<Texture2D>(uncheckedTextureFilename);
+            if (checkedTexture == null)
+                checkedTexture = Resources.Load<Texture2D>(checkedTextureFilename);
+
+            if (uncheckedTexture != null)
+                checkTextureSize = new Vector2(uncheckedTexture.width, uncheckedTexture.height);
         }
 
         #endregion

@@ -59,21 +59,29 @@ namespace DaggerfallWorkshop.Game
             // Moving platform support
             if (activePlatform != null)
             {
-                Vector3 newGlobalPlatformPoint = activePlatform.TransformPoint(activeLocalPlatformPoint);
-                Vector3 adhesionDirection = (newGlobalPlatformPoint - activeGlobalPlatformPoint);
-                // Platform movement of player is performed here
-                if (adhesionDirection != Vector3.zero)
-                    controller.Move(adhesionDirection);
-                //lastPlatformVelocity = (newGlobalPlatformPoint - activeGlobalPlatformPoint) / Time.deltaTime;
+                if (activePlatform.GetComponent<DaggerfallWorkshop.Game.Networking.NativePlayerPuppet>() != null ||
+                    activePlatform.GetComponent<DaggerfallEnemy>() != null)
+                {
+                    activePlatform = null;
+                }
+                else
+                {
+                    Vector3 newGlobalPlatformPoint = activePlatform.TransformPoint(activeLocalPlatformPoint);
+                    Vector3 adhesionDirection = (newGlobalPlatformPoint - activeGlobalPlatformPoint);
+                    // Platform movement of player is performed here
+                    if (adhesionDirection != Vector3.zero)
+                        controller.Move(adhesionDirection);
+                    //lastPlatformVelocity = (newGlobalPlatformPoint - activeGlobalPlatformPoint) / Time.deltaTime;
 
-                // If you want to support moving platform rotation as well:
-                var newGlobalPlatformRotation = activePlatform.rotation * activeLocalPlatformRotation;
-                var rotationDiff = newGlobalPlatformRotation * Quaternion.Inverse(activeGlobalPlatformRotation);
+                    // If you want to support moving platform rotation as well:
+                    var newGlobalPlatformRotation = activePlatform.rotation * activeLocalPlatformRotation;
+                    var rotationDiff = newGlobalPlatformRotation * Quaternion.Inverse(activeGlobalPlatformRotation);
 
-                // Prevent rotation of the local up vector
-                rotationDiff = Quaternion.FromToRotation(rotationDiff * transform.up, transform.up) * rotationDiff;
+                    // Prevent rotation of the local up vector
+                    rotationDiff = Quaternion.FromToRotation(rotationDiff * transform.up, transform.up) * rotationDiff;
 
-                transform.rotation = rotationDiff * transform.rotation;
+                    transform.rotation = rotationDiff * transform.rotation;
+                }
             }
             //else
             //{
