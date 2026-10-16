@@ -41,7 +41,9 @@ namespace DaggerfallWorkshop.Game.Networking
         public float mouseWheelSpeedSensitivity = 15f;
 
         private float cameraPitch = 0f;
-        private float cameraYaw = 0f;
+        public float CameraPitch => cameraPitch;
+        public float CameraYaw => cameraYaw;
+        public Vector3 CameraPosition => cameraTransform != null ? cameraTransform.position : Vector3.zero;
 
         private void Awake()
         {
@@ -62,11 +64,14 @@ namespace DaggerfallWorkshop.Game.Networking
 
         private void Update()
         {
-            // Ctrl + F8 hotkey toggle (F8 alone is reserved by DFU for HUD / debug)
-            if ((Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl)) && Input.GetKeyDown(KeyCode.F8))
+            // Ctrl + F8 hotkey toggle (handled by DFUNetworkManager if present to coordinate DM dual-entity mode)
+            if (DFUNetworkManager.Instance == null)
             {
-                ToggleFreeCam();
-                return;
+                if ((Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl)) && Input.GetKeyDown(KeyCode.F8))
+                {
+                    ToggleFreeCam();
+                    return;
+                }
             }
 
             if (!isActive || cameraTransform == null)
@@ -295,7 +300,8 @@ namespace DaggerfallWorkshop.Game.Networking
                     careerName = GameManager.Instance.PlayerEntity != null && GameManager.Instance.PlayerEntity.Career != null ? GameManager.Instance.PlayerEntity.Career.Name : "Warrior",
                     raceName = GameManager.Instance.PlayerEntity != null ? GameManager.Instance.PlayerEntity.Race.ToString() : "Breton",
                     position = player != null ? player.transform.position : Vector3.zero,
-                    yaw = player != null ? player.transform.eulerAngles.y : 0f
+                    yaw = player != null ? player.transform.eulerAngles.y : 0f,
+                    isDm = (DFUNetworkManager.Instance != null && (DFUNetworkManager.Instance.IsServer || DFUNetworkManager.Instance.localLobbyIsDm))
                 };
             }
 

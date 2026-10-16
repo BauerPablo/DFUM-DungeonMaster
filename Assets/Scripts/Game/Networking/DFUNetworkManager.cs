@@ -196,6 +196,9 @@ namespace DaggerfallWorkshop.Game.Networking
         private float currentVoteTimer = 0f;
         private const float DefaultVoteTimeout = 60f;
         public bool isDmInvisible = false;
+        public DMEntityMode currentDmEntityMode = DMEntityMode.PhysicalAvatar;
+        public DMEntityMode CurrentDmEntityMode => currentDmEntityMode;
+        public bool IsSpectatorSpirit => currentDmEntityMode == DMEntityMode.SpectatorSpirit;
         private readonly HashSet<ulong> expandedQuestDetails = new HashSet<ulong>();
         private readonly HashSet<int> currentVoteApprovedClients = new HashSet<int>();
         private DaggerfallPartyVoteWindow partyVoteWindow = null;
@@ -337,8 +340,14 @@ namespace DaggerfallWorkshop.Game.Networking
 
             if (ctrlHeld && Input.GetKeyDown(KeyCode.F8))
             {
-                if (FreeCamController.Instance != null)
+                if (NetworkSession.IsServer || localLobbyIsDm)
+                {
+                    ToggleDmEntityMode();
+                }
+                else if (FreeCamController.Instance != null)
+                {
                     FreeCamController.Instance.ToggleFreeCam();
+                }
             }
 
             if (showTtrpgSuite || showDebugGui || showDmGui || showLootGui || showQuestGui || showPlayerInteractionWindow || showTradeWindow || showTradeInvitePrompt)
@@ -549,6 +558,11 @@ namespace DaggerfallWorkshop.Game.Networking
             else if (NetworkServer.active)
             {
                 StopServer();
+            }
+
+            if (currentDmEntityMode == DMEntityMode.SpectatorSpirit)
+            {
+                SetDmEntityMode(DMEntityMode.PhysicalAvatar);
             }
 
             connectedClients.Clear();
@@ -1334,6 +1348,7 @@ namespace DaggerfallWorkshop.Game.Networking
             bool isInside = pee != null && pee.IsPlayerInside;
             bool isInsideDungeon = pee != null && pee.IsPlayerInsideDungeon;
             int bKey = (pee != null && pee.BuildingDiscoveryData.buildingKey != 0) ? pee.BuildingDiscoveryData.buildingKey : 0;
+            bool isDm = (connId == 0 && (NetworkSession.IsServer || localLobbyIsDm)) || (localConnectionId == connId && localLobbyIsDm);
 
             return new MsgPlayerProfile
             {
@@ -1346,7 +1361,8 @@ namespace DaggerfallWorkshop.Game.Networking
                 yaw = yaw,
                 isInside = isInside,
                 isInsideDungeon = isInsideDungeon,
-                buildingKey = bKey
+                buildingKey = bKey,
+                isDm = isDm
             };
         }
 
@@ -1667,7 +1683,8 @@ namespace DaggerfallWorkshop.Game.Networking
                         yaw = msg.yaw,
                         isInside = msg.isInside,
                         isInsideDungeon = msg.isInsideDungeon,
-                        buildingKey = msg.buildingKey
+                        buildingKey = msg.buildingKey,
+                        isDm = (msg.connectionId == 0)
                     };
                     connectedPlayerProfiles[msg.connectionId] = profile;
                 }
@@ -2955,6 +2972,19 @@ namespace DaggerfallWorkshop.Game.Networking
             LogTransitionsEnabled = GUILayout.Toggle(LogTransitionsEnabled, " Transitions");
         }
 
+        public void PacifySceneEnemies()
+        {
+            EnemyMotor[] enemyMotors = UnityEngine.Object.FindObjectsOfType<EnemyMotor>();
+            if (enemyMotors != null)
+            {
+                foreach (var motor in enemyMotors)
+                {
+                    if (motor != null)
+                        motor.ClearTarget();
+                }
+            }
+        }
+
         public void ToggleDmInvisibility()
         {
             isDmInvisible = !isDmInvisible;
@@ -2971,15 +3001,7 @@ namespace DaggerfallWorkshop.Game.Networking
             // Pacify any currently targeting enemies if becoming invisible
             if (isDmInvisible)
             {
-                EnemyMotor[] enemyMotors = UnityEngine.Object.FindObjectsOfType<EnemyMotor>();
-                if (enemyMotors != null)
-                {
-                    foreach (var motor in enemyMotors)
-                    {
-                        if (motor != null)
-                            motor.ClearTarget();
-                    }
-                }
+                PacifySceneEnemies();
             }
 
             if (FreeCamController.Instance != null)
@@ -2993,6 +3015,130 @@ namespace DaggerfallWorkshop.Game.Networking
 
             DaggerfallUI.AddHUDText(isDmInvisible ? "[DM] Invisibility: ON (True Invisible)" : "[DM] Invisibility: OFF");
             LogNetwork($"[DFU DM] Invisibility toggled: {isDmInvisible}");
+        }
+
+        /// <summary>
+        /// Toggles between Spectator Spirit Mode (Zeus 6-DOF noclip flight, intangible, invisible)
+        /// and Physical Admin Avatar Mode (visible in 3D world, physical collider, golden DM nametag).
+        /// </summary>
+        public void ToggleDmEntityMode()
+        {
+            if (currentDmEntityMode == DMEntityMode.PhysicalAvatar)
+                SetDmEntityMode(DMEntityMode.SpectatorSpirit);
+            else
+                SetDmEntityMode(DMEntityMode.PhysicalAvatar);
+        }
+
+        /// <summary>
+        /// Sets the operational DM entity mode cleanly, configuring colliders, motor, invisibility, and network sync.
+        /// </summary>
+        public void SetDmEntityMode(DMEntityMode newMode)
+        {
+            currentDmEntityMode = newMode;
+
+            if (newMode == DMEntityMode.SpectatorSpirit)
+            {
+                isDmInvisible = true;
+                if (GameManager.Instance != null && GameManager.Instance.PlayerEntity != null)
+                {
+                    GameManager.Instance.PlayerEntity.NoTargetMode = true;
+                    GameManager.Instance.PlayerEntity.MagicalConcealmentFlags |= MagicalConcealmentFlags.InvisibleTrue;
+                    GameManager.Instance.PlayerEntity.GodMode = true;
+                }
+
+                PacifySceneEnemies();
+
+                if (FreeCamController.Instance != null && !FreeCamController.Instance.IsActive)
+                {
+                    FreeCamController.Instance.Activate();
+                }
+
+                if (FreeCamController.Instance != null)
+                {
+                    FreeCamController.Instance.UpdatePuppetVisibility();
+                }
+
+                lastLocalPlayerPos = Vector3.zero;
+                StreamLocalPlayerTransform();
+
+                DaggerfallUI.AddHUDText("[DM DUAL MODE] Spectator Spirit (Zeus) ACTIVE - Invisible, Noclip Flight, No Aggro");
+                LogNetwork("[DFU DM] Switched to Spectator Spirit Mode (Zeus)");
+            }
+            else
+            {
+                isDmInvisible = false;
+
+                if (FreeCamController.Instance != null && FreeCamController.Instance.IsActive)
+                {
+                    Vector3 camPos = FreeCamController.Instance.CameraPosition;
+                    float camYaw = FreeCamController.Instance.CameraYaw;
+
+                    RelocateLocalPlayerToCamera(camPos, camYaw);
+
+                    FreeCamController.Instance.Deactivate();
+                }
+
+                if (GameManager.Instance != null && GameManager.Instance.PlayerEntity != null)
+                {
+                    GameManager.Instance.PlayerEntity.NoTargetMode = false;
+                    GameManager.Instance.PlayerEntity.MagicalConcealmentFlags &= ~MagicalConcealmentFlags.InvisibleTrue;
+
+                    if (GameManager.Instance.PlayerController != null)
+                    {
+                        GameManager.Instance.PlayerController.enabled = true;
+                        GameManager.Instance.PlayerController.detectCollisions = true;
+                    }
+
+                    if (GameManager.Instance.PlayerMotor != null)
+                    {
+                        GameManager.Instance.PlayerMotor.FreezeMotor = 0f;
+                        GameManager.Instance.PlayerMotor.CancelMovement = true;
+                    }
+                }
+
+                if (FreeCamController.Instance != null)
+                {
+                    FreeCamController.Instance.UpdatePuppetVisibility();
+                }
+
+                lastLocalPlayerPos = Vector3.zero;
+                StreamLocalPlayerTransform();
+
+                DaggerfallUI.AddHUDText("[DM DUAL MODE] Physical Admin Avatar ACTIVE - Visible, Physical Collider Restored");
+                LogNetwork("[DFU DM] Switched to Physical Admin Avatar Mode");
+            }
+        }
+
+        public void RelocateLocalPlayerToCamera(Vector3 camPos, float camYaw)
+        {
+            GameObject player = GameManager.Instance.PlayerObject;
+            if (player == null)
+                return;
+
+            CharacterController cc = GameManager.Instance.PlayerController;
+            if (cc != null)
+                cc.enabled = false;
+
+            // Raycast downward to locate safe ground surface
+            Vector3 targetPos = camPos;
+            if (Physics.Raycast(camPos + Vector3.up * 0.5f, Vector3.down, out RaycastHit hit, 50f))
+            {
+                targetPos = hit.point + Vector3.up * 0.05f;
+            }
+
+            player.transform.position = targetPos;
+            player.transform.rotation = Quaternion.Euler(0, camYaw, 0);
+
+            if (GameManager.Instance.PlayerMouseLook != null)
+            {
+                GameManager.Instance.PlayerMouseLook.SetFacing(camYaw, 0f);
+            }
+
+            if (cc != null)
+            {
+                cc.enabled = true;
+                GameObjectHelper.AlignControllerToGround(cc);
+            }
         }
 
         public void ToggleDmGodMode()
@@ -3376,7 +3522,19 @@ namespace DaggerfallWorkshop.Game.Networking
             }
 
             GUILayout.Space(8);
-            GUILayout.Label("✦ MODO DIOS & CÁMARA LIBRE ✦", DarkFantasyPixelArtTheme.SectionBannerStyle, GUILayout.ExpandWidth(true));
+            GUILayout.Label("✦ ENTIDAD DUAL DM & MODO DIOS ✦", DarkFantasyPixelArtTheme.SectionBannerStyle, GUILayout.ExpandWidth(true));
+            GUILayout.Space(4);
+
+            bool isSpectator = IsSpectatorSpirit;
+            string dualModeLabel = isSpectator
+                ? "✦ Modo Actual: [ESPÍRITU ESPECTADOR (ZEUS)] (Ctrl+F8)"
+                : "✦ Modo Actual: [AVATAR FÍSICO ADMIN] (Ctrl+F8)";
+
+            if (GUILayout.Button(dualModeLabel, isSpectator ? DarkFantasyPixelArtTheme.EmeraldButtonStyle : DarkFantasyPixelArtTheme.GoldButtonStyle, GUILayout.Height(28)))
+            {
+                ToggleDmEntityMode();
+            }
+
             GUILayout.Space(4);
             bool godOn = GameManager.Instance != null && GameManager.Instance.PlayerEntity != null && GameManager.Instance.PlayerEntity.GodMode;
             string godLabel = godOn ? "✦ God Mode (Invincible): [ON]" : "God Mode (Invincible): [OFF]";
@@ -3384,20 +3542,24 @@ namespace DaggerfallWorkshop.Game.Networking
             {
                 ToggleDmGodMode();
             }
-
-            bool freeCamOn = FreeCamController.Instance != null && FreeCamController.Instance.IsActive;
-            string freeCamLabel = freeCamOn ? "✦ Eagle Eye / FreeCam (Ctrl+F8): [ACTIVE]" : "Eagle Eye / FreeCam (Ctrl+F8): [INACTIVE]";
-            if (GUILayout.Button(freeCamLabel, freeCamOn ? DarkFantasyPixelArtTheme.EmeraldButtonStyle : GUI.skin.button, GUILayout.Height(26)))
-            {
-                if (FreeCamController.Instance != null)
-                    FreeCamController.Instance.ToggleFreeCam();
-            }
         }
 
         private void DrawPartyDmTabContent()
         {
             GUILayout.Space(4);
-            GUILayout.Label("✦ HERRAMIENTAS DM & SIGILO ✦", DarkFantasyPixelArtTheme.SectionBannerStyle, GUILayout.ExpandWidth(true));
+            GUILayout.Label("✦ ENTIDAD DUAL DM & SIGILO ✦", DarkFantasyPixelArtTheme.SectionBannerStyle, GUILayout.ExpandWidth(true));
+            GUILayout.Space(4);
+
+            bool isSpectator = IsSpectatorSpirit;
+            string dualModeLabel = isSpectator
+                ? "✦ Modo Actual: [ESPÍRITU ESPECTADOR (ZEUS)] (Ctrl+F8)"
+                : "✦ Modo Actual: [AVATAR FÍSICO ADMIN] (Ctrl+F8)";
+
+            if (GUILayout.Button(dualModeLabel, isSpectator ? DarkFantasyPixelArtTheme.EmeraldButtonStyle : DarkFantasyPixelArtTheme.GoldButtonStyle, GUILayout.Height(28)))
+            {
+                ToggleDmEntityMode();
+            }
+
             GUILayout.Space(4);
             string invisLabel = isDmInvisible ? "✦ DM Invisibility: [ON]" : "DM Invisibility: [OFF]";
             if (GUILayout.Button(invisLabel, isDmInvisible ? DarkFantasyPixelArtTheme.EmeraldButtonStyle : GUI.skin.button, GUILayout.Height(26)))

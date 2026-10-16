@@ -24,6 +24,7 @@ namespace DaggerfallWorkshop.Game.Networking
         public string careerName;
         public string raceName;
         public int gender;
+        public bool isDm;
 
         [Header("Motion Interpolation")]
         public float lerpRate = 12.0f;
@@ -57,6 +58,7 @@ namespace DaggerfallWorkshop.Game.Networking
             careerName = profile.careerName;
             raceName = profile.raceName;
             gender = profile.gender;
+            isDm = profile.isDm || (profile.careerName != null && profile.careerName.Contains("Dungeon Master")) || (profile.playerName != null && profile.playerName.Contains("[DM]"));
 
             isMoving = false;
             isCrouching = false;
@@ -179,12 +181,20 @@ namespace DaggerfallWorkshop.Game.Networking
             nameTagObject.transform.localPosition = new Vector3(0, 2.15f, 0);
 
             nameTextMesh = nameTagObject.AddComponent<TextMesh>();
-            nameTextMesh.text = playerName;
+            if (isDm)
+            {
+                nameTextMesh.text = $"[DUNGEON MASTER]\n{playerName}";
+                nameTextMesh.color = new Color(1.0f, 0.84f, 0.0f); // Radiant Gold
+            }
+            else
+            {
+                nameTextMesh.text = playerName;
+                nameTextMesh.color = new Color(0.2f, 0.9f, 1.0f); // Bright cyan
+            }
             nameTextMesh.alignment = TextAlignment.Center;
             nameTextMesh.anchor = TextAnchor.MiddleCenter;
             nameTextMesh.characterSize = 0.12f;
             nameTextMesh.fontSize = 24;
-            nameTextMesh.color = new Color(0.2f, 0.9f, 1.0f); // Bright cyan
         }
 
         private void Update()

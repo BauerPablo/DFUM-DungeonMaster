@@ -65,6 +65,7 @@ namespace DaggerfallWorkshop.Game.Networking
         public bool isInside;
         public bool isInsideDungeon;
         public int buildingKey;
+        public bool isDm;
     }
 
     /// <summary>
@@ -235,6 +236,17 @@ namespace DaggerfallWorkshop.Game.Networking
     {
         public byte weatherType;
         public bool isImmediate;
+    }
+
+    /// <summary>
+    /// Dual entity operational state for Dungeon Masters.
+    /// PhysicalAvatar: Visible physical presence, active collider, golden overhead billboard nametag.
+    /// SpectatorSpirit: Intangible Zeus 6-DOF flight, true invisibility, no mob aggro, infinite vitals/godmode.
+    /// </summary>
+    public enum DMEntityMode : byte
+    {
+        PhysicalAvatar = 0,
+        SpectatorSpirit = 1
     }
 
     /// <summary>
