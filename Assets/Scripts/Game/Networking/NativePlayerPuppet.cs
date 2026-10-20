@@ -43,6 +43,7 @@ namespace DaggerfallWorkshop.Game.Networking
         private MobileUnit mobileUnit;
         private GameObject nameTagObject;
         private TextMesh nameTextMesh;
+        private Color nameTagBaseColor = new Color(0.2f, 0.9f, 1.0f);
 
         private GameObject crouchBillboardObject;
         private MeshRenderer crouchRenderer;
@@ -184,13 +185,14 @@ namespace DaggerfallWorkshop.Game.Networking
             if (isDm)
             {
                 nameTextMesh.text = $"[DUNGEON MASTER]\n{playerName}";
-                nameTextMesh.color = new Color(1.0f, 0.84f, 0.0f); // Radiant Gold
+                nameTagBaseColor = new Color(1.0f, 0.84f, 0.0f, 1.0f); // Radiant Gold
             }
             else
             {
                 nameTextMesh.text = playerName;
-                nameTextMesh.color = new Color(0.2f, 0.9f, 1.0f); // Bright cyan
+                nameTagBaseColor = new Color(0.2f, 0.9f, 1.0f, 1.0f); // Bright cyan
             }
+            nameTextMesh.color = nameTagBaseColor;
             nameTextMesh.alignment = TextAlignment.Center;
             nameTextMesh.anchor = TextAnchor.MiddleCenter;
             nameTextMesh.characterSize = 0.12f;
@@ -205,13 +207,51 @@ namespace DaggerfallWorkshop.Game.Networking
             transform.position = Vector3.Lerp(transform.position, targetPosition, Time.deltaTime * effectiveLerpRate);
             transform.rotation = Quaternion.Slerp(transform.rotation, targetRotation, Time.deltaTime * effectiveLerpRate);
 
-            // Orient 3D name tag towards active camera
+            // Orient 3D name tag towards active camera and apply distance fadeout
             if (nameTagObject != null)
             {
                 Camera mainCam = GameManager.Instance.MainCamera;
                 if (mainCam != null)
                 {
                     nameTagObject.transform.rotation = mainCam.transform.rotation;
+
+                    // DM nametag is sacred and never fades out (always visible across entire scene)
+                    if (isDm)
+                    {
+                        if (!nameTagObject.activeSelf)
+                            nameTagObject.SetActive(true);
+
+                        if (nameTextMesh != null && nameTextMesh.color != nameTagBaseColor)
+                            nameTextMesh.color = nameTagBaseColor;
+                    }
+                    else
+                    {
+                        float dist = Vector3.Distance(transform.position, mainCam.transform.position);
+                        float maxDist = (DFUNetworkManager.Instance != null) ? DFUNetworkManager.Instance.nametagMaxDistance : 35f;
+                        float startDist = Mathf.Max(2f, maxDist * 0.35f);
+
+                        if (dist >= maxDist)
+                        {
+                            if (nameTagObject.activeSelf)
+                                nameTagObject.SetActive(false);
+                        }
+                        else
+                        {
+                            if (!nameTagObject.activeSelf)
+                                nameTagObject.SetActive(true);
+
+                            float alpha = 1.0f;
+                            if (dist > startDist)
+                            {
+                                alpha = Mathf.Clamp01(1.0f - ((dist - startDist) / (maxDist - startDist)));
+                            }
+
+                            if (nameTextMesh != null)
+                            {
+                                nameTextMesh.color = new Color(nameTagBaseColor.r, nameTagBaseColor.g, nameTagBaseColor.b, alpha);
+                            }
+                        }
+                    }
                 }
             }
 

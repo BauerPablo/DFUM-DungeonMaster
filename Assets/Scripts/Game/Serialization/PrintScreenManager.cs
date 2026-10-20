@@ -64,7 +64,9 @@ namespace DaggerfallWorkshop.Game.Serialization
         {
             if (DaggerfallUI.Instance.HotkeySequenceProcessed == HotkeySequence.HotkeySequenceProcessStatus.NotFound)
             {
-                if (InputManager.Instance.GetKeyUp(prtscrBinding))
+                bool ctrlHeld = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
+                bool altHeld = Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt);
+                if (!ctrlHeld && !altHeld && InputManager.Instance.GetKeyUp(prtscrBinding))
                     StartCoroutine(TakeScreenshot());
             }
         }

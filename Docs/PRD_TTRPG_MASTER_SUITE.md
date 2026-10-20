@@ -1,4 +1,4 @@
-# PRD: DFUM TTRPG & Dungeon Master Master Suite (Phases 13 - 17)
+# PRD: DFUM TTRPG & Dungeon Master Master Suite (Phases 13 - 18)
 
 ## 1. Executive Summary & Vision
 
@@ -15,7 +15,7 @@ A dedicated **Dungeon Master (DM)** can orchestrate adventures in real time: cre
 | **I. DM Orchestration & Possession** | Dual-mode DM (Spectator Spirit vs Physical Admin Avatar), full NPC body possession, world events, and complete creature/civilian spawner. |
 | **II. RPG Communication & Languages** | Multi-channel chat, DM secret notes, whispers, and automatic ciphering/decryption based on DFU Language skills (*Orcish*, *Daedric*, *Dragonish*, etc.). |
 | **III. Mods Catcher & Governance** | Strict 1:1 mod manifest verification, interactive conflict diagnostic modal, and authoritative replication of `modsettings.json` (Climates & Calories). |
-| **IV. Tactical God Tools** | Freecam flight, top-down cenital tactical camera with zoom, click-to-teleport, and customizable nametags/health bars. |
+| **IV. Tactical God Tools** | Freecam flight, top-down cenital tactical camera with zoom, RTS-style ghost puppet placement with collision validation, click-to-teleport, and customizable nametags/health bars. |
 | **V. Cohesive Retro UX** | Unified tabbed pixel-art interface matching classic Daggerfall aesthetics and a native Multiplayer Main Menu for launching/joining sessions. |
 
 ---
@@ -27,8 +27,9 @@ flowchart TD
     P12["Phase 12: Core Standalone (Done)"] --> P13["Phase 13: Retro Tabbed UI & Main Menu Hub"]
     P13 --> P14["Phase 14: DM Dual Entity, God Flight & Tactical View"]
     P14 --> P15["Phase 15: NPC Possession, Spawners & World Events"]
-    P15 --> P16["Phase 16: Multi-Channel Chat & RPG Language Decryption"]
-    P16 --> P17["Phase 17: Mods Catcher & Configuration Sync"]
+    P15 --> P16["Phase 16: Tactical RTS Spawner & Ghost Placement Preview"]
+    P16 --> P17["Phase 17: Multi-Channel Chat & RPG Language Decryption"]
+    P17 --> P18["Phase 18: Mods Catcher & Configuration Sync"]
 ```
 
 ---
@@ -106,7 +107,32 @@ flowchart TD
 
 ---
 
-### Phase 16: Multi-Channel Chat, Whispers & RPG Language Decryption
+### Phase 16: Tactical RTS Spawner & Ghost Placement Preview
+
+**Goal:** Provide the DM with precise, intuitive RTS-style placement of NPCs, monsters, and objects anywhere in the world using FreeCam / mouse raycasting, real-time collision validation, and local ghost puppet preview.
+
+#### Requirements:
+1. **Raycast Surface Targeting:**
+   - Mouse-driven raycast intersecting geometry (ground terrain, dungeon floors, rooftops, stairs, building surfaces).
+   - Dynamic normal alignment: Entity aligns upright to gravity with height offset to prevent clipping into surfaces.
+   - Placement range unbounded or generous max distance (e.g., 150m) while operating in FreeCam / God Flight.
+2. **Local Ghost Puppet Preview:**
+   - Instantiates a purely local preview GameObject (ghost puppet) matching the selected catalog entity's billboard/mesh dimensions and collider.
+   - Zero network replication while previewing: Other players receive zero network packets until placement is confirmed.
+   - Follows mouse cursor in real-time along valid hit surfaces.
+   - Mouse scroll wheel rotates entity facing direction prior to placement; `Right Click` or `Esc` cancels placement mode.
+3. **Visual Validation Shader / Material Tint (Green / Red):**
+   - Real-time overlap collision test (`Physics.OverlapCapsule` or bounds check against character layers / obstacles).
+   - **Green Tint (Valid):** Clear surface with no overlapping entities/colliders and valid walkable/standable slope.
+   - **Red Tint (Invalid):** Overlaps an existing player, NPC, monster collider, or hits an invalid obstruction (e.g. out-of-bounds void, steep vertical wall).
+4. **Authoritative Confirmation & Spawn Dispatch:**
+   - `Left Click` on valid (green) location confirms placement.
+   - Host sends authoritative `MsgSpawnEnemy` or `MsgSpawnLoot` packet with the exact targeted position and orientation.
+   - Cleans up local ghost puppet upon spawn or cancel.
+
+---
+
+### Phase 17: Multi-Channel Chat, Whispers & RPG Language Decryption
 
 **Goal:** Implement an immersive in-character and out-of-character chat system that ties directly into Daggerfall's native linguistic skills.
 
@@ -130,7 +156,7 @@ flowchart TD
 
 ---
 
-### Phase 17: Mods Catcher & Configuration Replication
+### Phase 18: Mods Catcher & Configuration Replication
 
 **Goal:** Ensure 100% mod parity across clients and authoritatively replicate gameplay rules (such as Climates & Calories) from Host to Clients.
 
@@ -159,3 +185,4 @@ flowchart TD
 1. **Native Integration:** All UI and TTRPG logic lives inside `Assets/Scripts/Game/Networking/` or `Assets/Scripts/Game/UserInterfaceWindows/`.
 2. **Deterministic Language Checks:** Language translation checks occur on the recipient client (or server-evaluated) using DFU's authoritative character sheet stats.
 3. **Clean Session Teardown:** Possession and God flight must cleanly restore motor controllers, colliders, and player layers on exit or disconnect to prevent soft-locks.
+4. **Ghost Puppet Isolation:** Ghost placement previews are strictly client-side local objects and must never instantiate network behaviors, register in `DFUNetworkRegistry`, or allocate network IDs until confirmed.

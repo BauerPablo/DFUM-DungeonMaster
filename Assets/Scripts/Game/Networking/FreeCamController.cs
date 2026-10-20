@@ -41,9 +41,16 @@ namespace DaggerfallWorkshop.Game.Networking
         public float mouseWheelSpeedSensitivity = 15f;
 
         private float cameraPitch = 0f;
+        private float cameraYaw = 0f;
         public float CameraPitch => cameraPitch;
         public float CameraYaw => cameraYaw;
         public Vector3 CameraPosition => cameraTransform != null ? cameraTransform.position : Vector3.zero;
+
+        [Header("Tactical Top-Down View")]
+        private bool isTopDownView = false;
+        public bool IsTopDownView => isTopDownView;
+        private float savedFreeCamPitch = 0f;
+        public float tacticalZoomSpeed = 10f;
 
         private void Awake()
         {
@@ -77,6 +84,20 @@ namespace DaggerfallWorkshop.Game.Networking
             if (!isActive || cameraTransform == null)
                 return;
 
+            // Hotkey 'B' toggles Tactical Cenital / Bird's Eye View while in flight/FreeCam (conflict-free key)
+            if (Input.GetKeyDown(KeyCode.B))
+            {
+                ToggleTopDownView();
+                return;
+            }
+
+            // Click-to-Teleport: Shift + Left Click on any ground/floor surface
+            if ((Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift)) && Input.GetMouseButtonDown(0))
+            {
+                PerformClickToTeleport();
+                return;
+            }
+
             // Do not capture controls if a modal UI window is open (DaggerfallHUD is normal gameplay window)
             bool isModalWindowOpen = DaggerfallUI.UIManager != null &&
                                      DaggerfallUI.UIManager.TopWindow != null &&
@@ -95,28 +116,57 @@ namespace DaggerfallWorkshop.Game.Networking
                 return;
             }
 
-            // Click into game window to recapture cursor if lost
-            if (Input.GetMouseButtonDown(0) || Input.GetMouseButtonDown(1))
+            // Click into game window to recapture cursor if lost (only in 6-DOF FreeCam, not in Top-Down view)
+            if (!isTopDownView && !Input.GetKey(KeyCode.LeftShift) && !Input.GetKey(KeyCode.RightShift))
             {
-                if (Cursor.lockState != CursorLockMode.Locked)
+                if (Input.GetMouseButtonDown(0) || Input.GetMouseButtonDown(1))
                 {
-                    Cursor.lockState = CursorLockMode.Locked;
-                    Cursor.visible = false;
+                    if (Cursor.lockState != CursorLockMode.Locked)
+                    {
+                        Cursor.lockState = CursorLockMode.Locked;
+                        Cursor.visible = false;
+                    }
                 }
             }
 
-            // Speed adjustment via mouse wheel (using direct mouseScrollDelta with Input.GetAxis fallback)
+            // Speed or Altitude zoom via mouse wheel
             float scroll = Input.mouseScrollDelta.y;
             if (Mathf.Abs(scroll) < 0.001f)
                 scroll = Input.GetAxis("Mouse ScrollWheel");
             if (Mathf.Abs(scroll) > 0.001f)
             {
-                flySpeed = Mathf.Clamp(flySpeed + Mathf.Sign(scroll) * 5f, 2f, 150f);
-                DaggerfallUI.AddHUDText($"[FreeCam] Speed: {flySpeed:F0} m/s");
+                if (isTopDownView)
+                {
+                    // Zoom altitude in and out smoothly
+                    float zoomDelta = -Mathf.Sign(scroll) * tacticalZoomSpeed;
+                    Vector3 newPos = cameraTransform.position + Vector3.up * zoomDelta;
+                    if (newPos.y < 3f) newPos.y = 3f;
+                    cameraTransform.position = newPos;
+                    DaggerfallUI.AddHUDText($"[Tactical View] Altitude: {cameraTransform.position.y:F0}m");
+                }
+                else
+                {
+                    flySpeed = Mathf.Clamp(flySpeed + Mathf.Sign(scroll) * 5f, 2f, 150f);
+                    DaggerfallUI.AddHUDText($"[FreeCam] Speed: {flySpeed:F0} m/s");
+                }
             }
 
-            // Mouse look when cursor is locked
-            if (Cursor.lockState == CursorLockMode.Locked)
+            // Camera orientation
+            if (isTopDownView)
+            {
+                // Lock pitch directly downward (89.9f prevents gimbal lock)
+                cameraPitch = 89.9f;
+                cameraTransform.rotation = Quaternion.Euler(89.9f, cameraYaw, 0f);
+
+                // Right click drag allows rotating yaw
+                if (Input.GetMouseButton(1))
+                {
+                    float mouseX = Input.GetAxis("Mouse X") * lookSensitivity;
+                    cameraYaw += mouseX;
+                    cameraTransform.rotation = Quaternion.Euler(89.9f, cameraYaw, 0f);
+                }
+            }
+            else if (Cursor.lockState == CursorLockMode.Locked)
             {
                 float mouseX = Input.GetAxis("Mouse X") * lookSensitivity;
                 float mouseY = Input.GetAxis("Mouse Y") * lookSensitivity;
@@ -128,14 +178,29 @@ namespace DaggerfallWorkshop.Game.Networking
 
             // Movement calculation (WASD, Space, C)
             float currentSpeed = flySpeed;
-            if (Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift))
+            if ((Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift)) && !Input.GetMouseButton(0))
                 currentSpeed *= sprintMultiplier;
 
             Vector3 moveDir = Vector3.zero;
-            if (Input.GetKey(KeyCode.W)) moveDir += cameraTransform.forward;
-            if (Input.GetKey(KeyCode.S)) moveDir -= cameraTransform.forward;
-            if (Input.GetKey(KeyCode.D)) moveDir += cameraTransform.right;
-            if (Input.GetKey(KeyCode.A)) moveDir -= cameraTransform.right;
+
+            if (isTopDownView)
+            {
+                // Planar panning along ground plane relative to compass yaw
+                Vector3 forwardPlanar = Quaternion.Euler(0, cameraYaw, 0) * Vector3.forward;
+                Vector3 rightPlanar = Quaternion.Euler(0, cameraYaw, 0) * Vector3.right;
+
+                if (Input.GetKey(KeyCode.W)) moveDir += forwardPlanar;
+                if (Input.GetKey(KeyCode.S)) moveDir -= forwardPlanar;
+                if (Input.GetKey(KeyCode.D)) moveDir += rightPlanar;
+                if (Input.GetKey(KeyCode.A)) moveDir -= rightPlanar;
+            }
+            else
+            {
+                if (Input.GetKey(KeyCode.W)) moveDir += cameraTransform.forward;
+                if (Input.GetKey(KeyCode.S)) moveDir -= cameraTransform.forward;
+                if (Input.GetKey(KeyCode.D)) moveDir += cameraTransform.right;
+                if (Input.GetKey(KeyCode.A)) moveDir -= cameraTransform.right;
+            }
 
             // Up / Down (Space / C - Ctrl removed to avoid shortcut conflicts)
             if (Input.GetKey(KeyCode.Space)) moveDir += Vector3.up;
@@ -277,7 +342,100 @@ namespace DaggerfallWorkshop.Game.Networking
             }
 
             isActive = false;
+            isTopDownView = false;
             DaggerfallUI.AddHUDText("[Eagle Eye] FreeCam OFF. Camera restored to player.");
+        }
+
+        public void ToggleTopDownView()
+        {
+            if (!isActive || cameraTransform == null)
+                return;
+
+            isTopDownView = !isTopDownView;
+
+            if (isTopDownView)
+            {
+                savedFreeCamPitch = cameraPitch;
+                cameraPitch = 89.9f;
+                cameraTransform.rotation = Quaternion.Euler(89.9f, cameraYaw, 0f);
+
+                Cursor.lockState = CursorLockMode.None;
+                Cursor.visible = true;
+
+                DaggerfallUI.AddHUDText("[Tactical View] Top-Down Cenital ACTIVE (WASD: Pan, Scroll: Zoom, Shift+LClick: Teleport, B: Exit)");
+            }
+            else
+            {
+                cameraPitch = savedFreeCamPitch;
+                cameraTransform.rotation = Quaternion.Euler(cameraPitch, cameraYaw, 0f);
+
+                if (Application.isFocused)
+                {
+                    Cursor.lockState = CursorLockMode.Locked;
+                    Cursor.visible = false;
+                }
+
+                DaggerfallUI.AddHUDText("[Tactical View] FreeCam 6-DOF ACTIVE (B: Bird's Eye Cenital, Shift+LClick: Teleport)");
+            }
+        }
+
+        private void PerformClickToTeleport()
+        {
+            if (cameraTransform == null)
+                return;
+
+            Ray ray;
+            Camera mainCam = GameManager.Instance != null ? GameManager.Instance.MainCamera : null;
+
+            if (isTopDownView || Cursor.lockState != CursorLockMode.Locked)
+            {
+                if (mainCam != null)
+                    ray = mainCam.ScreenPointToRay(Input.mousePosition);
+                else
+                    ray = new Ray(cameraTransform.position, cameraTransform.forward);
+            }
+            else
+            {
+                ray = new Ray(cameraTransform.position, cameraTransform.forward);
+            }
+
+            if (Physics.Raycast(ray, out RaycastHit hit, 2000f))
+            {
+                Vector3 groundTarget = hit.point + Vector3.up * 0.15f;
+
+                // Move local player entity safely using elevation safeguards
+                if (DFUNetworkManager.Instance != null)
+                {
+                    DFUNetworkManager.Instance.RelocateLocalPlayerToCamera(groundTarget, cameraYaw);
+                }
+                else if (GameManager.Instance != null && GameManager.Instance.PlayerObject != null)
+                {
+                    GameManager.Instance.PlayerObject.transform.position = groundTarget;
+                }
+
+                // Update local puppet position if active
+                if (localPuppet != null && GameManager.Instance != null && GameManager.Instance.PlayerObject != null)
+                {
+                    localPuppet.transform.position = GameManager.Instance.PlayerObject.transform.position;
+                }
+
+                // In top-down view, center the camera over the target while maintaining altitude
+                if (isTopDownView)
+                {
+                    cameraTransform.position = new Vector3(hit.point.x, cameraTransform.position.y, hit.point.z);
+                }
+                else
+                {
+                    // In freecam, relocate camera to just above the teleported position
+                    cameraTransform.position = hit.point + Vector3.up * 2.0f;
+                }
+
+                DaggerfallUI.AddHUDText($"[DM Teleport] Teleported to ({hit.point.x:F1}, {hit.point.y:F1}, {hit.point.z:F1})");
+            }
+            else
+            {
+                DaggerfallUI.AddHUDText("[DM Teleport] No surface targeted (aim at terrain, floor or structure).");
+            }
         }
 
         private void SpawnLocalCharacterPuppet()
@@ -301,7 +459,7 @@ namespace DaggerfallWorkshop.Game.Networking
                     raceName = GameManager.Instance.PlayerEntity != null ? GameManager.Instance.PlayerEntity.Race.ToString() : "Breton",
                     position = player != null ? player.transform.position : Vector3.zero,
                     yaw = player != null ? player.transform.eulerAngles.y : 0f,
-                    isDm = (DFUNetworkManager.Instance != null && (DFUNetworkManager.Instance.IsServer || DFUNetworkManager.Instance.localLobbyIsDm))
+                    isDm = (NetworkSession.IsServer || (DFUNetworkManager.Instance != null && DFUNetworkManager.Instance.localLobbyIsDm))
                 };
             }
 

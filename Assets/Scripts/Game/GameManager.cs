@@ -571,7 +571,7 @@ namespace DaggerfallWorkshop.Game
             {
                 DaggerfallUI.PostMessage(DaggerfallUIMessages.dfuiOpenInventoryWindow);
             }
-            else if (InputManager.Instance.ActionComplete(InputManager.Actions.TravelMap))
+            else if (!(DaggerfallWorkshop.Game.Networking.FreeCamController.Instance != null && DaggerfallWorkshop.Game.Networking.FreeCamController.Instance.IsActive) && InputManager.Instance.ActionComplete(InputManager.Actions.TravelMap))
             {
                 DaggerfallUI.PostMessage(DaggerfallUIMessages.dfuiOpenTravelMapWindow);
             }
@@ -579,7 +579,7 @@ namespace DaggerfallWorkshop.Game
             {
                 DaggerfallUI.PostMessage(DaggerfallUIMessages.dfuiOpenRestWindow);
             }
-            else if (InputManager.Instance.ActionComplete(InputManager.Actions.Transport))
+            else if (!(DaggerfallWorkshop.Game.Networking.FreeCamController.Instance != null && DaggerfallWorkshop.Game.Networking.FreeCamController.Instance.IsActive) && InputManager.Instance.ActionComplete(InputManager.Actions.Transport))
             {
 	            DaggerfallUI.PostMessage(DaggerfallUIMessages.dfuiOpenTransportWindow);
             }

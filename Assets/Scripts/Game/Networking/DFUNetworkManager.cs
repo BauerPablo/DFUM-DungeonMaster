@@ -73,7 +73,7 @@ namespace DaggerfallWorkshop.Game.Networking
 
         [Tooltip("Show DM Loot Spawner overlay (toggle via Ctrl+F12 or console command loot_gui)")]
         public bool showLootGui = false;
-        private Rect lootWindowRect = new Rect(680, 10, 320, 500);
+        private Rect lootWindowRect = new Rect(680, 10, 360, 560);
         private readonly List<DaggerfallLoot> spawnedLootContainers = new List<DaggerfallLoot>();
 
         [Tooltip("Show Quest Creator / Test Menu overlay (toggle via Ctrl+F7 or console command quest_gui)")]
@@ -237,6 +237,7 @@ namespace DaggerfallWorkshop.Game.Networking
         private const float WorldTimeSyncInterval = 3.0f;
         private ulong lastBroadcastTimeInSeconds = 0;
         private Vector2 dmScrollPosition = Vector2.zero;
+        private Vector2 dmLootScrollPosition = Vector2.zero;
 
         [Header("Town Population Sync")]
         private float populationSyncTimer = 0f;
@@ -244,6 +245,9 @@ namespace DaggerfallWorkshop.Game.Networking
 
         [Header("Magic & PvP Settings")]
         public static bool isPvpAllowed = false;
+
+        [Header("Nametags & Visibility Settings")]
+        public float nametagMaxDistance = 35f;
 
         #endregion
 
@@ -267,6 +271,10 @@ namespace DaggerfallWorkshop.Game.Networking
             if (GetComponent<FreeCamController>() == null)
             {
                 gameObject.AddComponent<FreeCamController>();
+            }
+            if (GetComponent<DMNpcController>() == null)
+            {
+                gameObject.AddComponent<DMNpcController>();
             }
             PlayerEnterExit.OnPreTransition += HandleOnPreTransition;
             PlayerEnterExit.OnTransitionInterior += HandleOnTransitionInterior;
@@ -347,6 +355,24 @@ namespace DaggerfallWorkshop.Game.Networking
                 else if (FreeCamController.Instance != null)
                 {
                     FreeCamController.Instance.ToggleFreeCam();
+                }
+            }
+
+            // DM Quick Teleport in Physical Avatar mode: Ctrl + Shift + Left Click
+            if ((NetworkSession.IsServer || localLobbyIsDm) && (FreeCamController.Instance == null || !FreeCamController.Instance.IsActive))
+            {
+                if (ctrlHeld && (Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift)) && Input.GetMouseButtonDown(0))
+                {
+                    if (GameManager.Instance != null && GameManager.Instance.MainCamera != null)
+                    {
+                        Ray ray = new Ray(GameManager.Instance.MainCamera.transform.position, GameManager.Instance.MainCamera.transform.forward);
+                        if (Physics.Raycast(ray, out RaycastHit hit, 2000f))
+                        {
+                            Vector3 targetPos = hit.point + Vector3.up * 0.15f;
+                            RelocateLocalPlayerToCamera(targetPos, GameManager.Instance.MainCamera.transform.eulerAngles.y);
+                            DaggerfallUI.AddHUDText($"[DM Teleport] Teleported to ({hit.point.x:F1}, {hit.point.y:F1}, {hit.point.z:F1})");
+                        }
+                    }
                 }
             }
 
@@ -2612,6 +2638,173 @@ namespace DaggerfallWorkshop.Game.Networking
             return go;
         }
 
+        public GameObject SpawnEnemyAtCursor(MobileTypes enemyType, float hpMultiplier = 1.0f)
+        {
+            if (!NetworkSession.ShouldHandleSpawns)
+            {
+                LogSpawn("[DM Tool] Only the Server / Host can spawn authoritative enemies.");
+                return null;
+            }
+
+            Camera mainCam = GameManager.Instance != null ? GameManager.Instance.MainCamera : null;
+            if (mainCam == null)
+                return SpawnEnemyInFrontOfPlayer(enemyType);
+
+            Ray ray;
+            if (Cursor.lockState != CursorLockMode.Locked)
+                ray = mainCam.ScreenPointToRay(Input.mousePosition);
+            else
+                ray = new Ray(mainCam.transform.position, mainCam.transform.forward);
+
+            if (Physics.Raycast(ray, out RaycastHit hit, 500f))
+            {
+                Vector3 spawnPos = hit.point + Vector3.up * 0.15f;
+                Transform parent = GameObjectHelper.GetBestParent();
+
+                GameObject go = GameObjectHelper.CreateEnemy(
+                    enemyType.ToString(),
+                    enemyType,
+                    spawnPos,
+                    MobileGender.Unspecified,
+                    parent,
+                    MobileReactions.Hostile
+                );
+
+                if (go != null)
+                {
+                    go.transform.position = spawnPos;
+                    if (GameManager.Instance != null && GameManager.Instance.PlayerObject != null)
+                    {
+                        Vector3 lookDirection = GameManager.Instance.PlayerObject.transform.position - go.transform.position;
+                        lookDirection.y = 0;
+                        if (lookDirection != Vector3.zero)
+                            go.transform.rotation = Quaternion.LookRotation(lookDirection);
+                    }
+
+                    SetupDemoEnemy setupEnemy = go.GetComponent<SetupDemoEnemy>();
+                    if (setupEnemy != null)
+                    {
+                        MobileUnit mobileUnit = setupEnemy.GetMobileBillboardChild();
+                        if (mobileUnit != null && mobileUnit.Enemy.Behaviour != MobileBehaviour.Flying)
+                        {
+                            GameObjectHelper.AlignControllerToGround(go.GetComponent<CharacterController>());
+                        }
+                    }
+
+                    if (hpMultiplier > 1.05f)
+                    {
+                        DaggerfallEntityBehaviour behaviour = go.GetComponent<DaggerfallEntityBehaviour>();
+                        if (behaviour != null && behaviour.Entity is EnemyEntity enemyEntity)
+                        {
+                            enemyEntity.MaxHealth = (int)(enemyEntity.MaxHealth * hpMultiplier);
+                            enemyEntity.CurrentHealth = enemyEntity.MaxHealth;
+                        }
+                    }
+
+                    NativeNetworkEntity netEntity = go.GetComponent<NativeNetworkEntity>();
+                    if (netEntity != null && netEntity.entityId != Guid.Empty)
+                        spawnedEnemyHistory.Add(netEntity.entityId);
+
+                    DaggerfallUI.AddHUDText($"[DM Spawner] Invocado {enemyType} ({hpMultiplier:F1}x HP) en terreno ({spawnPos.x:F1}, {spawnPos.y:F1}, {spawnPos.z:F1}).");
+                }
+                return go;
+            }
+
+            return SpawnEnemyInFrontOfPlayer(enemyType);
+        }
+
+        public void TriggerEarthquake(float duration = 4.0f, float magnitude = 0.35f)
+        {
+            StartCoroutine(EarthquakeCoroutine(duration, magnitude));
+        }
+
+        private System.Collections.IEnumerator EarthquakeCoroutine(float duration, float magnitude)
+        {
+            Camera cam = GameManager.Instance != null ? GameManager.Instance.MainCamera : null;
+            if (cam == null) yield break;
+
+            DaggerfallUI.AddHUDText("[DM World Event] ¡TERREMOTO EN CURSO!");
+            if (DaggerfallUI.Instance != null)
+                DaggerfallUI.Instance.PlayOneShot(SoundClips.StormThunderRoll);
+
+            Transform camTransform = cam.transform;
+            Vector3 originalPos = camTransform.localPosition;
+            float timer = 0f;
+
+            while (timer < duration)
+            {
+                timer += Time.unscaledDeltaTime;
+                float strength = Mathf.Lerp(magnitude, 0f, timer / duration);
+                Vector3 offset = UnityEngine.Random.insideUnitSphere * strength;
+                camTransform.localPosition = originalPos + offset;
+                yield return null;
+            }
+
+            camTransform.localPosition = originalPos;
+            DaggerfallUI.AddHUDText("[DM World Event] El terremoto ha cesado.");
+        }
+
+        public void ForgeCustomWeapon(Weapons weaponType, WeaponMaterialTypes material, bool directToInventory)
+        {
+            if (GameManager.Instance == null || GameManager.Instance.PlayerEntity == null) return;
+            DaggerfallUnityItem item = ItemBuilder.CreateWeapon(weaponType, material);
+            if (item == null) return;
+
+            if (directToInventory)
+            {
+                GameManager.Instance.PlayerEntity.Items.AddItem(item);
+                DaggerfallUI.AddHUDText($"[DM Loot Forge] Forjado {item.ItemName} y guardado en tu inventario.");
+            }
+            else
+            {
+                DaggerfallLoot container = GameObjectHelper.CreateDroppedLootContainer(GameManager.Instance.PlayerObject, DaggerfallUnity.NextUID);
+                if (container != null && container.Items != null)
+                {
+                    Vector3 dropPos = GameManager.Instance.PlayerObject.transform.position + GameManager.Instance.PlayerObject.transform.forward * 1.5f;
+                    container.transform.position = new Vector3(dropPos.x, container.transform.position.y, dropPos.z);
+                    container.Items.AddItem(item);
+                    DaggerfallUI.AddHUDText($"[DM Loot Forge] Forjado {item.ItemName} y soltado en el suelo.");
+                }
+            }
+        }
+
+        public void ForgeCustomArmor(Armor armorType, ArmorMaterialTypes material, bool directToInventory)
+        {
+            if (GameManager.Instance == null || GameManager.Instance.PlayerEntity == null) return;
+            DaggerfallUnityItem item = ItemBuilder.CreateArmor(GameManager.Instance.PlayerEntity.Gender, GameManager.Instance.PlayerEntity.Race, armorType, material);
+            if (item == null) return;
+
+            if (directToInventory)
+            {
+                GameManager.Instance.PlayerEntity.Items.AddItem(item);
+                DaggerfallUI.AddHUDText($"[DM Loot Forge] Forjado {item.ItemName} y guardado en tu inventario.");
+            }
+            else
+            {
+                DaggerfallLoot container = GameObjectHelper.CreateDroppedLootContainer(GameManager.Instance.PlayerObject, DaggerfallUnity.NextUID);
+                if (container != null && container.Items != null)
+                {
+                    Vector3 dropPos = GameManager.Instance.PlayerObject.transform.position + GameManager.Instance.PlayerObject.transform.forward * 1.5f;
+                    container.transform.position = new Vector3(dropPos.x, container.transform.position.y, dropPos.z);
+                    container.Items.AddItem(item);
+                    DaggerfallUI.AddHUDText($"[DM Loot Forge] Forjado {item.ItemName} y soltado en el suelo.");
+                }
+            }
+        }
+
+        public void PardonAllCrimes()
+        {
+            if (GameManager.Instance == null || GameManager.Instance.PlayerEntity == null) return;
+            GameManager.Instance.PlayerEntity.CrimeCommitted = PlayerEntity.Crimes.None;
+            int region = GameManager.Instance.PlayerGPS != null ? GameManager.Instance.PlayerGPS.CurrentRegionIndex : -1;
+            if (region >= 0 && region < GameManager.Instance.PlayerEntity.RegionData.Length)
+            {
+                GameManager.Instance.PlayerEntity.RegionData[region].LegalRep = 50;
+            }
+            DespawnAllSpawnedEnemies();
+            DaggerfallUI.AddHUDText("[DM Ley] Todos los crímenes perdonados y reputación legal restaurada.");
+        }
+
         private readonly List<Guid> spawnedEnemyHistory = new List<Guid>();
 
         /// <summary>
@@ -2730,6 +2923,85 @@ namespace DaggerfallWorkshop.Game.Networking
             MobileTypes.Werewolf,
             MobileTypes.Spellsword,
             MobileTypes.Daedroth
+        };
+
+        // Phase 15: Bestiary Catalog
+        private string dmBestiarySearchFilter = "";
+        private int dmBestiaryCategoryIndex = 0;
+        private static readonly string[] dmBestiaryCategories = new string[]
+        {
+            "Todos", "No-Muertos", "Monstruos", "Daedra", "Humanoides", "Fauna"
+        };
+        private float dmSpawnHpMultiplier = 1.0f;
+        private Vector2 dmBestiaryScrollPos = Vector2.zero;
+
+        private static readonly MobileTypes[] dmUndead = new MobileTypes[]
+        {
+            MobileTypes.SkeletalWarrior, MobileTypes.Zombie, MobileTypes.Ghost,
+            MobileTypes.Mummy, MobileTypes.Wraith, MobileTypes.Vampire,
+            MobileTypes.VampireAncient, MobileTypes.Lich, MobileTypes.AncientLich
+        };
+
+        private static readonly MobileTypes[] dmMonsters = new MobileTypes[]
+        {
+            MobileTypes.Spriggan, MobileTypes.Gargoyle, MobileTypes.Centaur,
+            MobileTypes.Harpy, MobileTypes.Werewolf, MobileTypes.Wereboar,
+            MobileTypes.Spider, MobileTypes.GiantScorpion, MobileTypes.Giant,
+            MobileTypes.Dragonling, MobileTypes.Dragonling_Alternate, MobileTypes.Lamia, MobileTypes.Dreugh
+        };
+
+        private static readonly MobileTypes[] dmDaedra = new MobileTypes[]
+        {
+            MobileTypes.Imp, MobileTypes.Daedroth, MobileTypes.FireDaedra,
+            MobileTypes.FrostDaedra, MobileTypes.DaedraSeducer, MobileTypes.DaedraLord,
+            MobileTypes.FireAtronach, MobileTypes.IronAtronach, MobileTypes.FleshAtronach, MobileTypes.IceAtronach
+        };
+
+        private static readonly MobileTypes[] dmHumanoids = new MobileTypes[]
+        {
+            MobileTypes.Knight_CityWatch, MobileTypes.Mage, MobileTypes.Spellsword,
+            MobileTypes.Battlemage, MobileTypes.Sorcerer, MobileTypes.Healer,
+            MobileTypes.Nightblade, MobileTypes.Bard, MobileTypes.Burglar,
+            MobileTypes.Rogue, MobileTypes.Acrobat, MobileTypes.Thief,
+            MobileTypes.Assassin, MobileTypes.Monk, MobileTypes.Archer,
+            MobileTypes.Ranger, MobileTypes.Barbarian, MobileTypes.Warrior,
+            MobileTypes.Knight, MobileTypes.Orc, MobileTypes.OrcSergeant,
+            MobileTypes.OrcShaman, MobileTypes.OrcWarlord
+        };
+
+        private static readonly MobileTypes[] dmFauna = new MobileTypes[]
+        {
+            MobileTypes.Rat, MobileTypes.GiantBat, MobileTypes.GrizzlyBear,
+            MobileTypes.SabertoothTiger, MobileTypes.Slaughterfish
+        };
+
+        // Phase 15: Loot Forge fields
+        private int dmForgeGroupIndex = 0;
+        private static readonly string[] dmForgeGroups = new string[] { "Armas", "Armaduras", "Gemas", "Pociones" };
+        private int dmForgeWeaponIndex = 0;
+        private static readonly Weapons[] dmForgeWeapons = new Weapons[]
+        {
+            Weapons.Dagger, Weapons.Shortsword, Weapons.Broadsword, Weapons.Longsword, Weapons.Claymore,
+            Weapons.Battle_Axe, Weapons.War_Axe, Weapons.Short_Bow, Weapons.Long_Bow,
+            Weapons.Mace, Weapons.Flail, Weapons.Warhammer, Weapons.Staff, Weapons.Katana, Weapons.Dai_Katana
+        };
+        private int dmForgeMaterialIndex = 1;
+        private static readonly WeaponMaterialTypes[] dmForgeMaterials = new WeaponMaterialTypes[]
+        {
+            WeaponMaterialTypes.Iron, WeaponMaterialTypes.Steel, WeaponMaterialTypes.Silver,
+            WeaponMaterialTypes.Elven, WeaponMaterialTypes.Dwarven, WeaponMaterialTypes.Mithril,
+            WeaponMaterialTypes.Adamantium, WeaponMaterialTypes.Ebony, WeaponMaterialTypes.Orcish, WeaponMaterialTypes.Daedric
+        };
+        private int dmForgeArmorIndex = 0;
+        private static readonly Armor[] dmForgeArmors = new Armor[]
+        {
+            Armor.Cuirass, Armor.Gauntlets, Armor.Greaves, Armor.Boots, Armor.Left_Pauldron, Armor.Right_Pauldron, Armor.Helm
+        };
+        private static readonly ArmorMaterialTypes[] dmForgeArmorMaterials = new ArmorMaterialTypes[]
+        {
+            ArmorMaterialTypes.Iron, ArmorMaterialTypes.Steel, ArmorMaterialTypes.Silver,
+            ArmorMaterialTypes.Elven, ArmorMaterialTypes.Dwarven, ArmorMaterialTypes.Mithril,
+            ArmorMaterialTypes.Adamantium, ArmorMaterialTypes.Ebony, ArmorMaterialTypes.Orcish, ArmorMaterialTypes.Daedric
         };
 
         private void OnGUI()
@@ -3304,46 +3576,129 @@ namespace DaggerfallWorkshop.Game.Networking
                 return;
             }
 
-            GUILayout.Label("✦ INVOCADOR DE ENEMIGOS & MONSTRUOS ✦", DarkFantasyPixelArtTheme.SectionBannerStyle, GUILayout.ExpandWidth(true));
+            // --- PILAR 1: POSESIÓN DIRECTA DE ENTIDAD (INHABIT) ---
+            GUILayout.Label("✦ POSESIÓN DIRECTA DE ENTIDAD (INHABIT) ✦", DarkFantasyPixelArtTheme.SectionBannerStyle, GUILayout.ExpandWidth(true));
             GUILayout.Space(4);
-            MobileTypes currentEnemy = dmEnemies[selectedDmIndex];
-            GUILayout.Label($"Selected Enemy: <color=#FFDF78><b>{currentEnemy}</b></color>");
 
+            if (DMNpcController.Instance != null && DMNpcController.Instance.IsPossessing)
+            {
+                GUILayout.Label($"<color=#78FF78><b>POSESIÓN ACTIVA:</b></color> {DMNpcController.Instance.PossessedName}");
+                GUILayout.Label("<color=#AAAAAA>WASD: Mover | Shift: Correr | Click Izq: Atacar | Tab: Cámara 1ª/3ª</color>");
+                GUILayout.Space(4);
+                if (GUILayout.Button("✦ Liberar Posesión (Esc / F8) ✦", DarkFantasyPixelArtTheme.CrimsonButtonStyle, GUILayout.Height(28)))
+                {
+                    DMNpcController.Instance.ReleasePossession();
+                }
+            }
+            else
+            {
+                if (GUILayout.Button("✦ Poseer Objetivo Apuntado (Aim & Inhabit) ✦", DarkFantasyPixelArtTheme.GoldButtonStyle, GUILayout.Height(28)))
+                {
+                    if (DMNpcController.Instance != null)
+                        DMNpcController.Instance.PossessTargetUnderCrosshair();
+                }
+                GUILayout.Label("<color=#888888><i>Apuntá con la retícula a cualquier enemigo o NPC y pulsa el botón para habitarlo</i></color>");
+            }
+
+            GUILayout.Space(8);
+
+            // --- PILAR 2: BESTIARIO COMPLETO & INVOCADOR ---
+            GUILayout.Label("✦ BESTIARIO COMPLETO & INVOCADOR ✦", DarkFantasyPixelArtTheme.SectionBannerStyle, GUILayout.ExpandWidth(true));
+            GUILayout.Space(4);
+
+            // Category Toolbar
+            dmBestiaryCategoryIndex = GUILayout.Toolbar(dmBestiaryCategoryIndex, dmBestiaryCategories);
+            GUILayout.Space(4);
+
+            // Search Filter
             GUILayout.BeginHorizontal();
-            if (GUILayout.Button("< Prev") && selectedDmIndex > 0)
-            {
-                selectedDmIndex--;
-            }
-            if (GUILayout.Button("Next >") && selectedDmIndex < dmEnemies.Length - 1)
-            {
-                selectedDmIndex++;
-            }
+            GUILayout.Label("Buscar:", GUILayout.Width(50));
+            dmBestiarySearchFilter = GUILayout.TextField(dmBestiarySearchFilter ?? "", GUILayout.ExpandWidth(true));
+            if (GUILayout.Button("X", DarkFantasyPixelArtTheme.CrimsonButtonStyle, GUILayout.Width(24))) dmBestiarySearchFilter = "";
             GUILayout.EndHorizontal();
 
-            GUILayout.Space(5);
-            if (GUILayout.Button($"✦ Spawn {currentEnemy} (2m Front) ✦", DarkFantasyPixelArtTheme.EmeraldButtonStyle, GUILayout.Height(30)))
+            // HP Multiplier
+            GUILayout.Space(2);
+            GUILayout.Label($"Escala de Vida (HP Scale): <color=#FFDF78><b>{dmSpawnHpMultiplier:F1}x</b></color>");
+            dmSpawnHpMultiplier = GUILayout.HorizontalSlider(dmSpawnHpMultiplier, 1.0f, 5.0f);
+
+            // Select active pool based on category
+            MobileTypes[] pool;
+            switch (dmBestiaryCategoryIndex)
             {
-                SpawnEnemyInFrontOfPlayer(currentEnemy);
+                case 1: pool = dmUndead; break;
+                case 2: pool = dmMonsters; break;
+                case 3: pool = dmDaedra; break;
+                case 4: pool = dmHumanoids; break;
+                case 5: pool = dmFauna; break;
+                default:
+                    List<MobileTypes> allList = new List<MobileTypes>();
+                    allList.AddRange(dmUndead);
+                    allList.AddRange(dmMonsters);
+                    allList.AddRange(dmDaedra);
+                    allList.AddRange(dmHumanoids);
+                    allList.AddRange(dmFauna);
+                    pool = allList.ToArray();
+                    break;
             }
+
+            // Filter by search text
+            List<MobileTypes> filteredPool = new List<MobileTypes>();
+            string filterLower = (dmBestiarySearchFilter ?? "").Trim().ToLowerInvariant();
+            foreach (var m in pool)
+            {
+                if (string.IsNullOrEmpty(filterLower) || m.ToString().ToLowerInvariant().Contains(filterLower))
+                    filteredPool.Add(m);
+            }
+
+            if (selectedDmIndex >= filteredPool.Count)
+                selectedDmIndex = Mathf.Max(0, filteredPool.Count - 1);
+
+            MobileTypes currentEnemy = filteredPool.Count > 0 ? filteredPool[selectedDmIndex] : MobileTypes.Rat;
+
+            GUILayout.Space(4);
+            GUILayout.Label($"Criatura Seleccionada: <color=#FFDF78><b>{currentEnemy}</b></color> ({filteredPool.Count} disponibles)");
+
+            // Scrollable list of matches
+            dmBestiaryScrollPos = GUILayout.BeginScrollView(dmBestiaryScrollPos, GUILayout.Height(90));
+            int colCount = 0;
+            GUILayout.BeginHorizontal();
+            for (int i = 0; i < filteredPool.Count; i++)
+            {
+                bool isSel = (i == selectedDmIndex);
+                if (GUILayout.Button(filteredPool[i].ToString(), isSel ? DarkFantasyPixelArtTheme.EmeraldButtonStyle : GUI.skin.button, GUILayout.Width(130)))
+                {
+                    selectedDmIndex = i;
+                }
+                colCount++;
+                if (colCount % 2 == 0 && i < filteredPool.Count - 1)
+                {
+                    GUILayout.EndHorizontal();
+                    GUILayout.BeginHorizontal();
+                }
+            }
+            GUILayout.EndHorizontal();
+            GUILayout.EndScrollView();
 
             GUILayout.Space(6);
-            GUILayout.Label("<b>Quick Spawns:</b>");
             GUILayout.BeginHorizontal();
-            if (GUILayout.Button("Rat"))
-                SpawnEnemyInFrontOfPlayer(MobileTypes.Rat);
-            if (GUILayout.Button("Bat"))
-                SpawnEnemyInFrontOfPlayer(MobileTypes.GiantBat);
-            if (GUILayout.Button("Skeleton"))
-                SpawnEnemyInFrontOfPlayer(MobileTypes.SkeletalWarrior);
-            GUILayout.EndHorizontal();
-
-            GUILayout.BeginHorizontal();
-            if (GUILayout.Button("Thief"))
-                SpawnEnemyInFrontOfPlayer(MobileTypes.Thief);
-            if (GUILayout.Button("Zombie"))
-                SpawnEnemyInFrontOfPlayer(MobileTypes.Zombie);
-            if (GUILayout.Button("Bear"))
-                SpawnEnemyInFrontOfPlayer(MobileTypes.GrizzlyBear);
+            if (GUILayout.Button($"✦ Invocación en Frente (2m) ✦", DarkFantasyPixelArtTheme.EmeraldButtonStyle, GUILayout.Height(28)))
+            {
+                GameObject spawned = SpawnEnemyInFrontOfPlayer(currentEnemy);
+                if (spawned != null && dmSpawnHpMultiplier > 1.05f)
+                {
+                    DaggerfallEntityBehaviour b = spawned.GetComponent<DaggerfallEntityBehaviour>();
+                    if (b != null && b.Entity is EnemyEntity ee)
+                    {
+                        ee.MaxHealth = (int)(ee.MaxHealth * dmSpawnHpMultiplier);
+                        ee.CurrentHealth = ee.MaxHealth;
+                    }
+                }
+            }
+            if (GUILayout.Button($"✦ Invocación en Terreno ✦", DarkFantasyPixelArtTheme.GoldButtonStyle, GUILayout.Height(28)))
+            {
+                SpawnEnemyAtCursor(currentEnemy, dmSpawnHpMultiplier);
+            }
             GUILayout.EndHorizontal();
 
             GUILayout.Space(8);
@@ -3542,6 +3897,69 @@ namespace DaggerfallWorkshop.Game.Networking
             {
                 ToggleDmGodMode();
             }
+
+            // --- PILAR 4: EVENTOS DEL MUNDO & CATACLISMOS ---
+            GUILayout.Space(8);
+            GUILayout.Label("✦ EVENTOS DEL MUNDO & CATACLISMOS ✦", DarkFantasyPixelArtTheme.SectionBannerStyle, GUILayout.ExpandWidth(true));
+            GUILayout.Space(4);
+
+            if (GUILayout.Button("✦ Provocar Terremoto (Earthquake) ✦", DarkFantasyPixelArtTheme.CrimsonButtonStyle, GUILayout.Height(28)))
+            {
+                TriggerEarthquake(4.0f, 0.35f);
+            }
+
+            GUILayout.Space(4);
+            GUILayout.Label("Disparadores de Audio Ambiental:");
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("Trueno")) DaggerfallUI.Instance?.PlayOneShot(SoundClips.StormLightningThunder);
+            if (GUILayout.Button("Rugido Monstruo")) DaggerfallUI.Instance?.PlayOneShot(SoundClips.AmbientMonsterRoar);
+            if (GUILayout.Button("Aullido")) DaggerfallUI.Instance?.PlayOneShot(SoundClips.AmbientDistantHowl);
+            GUILayout.EndHorizontal();
+
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("Grito")) DaggerfallUI.Instance?.PlayOneShot(SoundClips.HighPitchScream);
+            if (GUILayout.Button("Tambores")) DaggerfallUI.Instance?.PlayOneShot(SoundClips.AmbientDrums);
+            if (GUILayout.Button("Lamento")) DaggerfallUI.Instance?.PlayOneShot(SoundClips.ArenaGhost);
+            GUILayout.EndHorizontal();
+
+            // --- PILAR 5: ECONOMÍA & LEYES DM ---
+            GUILayout.Space(8);
+            GUILayout.Label("✦ ECONOMÍA & LEYES DM ✦", DarkFantasyPixelArtTheme.SectionBannerStyle, GUILayout.ExpandWidth(true));
+            GUILayout.Space(4);
+
+            GUILayout.Label("Acuñar Oro (Mint Gold):");
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("+1,000 Oro"))
+            {
+                if (GameManager.Instance != null && GameManager.Instance.PlayerEntity != null)
+                {
+                    GameManager.Instance.PlayerEntity.GoldPieces += 1000;
+                    DaggerfallUI.AddHUDText("[DM Oro] +1,000 piezas de oro acuñadas.");
+                }
+            }
+            if (GUILayout.Button("+10,000 Oro"))
+            {
+                if (GameManager.Instance != null && GameManager.Instance.PlayerEntity != null)
+                {
+                    GameManager.Instance.PlayerEntity.GoldPieces += 10000;
+                    DaggerfallUI.AddHUDText("[DM Oro] +10,000 piezas de oro acuñadas.");
+                }
+            }
+            if (GUILayout.Button("+50,000 Oro"))
+            {
+                if (GameManager.Instance != null && GameManager.Instance.PlayerEntity != null)
+                {
+                    GameManager.Instance.PlayerEntity.GoldPieces += 50000;
+                    DaggerfallUI.AddHUDText("[DM Oro] +50,000 piezas de oro acuñadas.");
+                }
+            }
+            GUILayout.EndHorizontal();
+
+            GUILayout.Space(4);
+            if (GUILayout.Button("✦ Perdonar Crímenes & Recompensas (Pardon Bounties) ✦", DarkFantasyPixelArtTheme.EmeraldButtonStyle, GUILayout.Height(28)))
+            {
+                PardonAllCrimes();
+            }
         }
 
         private void DrawPartyDmTabContent()
@@ -3572,6 +3990,23 @@ namespace DaggerfallWorkshop.Game.Networking
             {
                 GatherPartyToHost();
             }
+
+            if (FreeCamController.Instance != null && FreeCamController.Instance.IsActive)
+            {
+                GUILayout.Space(4);
+                bool isTopDown = FreeCamController.Instance.IsTopDownView;
+                string topDownLabel = isTopDown ? "✦ Vista Cenital / Top-Down: [ACTIVA] (B)" : "Vista Cenital / Top-Down: [INACTIVA] (B)";
+                if (GUILayout.Button(topDownLabel, isTopDown ? DarkFantasyPixelArtTheme.EmeraldButtonStyle : GUI.skin.button, GUILayout.Height(26)))
+                {
+                    FreeCamController.Instance.ToggleTopDownView();
+                }
+            }
+
+            GUILayout.Space(6);
+            GUILayout.Label("✦ DISTANCIA FALLOFF DE NAMETAGS ✦", DarkFantasyPixelArtTheme.SectionBannerStyle, GUILayout.ExpandWidth(true));
+            GUILayout.Space(2);
+            GUILayout.Label($"Nametag Fadeout: {nametagMaxDistance:F0}m (DM siempre visible)");
+            nametagMaxDistance = GUILayout.HorizontalSlider(nametagMaxDistance, 5f, 100f);
 
             GUILayout.Space(8);
             GUILayout.Label("✦ COMBATE PVP & FUEGO AMIGO ✦", DarkFantasyPixelArtTheme.SectionBannerStyle, GUILayout.ExpandWidth(true));
@@ -3669,7 +4104,9 @@ namespace DaggerfallWorkshop.Game.Networking
         private void DrawLootWindow(int windowId)
         {
             DarkFantasyPixelArtTheme.DrawImGuiDivider();
+            dmLootScrollPosition = GUILayout.BeginScrollView(dmLootScrollPosition);
             DrawLootWindowContent();
+            GUILayout.EndScrollView();
             GUILayout.Space(8);
             if (GUILayout.Button("Close (Ctrl+F12 / loot_gui)", DarkFantasyPixelArtTheme.CrimsonButtonStyle))
             {
@@ -3769,6 +4206,78 @@ namespace DaggerfallWorkshop.Game.Networking
                     DespawnAllLoot();
                 }
                 GUILayout.EndHorizontal();
+
+                // Section 4: Loot Forge
+                GUILayout.Space(8);
+                GUILayout.Label("✦ 4. FORJA DE OBJETOS PERSONALIZADOS (LOOT FORGE) ✦", DarkFantasyPixelArtTheme.SectionBannerStyle, GUILayout.ExpandWidth(true));
+                GUILayout.Space(4);
+
+                dmForgeGroupIndex = GUILayout.Toolbar(dmForgeGroupIndex, new string[] { "Armas", "Armaduras" });
+                GUILayout.Space(4);
+
+                if (dmForgeGroupIndex == 0) // Armas
+                {
+                    GUILayout.Label($"Arma: <color=#FFDF78><b>{dmForgeWeapons[dmForgeWeaponIndex]}</b></color>");
+                    GUILayout.BeginHorizontal();
+                    if (GUILayout.Button("< Prev Arma") && dmForgeWeaponIndex > 0)
+                        dmForgeWeaponIndex--;
+                    if (GUILayout.Button("Next Arma >") && dmForgeWeaponIndex < dmForgeWeapons.Length - 1)
+                        dmForgeWeaponIndex++;
+                    GUILayout.EndHorizontal();
+
+                    GUILayout.Space(3);
+                    GUILayout.Label($"Material: <color=#66DDFF><b>{dmForgeMaterials[dmForgeMaterialIndex]}</b></color>");
+                    GUILayout.BeginHorizontal();
+                    if (GUILayout.Button("< Prev Material") && dmForgeMaterialIndex > 0)
+                        dmForgeMaterialIndex--;
+                    if (GUILayout.Button("Next Material >") && dmForgeMaterialIndex < dmForgeMaterials.Length - 1)
+                        dmForgeMaterialIndex++;
+                    GUILayout.EndHorizontal();
+
+                    GUILayout.Space(5);
+                    GUILayout.BeginHorizontal();
+                    if (GUILayout.Button("✦ En Inventario ✦", DarkFantasyPixelArtTheme.EmeraldButtonStyle, GUILayout.Height(28)))
+                    {
+                        ForgeCustomWeapon(dmForgeWeapons[dmForgeWeaponIndex], dmForgeMaterials[dmForgeMaterialIndex], true);
+                    }
+                    if (GUILayout.Button("✦ En Suelo ✦", DarkFantasyPixelArtTheme.GoldButtonStyle, GUILayout.Height(28)))
+                    {
+                        ForgeCustomWeapon(dmForgeWeapons[dmForgeWeaponIndex], dmForgeMaterials[dmForgeMaterialIndex], false);
+                    }
+                    GUILayout.EndHorizontal();
+                }
+                else // Armaduras
+                {
+                    GUILayout.Label($"Pieza: <color=#FFDF78><b>{dmForgeArmors[dmForgeArmorIndex]}</b></color>");
+                    GUILayout.BeginHorizontal();
+                    if (GUILayout.Button("< Prev Pieza") && dmForgeArmorIndex > 0)
+                        dmForgeArmorIndex--;
+                    if (GUILayout.Button("Next Pieza >") && dmForgeArmorIndex < dmForgeArmors.Length - 1)
+                        dmForgeArmorIndex++;
+                    GUILayout.EndHorizontal();
+
+                    int safeMatIndex = Mathf.Clamp(dmForgeMaterialIndex, 0, dmForgeArmorMaterials.Length - 1);
+                    GUILayout.Space(3);
+                    GUILayout.Label($"Material: <color=#66DDFF><b>{dmForgeArmorMaterials[safeMatIndex]}</b></color>");
+                    GUILayout.BeginHorizontal();
+                    if (GUILayout.Button("< Prev Material") && dmForgeMaterialIndex > 0)
+                        dmForgeMaterialIndex--;
+                    if (GUILayout.Button("Next Material >") && dmForgeMaterialIndex < dmForgeArmorMaterials.Length - 1)
+                        dmForgeMaterialIndex++;
+                    GUILayout.EndHorizontal();
+
+                    GUILayout.Space(5);
+                    GUILayout.BeginHorizontal();
+                    if (GUILayout.Button("✦ En Inventario ✦", DarkFantasyPixelArtTheme.EmeraldButtonStyle, GUILayout.Height(28)))
+                    {
+                        ForgeCustomArmor(dmForgeArmors[dmForgeArmorIndex], dmForgeArmorMaterials[safeMatIndex], true);
+                    }
+                    if (GUILayout.Button("✦ En Suelo ✦", DarkFantasyPixelArtTheme.GoldButtonStyle, GUILayout.Height(28)))
+                    {
+                        ForgeCustomArmor(dmForgeArmors[dmForgeArmorIndex], dmForgeArmorMaterials[safeMatIndex], false);
+                    }
+                    GUILayout.EndHorizontal();
+                }
             }
         }
 

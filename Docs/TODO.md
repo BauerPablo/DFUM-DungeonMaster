@@ -37,6 +37,7 @@ v1.0.0
 - [ ] Mejorar y parametrizar como ver los nombres de los personajes
 - [ ] Tutorial de instalacion con los mods
 
+- Refactorizar el menu viejo con la nueva estetica, agregando tambien los controles del DM y el keymap.
 v1.1.0
 - [ ] **Army Sys**
   - Crear la posibilidad de contratar mercenarios para tener mini ejercitos
