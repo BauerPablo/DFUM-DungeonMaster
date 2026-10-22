@@ -358,6 +358,27 @@ namespace DaggerfallWorkshop.Game.Networking
                 }
             }
 
+            // DM Quick Possess / Inhabit NPC under crosshair: Ctrl + H or Ctrl + P
+            if (NetworkSession.IsServer || localLobbyIsDm)
+            {
+                if (ctrlHeld && (Input.GetKeyDown(KeyCode.H) || Input.GetKeyDown(KeyCode.P)))
+                {
+                    if (DMNpcController.Instance != null)
+                    {
+                        if (DMNpcController.Instance.IsPossessing)
+                        {
+                            DMNpcController.Instance.ReleasePossession();
+                        }
+                        else
+                        {
+                            if (showTtrpgSuite)
+                                showTtrpgSuite = false;
+                            DMNpcController.Instance.PossessTargetUnderCrosshair();
+                        }
+                    }
+                }
+            }
+
             // DM Quick Teleport in Physical Avatar mode: Ctrl + Shift + Left Click
             if ((NetworkSession.IsServer || localLobbyIsDm) && (FreeCamController.Instance == null || !FreeCamController.Instance.IsActive))
             {
@@ -2579,7 +2600,7 @@ namespace DaggerfallWorkshop.Game.Networking
         /// Authoritatively spawns an enemy 2 meters in front of the local player.
         /// Broadcasts spawn message to all connected clients.
         /// </summary>
-        public GameObject SpawnEnemyInFrontOfPlayer(MobileTypes enemyType)
+        public GameObject SpawnEnemyInFrontOfPlayer(MobileTypes enemyType, float hpMultiplier = 1.0f)
         {
             if (!NetworkSession.ShouldHandleSpawns)
             {
@@ -2626,13 +2647,29 @@ namespace DaggerfallWorkshop.Game.Networking
                     }
                 }
 
+                if (hpMultiplier > 1.05f)
+                {
+                    DaggerfallEntityBehaviour behaviour = go.GetComponent<DaggerfallEntityBehaviour>();
+                    if (behaviour != null && behaviour.Entity is EnemyEntity enemyEntity)
+                    {
+                        enemyEntity.MaxHealth = (int)(enemyEntity.MaxHealth * hpMultiplier);
+                        enemyEntity.CurrentHealth = enemyEntity.MaxHealth;
+                    }
+                }
+
+                // Authoritatively raise spawn event so NativeNetworkEntity is initialized and broadcast to all clients
+                if (GameManager.Instance != null)
+                {
+                    GameManager.Instance.RaiseOnEnemySpawnEvent(go);
+                }
+
                 NativeNetworkEntity netEntity = go.GetComponent<NativeNetworkEntity>();
                 if (netEntity != null && netEntity.entityId != Guid.Empty)
                 {
                     spawnedEnemyHistory.Add(netEntity.entityId);
                 }
 
-                LogSpawn($"[DM Tool] Authoritatively spawned {enemyType} 2m in front of player at {go.transform.position}.");
+                LogSpawn($"[DM Tool] Authoritatively spawned {enemyType} ({hpMultiplier:F1}x HP) 2m in front of player at {go.transform.position}.");
             }
 
             return go;
@@ -2648,7 +2685,7 @@ namespace DaggerfallWorkshop.Game.Networking
 
             Camera mainCam = GameManager.Instance != null ? GameManager.Instance.MainCamera : null;
             if (mainCam == null)
-                return SpawnEnemyInFrontOfPlayer(enemyType);
+                return SpawnEnemyInFrontOfPlayer(enemyType, hpMultiplier);
 
             Ray ray;
             if (Cursor.lockState != CursorLockMode.Locked)
@@ -2701,6 +2738,12 @@ namespace DaggerfallWorkshop.Game.Networking
                         }
                     }
 
+                    // Authoritatively raise spawn event so NativeNetworkEntity is initialized and broadcast to all clients
+                    if (GameManager.Instance != null)
+                    {
+                        GameManager.Instance.RaiseOnEnemySpawnEvent(go);
+                    }
+
                     NativeNetworkEntity netEntity = go.GetComponent<NativeNetworkEntity>();
                     if (netEntity != null && netEntity.entityId != Guid.Empty)
                         spawnedEnemyHistory.Add(netEntity.entityId);
@@ -2710,7 +2753,7 @@ namespace DaggerfallWorkshop.Game.Networking
                 return go;
             }
 
-            return SpawnEnemyInFrontOfPlayer(enemyType);
+            return SpawnEnemyInFrontOfPlayer(enemyType, hpMultiplier);
         }
 
         public void TriggerEarthquake(float duration = 4.0f, float magnitude = 0.35f)
@@ -3583,21 +3626,24 @@ namespace DaggerfallWorkshop.Game.Networking
             if (DMNpcController.Instance != null && DMNpcController.Instance.IsPossessing)
             {
                 GUILayout.Label($"<color=#78FF78><b>POSESIÓN ACTIVA:</b></color> {DMNpcController.Instance.PossessedName}");
-                GUILayout.Label("<color=#AAAAAA>WASD: Mover | Shift: Correr | Click Izq: Atacar | Tab: Cámara 1ª/3ª</color>");
+                GUILayout.Label("<color=#AAAAAA>WASD: Mover | Shift: Correr | Click Izq: Atacar | Tab: Cámara 1ª/3ª | Esc/F8/Ctrl+H: Liberar</color>");
                 GUILayout.Space(4);
-                if (GUILayout.Button("✦ Liberar Posesión (Esc / F8) ✦", DarkFantasyPixelArtTheme.CrimsonButtonStyle, GUILayout.Height(28)))
+                if (GUILayout.Button("✦ Liberar Posesión (Esc / F8 / Ctrl+H) ✦", DarkFantasyPixelArtTheme.CrimsonButtonStyle, GUILayout.Height(28)))
                 {
                     DMNpcController.Instance.ReleasePossession();
                 }
             }
             else
             {
-                if (GUILayout.Button("✦ Poseer Objetivo Apuntado (Aim & Inhabit) ✦", DarkFantasyPixelArtTheme.GoldButtonStyle, GUILayout.Height(28)))
+                if (GUILayout.Button("✦ Poseer Objetivo Apuntado (Aim & Inhabit) [Ctrl+H / Ctrl+P] ✦", DarkFantasyPixelArtTheme.GoldButtonStyle, GUILayout.Height(28)))
                 {
                     if (DMNpcController.Instance != null)
+                    {
+                        showTtrpgSuite = false;
                         DMNpcController.Instance.PossessTargetUnderCrosshair();
+                    }
                 }
-                GUILayout.Label("<color=#888888><i>Apuntá con la retícula a cualquier enemigo o NPC y pulsa el botón para habitarlo</i></color>");
+                GUILayout.Label("<color=#888888><i>Apuntá con la retícula a cualquier enemigo o NPC y pulsa el botón (o Ctrl+H / Ctrl+P) para habitarlo</i></color>");
             }
 
             GUILayout.Space(8);
@@ -3684,16 +3730,7 @@ namespace DaggerfallWorkshop.Game.Networking
             GUILayout.BeginHorizontal();
             if (GUILayout.Button($"✦ Invocación en Frente (2m) ✦", DarkFantasyPixelArtTheme.EmeraldButtonStyle, GUILayout.Height(28)))
             {
-                GameObject spawned = SpawnEnemyInFrontOfPlayer(currentEnemy);
-                if (spawned != null && dmSpawnHpMultiplier > 1.05f)
-                {
-                    DaggerfallEntityBehaviour b = spawned.GetComponent<DaggerfallEntityBehaviour>();
-                    if (b != null && b.Entity is EnemyEntity ee)
-                    {
-                        ee.MaxHealth = (int)(ee.MaxHealth * dmSpawnHpMultiplier);
-                        ee.CurrentHealth = ee.MaxHealth;
-                    }
-                }
+                GameObject spawned = SpawnEnemyInFrontOfPlayer(currentEnemy, dmSpawnHpMultiplier);
             }
             if (GUILayout.Button($"✦ Invocación en Terreno ✦", DarkFantasyPixelArtTheme.GoldButtonStyle, GUILayout.Height(28)))
             {

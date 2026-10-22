@@ -25,8 +25,20 @@ namespace DaggerfallWorkshop.Game.Networking
         public bool IsActive => isActive;
 
         private Transform originalCameraParent = null;
+        public Transform OriginalCameraParent => originalCameraParent;
         private Vector3 originalCameraLocalPos;
         private Quaternion originalCameraLocalRot;
+
+        public void SetCameraPositionAndFacing(Vector3 pos, float yaw, float pitch)
+        {
+            if (cameraTransform != null)
+            {
+                cameraTransform.position = pos;
+                cameraYaw = yaw;
+                cameraPitch = pitch;
+                cameraTransform.rotation = Quaternion.Euler(cameraPitch, cameraYaw, 0f);
+            }
+        }
 
         private GameObject localPuppet = null;
         private Transform cameraTransform = null;
@@ -82,6 +94,10 @@ namespace DaggerfallWorkshop.Game.Networking
             }
 
             if (!isActive || cameraTransform == null)
+                return;
+
+            // Suspend FreeCam camera updates while DM is possessing an entity
+            if (DMNpcController.Instance != null && DMNpcController.Instance.IsPossessing)
                 return;
 
             // Hotkey 'B' toggles Tactical Cenital / Bird's Eye View while in flight/FreeCam (conflict-free key)
@@ -318,28 +334,38 @@ namespace DaggerfallWorkshop.Game.Networking
                 playerHeightChanger = null;
             }
 
-            // Restore screen weapon
-            if (GameManager.Instance != null && GameManager.Instance.WeaponManager != null && GameManager.Instance.WeaponManager.ScreenWeapon != null)
+            // Restore screen weapon, player motor & mouse look safely
+            try
             {
-                GameManager.Instance.WeaponManager.ScreenWeapon.ShowWeapon = wasWeaponShown;
+                GameObject player = GameObject.FindGameObjectWithTag("Player");
+                if (player != null && GameManager.Instance != null)
+                {
+                    if (GameManager.Instance.WeaponManager != null && GameManager.Instance.WeaponManager.ScreenWeapon != null)
+                    {
+                        GameManager.Instance.WeaponManager.ScreenWeapon.ShowWeapon = wasWeaponShown;
+                    }
+
+                    if (GameManager.Instance.PlayerMotor != null)
+                    {
+                        GameManager.Instance.PlayerMotor.enabled = true;
+                        GameManager.Instance.PlayerMotor.CancelMovement = true;
+                    }
+
+                    if (GameManager.Instance.PlayerMouseLook != null)
+                    {
+                        GameManager.Instance.PlayerMouseLook.enabled = true;
+                        GameManager.Instance.PlayerMouseLook.enableMouseLook = true;
+                        GameManager.Instance.PlayerMouseLook.SetFacing(cameraYaw, cameraPitch);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[FreeCam] Safe teardown warning: {ex.Message}");
             }
 
             // Destroy local puppet
             DestroyLocalPuppet();
-
-            // Re-enable player motor & mouse look
-            if (GameManager.Instance != null && GameManager.Instance.PlayerMotor != null)
-            {
-                GameManager.Instance.PlayerMotor.enabled = true;
-                GameManager.Instance.PlayerMotor.CancelMovement = true;
-            }
-
-            if (GameManager.Instance != null && GameManager.Instance.PlayerMouseLook != null)
-            {
-                GameManager.Instance.PlayerMouseLook.enabled = true;
-                GameManager.Instance.PlayerMouseLook.enableMouseLook = true;
-                GameManager.Instance.PlayerMouseLook.SetFacing(cameraYaw, cameraPitch);
-            }
 
             isActive = false;
             isTopDownView = false;
@@ -349,6 +375,10 @@ namespace DaggerfallWorkshop.Game.Networking
         public void ToggleTopDownView()
         {
             if (!isActive || cameraTransform == null)
+                return;
+
+            // Suspend FreeCam camera updates while DM is possessing an entity
+            if (DMNpcController.Instance != null && DMNpcController.Instance.IsPossessing)
                 return;
 
             isTopDownView = !isTopDownView;

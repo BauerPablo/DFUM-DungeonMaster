@@ -39,6 +39,7 @@ namespace DaggerfallWorkshop.Game.Networking
         private Transform originalCameraParent = null;
         private Vector3 originalCameraLocalPos;
         private Quaternion originalCameraLocalRot;
+        private bool wasFreeCamActiveBeforePossession = false;
 
         // Perspective & Look
         private bool isThirdPerson = true;
@@ -78,9 +79,9 @@ namespace DaggerfallWorkshop.Game.Networking
             if (attackTimer > 0f)
                 attackTimer -= Time.deltaTime;
 
-            // Check release hotkeys (Esc or Ctrl+F8 or F8)
+            // Check release hotkeys (Esc or Ctrl+F8 or F8 or Ctrl+H or Ctrl+P)
             bool ctrlHeld = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
-            if (Input.GetKeyDown(KeyCode.Escape) || Input.GetKeyDown(KeyCode.F8) || (ctrlHeld && Input.GetKeyDown(KeyCode.F8)))
+            if (Input.GetKeyDown(KeyCode.Escape) || Input.GetKeyDown(KeyCode.F8) || (ctrlHeld && Input.GetKeyDown(KeyCode.F8)) || (ctrlHeld && (Input.GetKeyDown(KeyCode.H) || Input.GetKeyDown(KeyCode.P))))
             {
                 ReleasePossession();
                 return;
@@ -93,10 +94,11 @@ namespace DaggerfallWorkshop.Game.Networking
                 DaggerfallUI.AddHUDText($"[DM Possession] Perspective: {(isThirdPerson ? "Third-Person Chase" : "First-Person Eyes")}");
             }
 
-            // Do not capture controls if modal UI is open
-            bool isModalWindowOpen = DaggerfallUI.UIManager != null &&
+            // Do not capture controls if modal UI is open or Master Suite is open
+            bool isModalWindowOpen = (DaggerfallUI.UIManager != null &&
                                      DaggerfallUI.UIManager.TopWindow != null &&
-                                     !(DaggerfallUI.UIManager.TopWindow is DaggerfallWorkshop.Game.UserInterfaceWindows.DaggerfallHUD);
+                                     !(DaggerfallUI.UIManager.TopWindow is DaggerfallWorkshop.Game.UserInterfaceWindows.DaggerfallHUD)) ||
+                                     (DFUNetworkManager.Instance != null && DFUNetworkManager.Instance.IsAnyGuiOpen);
 
             if (!Application.isFocused || isModalWindowOpen)
             {
@@ -254,32 +256,102 @@ namespace DaggerfallWorkshop.Game.Networking
             }
         }
 
+        private GameObject FindMobileEntityAlongRay(Ray ray, Camera mainCam)
+        {
+            int playerLayer = LayerMask.NameToLayer("Player");
+            int mask = playerLayer >= 0 ? ~(1 << playerLayer) : ~0;
+
+            // 1. Precise RaycastAll
+            RaycastHit[] hits = Physics.RaycastAll(ray, 150f, mask);
+            Array.Sort(hits, (a, b) => a.distance.CompareTo(b.distance));
+            foreach (var hit in hits)
+            {
+                GameObject candidate = ExtractTargetCandidate(hit.collider);
+                if (candidate != null)
+                    return candidate;
+            }
+
+            // 2. Generous SphereCastAll (makes targeting thin sprite billboards much more forgiving)
+            RaycastHit[] sphereHits = Physics.SphereCastAll(ray, 0.85f, 150f, mask);
+            Array.Sort(sphereHits, (a, b) => a.distance.CompareTo(b.distance));
+            foreach (var hit in sphereHits)
+            {
+                GameObject candidate = ExtractTargetCandidate(hit.collider);
+                if (candidate != null)
+                    return candidate;
+            }
+
+            return null;
+        }
+
+        private GameObject ExtractTargetCandidate(Collider col)
+        {
+            if (col == null) return null;
+            if (GameManager.Instance != null && col.gameObject == GameManager.Instance.PlayerObject) return null;
+            if (col.GetComponentInParent<NativePlayerPuppet>() != null) return null;
+
+            EnemyMotor motor = col.GetComponentInParent<EnemyMotor>();
+            if (motor != null && motor.gameObject != GameManager.Instance.PlayerObject)
+                return motor.gameObject;
+
+            MobilePersonNPC person = col.GetComponentInParent<MobilePersonNPC>();
+            if (person != null && person.gameObject != GameManager.Instance.PlayerObject)
+                return person.gameObject;
+
+            DaggerfallEntityBehaviour behaviour = col.GetComponentInParent<DaggerfallEntityBehaviour>();
+            if (behaviour != null && behaviour.gameObject != GameManager.Instance.PlayerObject)
+                return behaviour.gameObject;
+
+            return null;
+        }
+
         public bool PossessTargetUnderCrosshair()
         {
             Camera mainCam = GameManager.Instance != null ? GameManager.Instance.MainCamera : null;
             if (mainCam == null)
                 return false;
 
-            Ray ray;
+            // 1. First priority: Check center crosshair ray (where the DM is aiming forward)
+            Ray centerRay = new Ray(mainCam.transform.position, mainCam.transform.forward);
+            GameObject target = FindMobileEntityAlongRay(centerRay, mainCam);
+            if (target != null)
+                return PossessEntity(target);
+
+            // 2. Second priority: If cursor is active / unlocked, check cursor screen ray
             if (Cursor.lockState != CursorLockMode.Locked)
-                ray = mainCam.ScreenPointToRay(Input.mousePosition);
-            else
-                ray = new Ray(mainCam.transform.position, mainCam.transform.forward);
-
-            if (Physics.Raycast(ray, out RaycastHit hit, 150f))
             {
-                EnemyMotor motor = hit.collider.GetComponentInParent<EnemyMotor>();
-                if (motor != null)
-                    return PossessEntity(motor.gameObject);
-
-                MobilePersonNPC person = hit.collider.GetComponentInParent<MobilePersonNPC>();
-                if (person != null)
-                    return PossessEntity(person.gameObject);
-
-                DaggerfallEntityBehaviour behaviour = hit.collider.GetComponentInParent<DaggerfallEntityBehaviour>();
-                if (behaviour != null && behaviour.gameObject != GameManager.Instance.PlayerObject)
-                    return PossessEntity(behaviour.gameObject);
+                Ray mouseRay = mainCam.ScreenPointToRay(Input.mousePosition);
+                target = FindMobileEntityAlongRay(mouseRay, mainCam);
+                if (target != null)
+                    return PossessEntity(target);
             }
+
+            // 3. Third priority fallback: Find the closest living enemy or NPC in front of the camera (within 25m, forward cone)
+            DaggerfallEntityBehaviour[] allBehaviours = FindObjectsOfType<DaggerfallEntityBehaviour>();
+            GameObject bestCandidate = null;
+            float bestDist = 25f;
+            foreach (var b in allBehaviours)
+            {
+                if (b == null || (GameManager.Instance != null && b.gameObject == GameManager.Instance.PlayerObject))
+                    continue;
+                if (b.entityType != EntityTypes.EnemyMonster && b.entityType != EntityTypes.EnemyClass)
+                    continue;
+
+                Vector3 toEntity = b.transform.position - mainCam.transform.position;
+                float dist = toEntity.magnitude;
+                if (dist > 25f)
+                    continue;
+
+                float dot = Vector3.Dot(mainCam.transform.forward, toEntity.normalized);
+                if (dot > 0.5f && dist < bestDist) // In front within ~60 degrees
+                {
+                    bestDist = dist;
+                    bestCandidate = b.gameObject;
+                }
+            }
+
+            if (bestCandidate != null)
+                return PossessEntity(bestCandidate);
 
             DaggerfallUI.AddHUDText("[DM Possession] No mobile entity targeted. Aim at an enemy or NPC.");
             return false;
@@ -287,7 +359,7 @@ namespace DaggerfallWorkshop.Game.Networking
 
         public bool PossessEntity(GameObject target)
         {
-            if (target == null || target == GameManager.Instance.PlayerObject)
+            if (target == null || (GameManager.Instance != null && target == GameManager.Instance.PlayerObject))
                 return false;
 
             if (isPossessing)
@@ -310,28 +382,61 @@ namespace DaggerfallWorkshop.Game.Networking
             if (possessedSenses != null)
                 possessedSenses.enabled = false;
 
-            // Camera setup
-            Camera mainCam = GameManager.Instance.MainCamera;
+            // FreeCam awareness & camera setup
+            wasFreeCamActiveBeforePossession = (FreeCamController.Instance != null && FreeCamController.Instance.IsActive);
+
+            Camera mainCam = GameManager.Instance != null ? GameManager.Instance.MainCamera : null;
             if (mainCam != null)
             {
                 cameraTransform = mainCam.transform;
-                originalCameraParent = cameraTransform.parent;
-                originalCameraLocalPos = cameraTransform.localPosition;
-                originalCameraLocalRot = cameraTransform.localRotation;
+
+                if (wasFreeCamActiveBeforePossession && FreeCamController.Instance != null && FreeCamController.Instance.OriginalCameraParent != null)
+                {
+                    originalCameraParent = FreeCamController.Instance.OriginalCameraParent;
+                }
+                else
+                {
+                    originalCameraParent = cameraTransform.parent;
+                    originalCameraLocalPos = cameraTransform.localPosition;
+                    originalCameraLocalRot = cameraTransform.localRotation;
+                }
 
                 cameraTransform.SetParent(null);
             }
 
             // Freeze player motor & mouse look if walking
-            if (GameManager.Instance.PlayerMotor != null)
+            try
             {
-                GameManager.Instance.PlayerMotor.CancelMovement = true;
-                GameManager.Instance.PlayerMotor.enabled = false;
+                if (GameManager.Instance != null)
+                {
+                    if (GameManager.Instance.PlayerMotor != null)
+                    {
+                        GameManager.Instance.PlayerMotor.CancelMovement = true;
+                        GameManager.Instance.PlayerMotor.enabled = false;
+                    }
+                    if (GameManager.Instance.PlayerMouseLook != null)
+                    {
+                        GameManager.Instance.PlayerMouseLook.enableMouseLook = false;
+                        GameManager.Instance.PlayerMouseLook.enabled = false;
+                    }
+                }
             }
-            if (GameManager.Instance.PlayerMouseLook != null)
+            catch (Exception ex)
             {
-                GameManager.Instance.PlayerMouseLook.enableMouseLook = false;
-                GameManager.Instance.PlayerMouseLook.enabled = false;
+                Debug.LogWarning($"[DM Possession] Player freeze warning: {ex.Message}");
+            }
+
+            // Automatically close Master Suite window if open so DM immediately has direct control
+            if (DFUNetworkManager.Instance != null && DFUNetworkManager.Instance.showTtrpgSuite)
+            {
+                DFUNetworkManager.Instance.showTtrpgSuite = false;
+            }
+
+            // Lock cursor
+            if (Application.isFocused)
+            {
+                Cursor.lockState = CursorLockMode.Locked;
+                Cursor.visible = false;
             }
 
             yaw = possessedObject.transform.eulerAngles.y;
@@ -339,7 +444,7 @@ namespace DaggerfallWorkshop.Game.Networking
 
             isPossessing = true;
             string targetName = possessedEntity != null ? possessedEntity.Name : possessedObject.name;
-            DaggerfallUI.AddHUDText($"[DM Possession] POSSESSION ACTIVE: {targetName} (WASD: Move, LClick: Attack, Tab: 1st/3rd View, Esc: Release)");
+            DaggerfallUI.AddHUDText($"[DM Possession] POSSESSION ACTIVE: {targetName} (WASD: Move, LClick: Attack, Tab: 1st/3rd View, Esc/F8/Ctrl+H: Release)");
             return true;
         }
 
@@ -356,8 +461,12 @@ namespace DaggerfallWorkshop.Game.Networking
             if (possessedSenses != null)
                 possessedSenses.enabled = true;
 
-            // Restore camera back to original anchor
-            if (cameraTransform != null)
+            // Restore camera back to appropriate anchor
+            if (wasFreeCamActiveBeforePossession && FreeCamController.Instance != null && FreeCamController.Instance.IsActive)
+            {
+                FreeCamController.Instance.SetCameraPositionAndFacing(cameraTransform != null ? cameraTransform.position : Vector3.zero, yaw, pitch);
+            }
+            else if (cameraTransform != null)
             {
                 cameraTransform.SetParent(originalCameraParent);
                 cameraTransform.localPosition = originalCameraLocalPos;
@@ -365,17 +474,28 @@ namespace DaggerfallWorkshop.Game.Networking
             }
 
             // Re-enable player motor & mouse look if not in FreeCam
-            if (FreeCamController.Instance == null || !FreeCamController.Instance.IsActive)
+            if (!wasFreeCamActiveBeforePossession && (FreeCamController.Instance == null || !FreeCamController.Instance.IsActive))
             {
-                if (GameManager.Instance != null && GameManager.Instance.PlayerMotor != null)
+                try
                 {
-                    GameManager.Instance.PlayerMotor.enabled = true;
-                    GameManager.Instance.PlayerMotor.CancelMovement = true;
+                    GameObject player = GameObject.FindGameObjectWithTag("Player");
+                    if (player != null && GameManager.Instance != null)
+                    {
+                        if (GameManager.Instance.PlayerMotor != null)
+                        {
+                            GameManager.Instance.PlayerMotor.enabled = true;
+                            GameManager.Instance.PlayerMotor.CancelMovement = true;
+                        }
+                        if (GameManager.Instance.PlayerMouseLook != null)
+                        {
+                            GameManager.Instance.PlayerMouseLook.enabled = true;
+                            GameManager.Instance.PlayerMouseLook.enableMouseLook = true;
+                        }
+                    }
                 }
-                if (GameManager.Instance != null && GameManager.Instance.PlayerMouseLook != null)
+                catch (Exception ex)
                 {
-                    GameManager.Instance.PlayerMouseLook.enabled = true;
-                    GameManager.Instance.PlayerMouseLook.enableMouseLook = true;
+                    Debug.LogWarning($"[DM Possession] Release teardown warning: {ex.Message}");
                 }
             }
 

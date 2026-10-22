@@ -38,7 +38,7 @@ This testing guide covers all features introduced in **Phase 15 (v0.9.15)** of t
 - [ ] Host or join as Dungeon Master (`Ctrl + F11` to open Master Suite).
 - [ ] In the `[ Spawns & NPCs ]` tab, spawn any enemy (e.g. *SkeletalWarrior* or *Orc*).
 - [ ] Aim your crosshair at the spawned creature.
-- [ ] Click **`✦ Poseer Objetivo Apuntado (Aim & Inhabit) ✦`** (or open tab and click the button).
+- [ ] Click **`✦ Poseer Objetivo Apuntado (Aim & Inhabit) [Ctrl+H / Ctrl+P] ✦`** in the menu, OR simply press **`Ctrl + H`** / **`Ctrl + P`** in real time while aiming at it.
 - [ ] Verify:
   - HUD displays: `"[DM Possession] POSSESSION ACTIVE: SkeletalWarrior..."`
   - Autonomous AI (`EnemyMotor`, `EnemyAttack`) freezes immediately.
@@ -55,8 +55,8 @@ This testing guide covers all features introduced in **Phase 15 (v0.9.15)** of t
 
 ---
 
-### [ ] Case 3: Seamless Release of Possession (`Esc` / `F8`) (Pillar 1)
-- [ ] While controlling the creature, press **`Esc`** or **`F8`** (or click `✦ Liberar Posesión ✦` in Master Suite).
+### [ ] Case 3: Seamless Release of Possession (`Esc` / `F8` / `Ctrl+H`) (Pillar 1)
+- [ ] While controlling the creature, press **`Esc`**, **`F8`**, or **`Ctrl + H`** (or click `✦ Liberar Posesión ✦` in Master Suite).
 - [ ] Verify:
   - Creature's autonomous AI is restored.
   - DM camera detaches and returns smoothly to previous player/spectator position.
