@@ -38,6 +38,9 @@ namespace DaggerfallWorkshop.Game.Networking
         private Transform cameraTransform = null;
         private Transform originalCameraParent = null;
         private Vector3 originalCameraLocalPos;
+        private PlayerMouseLook cachedMouseLook = null;
+        private PlayerMotor cachedPlayerMotor = null;
+        private static bool isQuitting = false;
         private Quaternion originalCameraLocalRot;
         private bool wasFreeCamActiveBeforePossession = false;
 
@@ -52,6 +55,7 @@ namespace DaggerfallWorkshop.Game.Networking
         // Attack cooldown
         private float attackTimer = 0f;
         private const float AttackCooldown = 0.85f;
+        private int possessionFrame = -1;
 
         private void Awake()
         {
@@ -75,13 +79,17 @@ namespace DaggerfallWorkshop.Game.Networking
             if (!isPossessing || possessedObject == null)
                 return;
 
+            // Guard against instant release on the frame possession is initiated
+            if (Time.frameCount == possessionFrame)
+                return;
+
             // Attack cooldown decrement
             if (attackTimer > 0f)
                 attackTimer -= Time.deltaTime;
 
-            // Check release hotkeys (Esc or Ctrl+F8 or F8 or Ctrl+H or Ctrl+P)
+            // Check release hotkeys (Esc or F8 or Ctrl+F8)
             bool ctrlHeld = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
-            if (Input.GetKeyDown(KeyCode.Escape) || Input.GetKeyDown(KeyCode.F8) || (ctrlHeld && Input.GetKeyDown(KeyCode.F8)) || (ctrlHeld && (Input.GetKeyDown(KeyCode.H) || Input.GetKeyDown(KeyCode.P))))
+            if (Input.GetKeyDown(KeyCode.Escape) || Input.GetKeyDown(KeyCode.F8) || (ctrlHeld && Input.GetKeyDown(KeyCode.F8)))
             {
                 ReleasePossession();
                 return;
@@ -334,7 +342,7 @@ namespace DaggerfallWorkshop.Game.Networking
             {
                 if (b == null || (GameManager.Instance != null && b.gameObject == GameManager.Instance.PlayerObject))
                     continue;
-                if (b.entityType != EntityTypes.EnemyMonster && b.entityType != EntityTypes.EnemyClass)
+                if (b.EntityType != EntityTypes.EnemyMonster && b.EntityType != EntityTypes.EnemyClass)
                     continue;
 
                 Vector3 toEntity = b.transform.position - mainCam.transform.position;
@@ -404,21 +412,23 @@ namespace DaggerfallWorkshop.Game.Networking
                 cameraTransform.SetParent(null);
             }
 
-            // Freeze player motor & mouse look if walking
+            // Freeze player motor & mouse look safely
             try
             {
-                if (GameManager.Instance != null)
+                if (mainCam != null)
+                    cachedMouseLook = mainCam.GetComponent<PlayerMouseLook>();
+                if (GameManager.Instance != null && GameManager.Instance.PlayerObject != null)
+                    cachedPlayerMotor = GameManager.Instance.PlayerObject.GetComponent<PlayerMotor>();
+
+                if (cachedPlayerMotor != null)
                 {
-                    if (GameManager.Instance.PlayerMotor != null)
-                    {
-                        GameManager.Instance.PlayerMotor.CancelMovement = true;
-                        GameManager.Instance.PlayerMotor.enabled = false;
-                    }
-                    if (GameManager.Instance.PlayerMouseLook != null)
-                    {
-                        GameManager.Instance.PlayerMouseLook.enableMouseLook = false;
-                        GameManager.Instance.PlayerMouseLook.enabled = false;
-                    }
+                    cachedPlayerMotor.CancelMovement = true;
+                    cachedPlayerMotor.enabled = false;
+                }
+                if (cachedMouseLook != null)
+                {
+                    cachedMouseLook.enableMouseLook = false;
+                    cachedMouseLook.enabled = false;
                 }
             }
             catch (Exception ex)
@@ -442,6 +452,7 @@ namespace DaggerfallWorkshop.Game.Networking
             yaw = possessedObject.transform.eulerAngles.y;
             pitch = 15f;
 
+            possessionFrame = Time.frameCount;
             isPossessing = true;
             string targetName = possessedEntity != null ? possessedEntity.Name : possessedObject.name;
             DaggerfallUI.AddHUDText($"[DM Possession] POSSESSION ACTIVE: {targetName} (WASD: Move, LClick: Attack, Tab: 1st/3rd View, Esc/F8/Ctrl+H: Release)");
@@ -478,19 +489,17 @@ namespace DaggerfallWorkshop.Game.Networking
             {
                 try
                 {
-                    GameObject player = GameObject.FindGameObjectWithTag("Player");
-                    if (player != null && GameManager.Instance != null)
+                    if (cachedPlayerMotor != null)
                     {
-                        if (GameManager.Instance.PlayerMotor != null)
-                        {
-                            GameManager.Instance.PlayerMotor.enabled = true;
-                            GameManager.Instance.PlayerMotor.CancelMovement = true;
-                        }
-                        if (GameManager.Instance.PlayerMouseLook != null)
-                        {
-                            GameManager.Instance.PlayerMouseLook.enabled = true;
-                            GameManager.Instance.PlayerMouseLook.enableMouseLook = true;
-                        }
+                        cachedPlayerMotor.enabled = true;
+                        cachedPlayerMotor.CancelMovement = true;
+                        cachedPlayerMotor = null;
+                    }
+                    if (cachedMouseLook != null)
+                    {
+                        cachedMouseLook.enabled = true;
+                        cachedMouseLook.enableMouseLook = true;
+                        cachedMouseLook = null;
                     }
                 }
                 catch (Exception ex)
@@ -512,14 +521,31 @@ namespace DaggerfallWorkshop.Game.Networking
             DaggerfallUI.AddHUDText("[DM Possession] Possession RELEASED. Restored previous DM state.");
         }
 
+        private void OnApplicationQuit()
+        {
+            isQuitting = true;
+        }
+
         private void OnDisable()
         {
+            if (isQuitting)
+            {
+                isPossessing = false;
+                return;
+            }
+
             if (isPossessing)
                 ReleasePossession();
         }
 
         private void OnDestroy()
         {
+            if (isQuitting)
+            {
+                isPossessing = false;
+                return;
+            }
+
             if (isPossessing)
                 ReleasePossession();
         }

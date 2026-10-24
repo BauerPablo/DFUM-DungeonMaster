@@ -196,6 +196,8 @@ namespace DaggerfallWorkshop.Game.Networking
         private float currentVoteTimer = 0f;
         private const float DefaultVoteTimeout = 60f;
         public bool isDmInvisible = false;
+        private int dmEconomySelectedConnId = -1;
+        private int dmForgeSelectedConnId = 0;
         public DMEntityMode currentDmEntityMode = DMEntityMode.PhysicalAvatar;
         public DMEntityMode CurrentDmEntityMode => currentDmEntityMode;
         public bool IsSpectatorSpirit => currentDmEntityMode == DMEntityMode.SpectatorSpirit;
@@ -358,10 +360,10 @@ namespace DaggerfallWorkshop.Game.Networking
                 }
             }
 
-            // DM Quick Possess / Inhabit NPC under crosshair: Ctrl + H or Ctrl + P
-            if (NetworkSession.IsServer || localLobbyIsDm)
+            // DM Quick Possess / Inhabit NPC under crosshair: Ctrl + H
+            if (NetworkSession.IsServer || localLobbyIsDm || NetworkSession.IsSinglePlayer)
             {
-                if (ctrlHeld && (Input.GetKeyDown(KeyCode.H) || Input.GetKeyDown(KeyCode.P)))
+                if (ctrlHeld && Input.GetKeyDown(KeyCode.H))
                 {
                     if (DMNpcController.Instance != null)
                     {
@@ -879,6 +881,11 @@ namespace DaggerfallWorkshop.Game.Networking
             NetworkClient.RegisterHandler<MsgTeachSpell>(OnClientReceiveTeachSpell);
             NetworkClient.RegisterHandler<MsgLobbyStateSync>(OnClientReceiveLobbyStateSync);
             NetworkClient.RegisterHandler<MsgLobbyLaunchSession>(OnClientReceiveLobbyLaunchSession);
+            NetworkClient.RegisterHandler<MsgEarthquake>(OnClientReceiveEarthquake);
+            NetworkClient.RegisterHandler<MsgPlayWorldSound>(OnClientReceivePlayWorldSound);
+            NetworkClient.RegisterHandler<MsgGrantGold>(OnClientReceiveGrantGold);
+            NetworkClient.RegisterHandler<MsgPardonCrimes>(OnClientReceivePardonCrimes);
+            NetworkClient.RegisterHandler<MsgGrantForgedItem>(OnClientReceiveGrantForgedItem);
         }
 
         public override void OnStopClient()
@@ -926,6 +933,11 @@ namespace DaggerfallWorkshop.Game.Networking
             NetworkClient.UnregisterHandler<MsgTeachSpell>();
             NetworkClient.UnregisterHandler<MsgLobbyStateSync>();
             NetworkClient.UnregisterHandler<MsgLobbyLaunchSession>();
+            NetworkClient.UnregisterHandler<MsgEarthquake>();
+            NetworkClient.UnregisterHandler<MsgPlayWorldSound>();
+            NetworkClient.UnregisterHandler<MsgGrantGold>();
+            NetworkClient.UnregisterHandler<MsgPardonCrimes>();
+            NetworkClient.UnregisterHandler<MsgGrantForgedItem>();
             activeDialogueBubbles.Clear();
             ClosePartyVoteWindow();
             showPlayerInteractionWindow = false;
@@ -2196,6 +2208,108 @@ namespace DaggerfallWorkshop.Game.Networking
 
         #endregion
 
+        #region DM World & Economy Helpers & Handlers
+
+        private void DrawPartyMemberSelector(ref int selectedConnId)
+        {
+            GUILayout.BeginHorizontal();
+            bool allSel = (selectedConnId == -1);
+            if (GUILayout.Button("✦ Todos (Party) ✦", allSel ? DarkFantasyPixelArtTheme.EmeraldButtonStyle : GUI.skin.button, GUILayout.Height(24)))
+            {
+                selectedConnId = -1;
+            }
+            bool dmSel = (selectedConnId == 0);
+            if (GUILayout.Button("DM (Tú)", dmSel ? DarkFantasyPixelArtTheme.EmeraldButtonStyle : GUI.skin.button, GUILayout.Height(24)))
+            {
+                selectedConnId = 0;
+            }
+
+            foreach (var kvp in connectedPlayerProfiles)
+            {
+                if (kvp.Key == 0) continue;
+                string pName = !string.IsNullOrEmpty(kvp.Value.playerName) ? kvp.Value.playerName : $"Jugador {kvp.Key}";
+                bool isSel = (selectedConnId == kvp.Key);
+                if (GUILayout.Button(pName, isSel ? DarkFantasyPixelArtTheme.EmeraldButtonStyle : GUI.skin.button, GUILayout.Height(24)))
+                {
+                    selectedConnId = kvp.Key;
+                }
+            }
+            GUILayout.EndHorizontal();
+
+            string targetLabel = selectedConnId == -1 ? "Todos los miembros de la party" : (selectedConnId == 0 ? "DM (Tú)" : (connectedPlayerProfiles.TryGetValue(selectedConnId, out var p) ? p.playerName : $"ID {selectedConnId}"));
+            GUILayout.Label($"<color=#AAAAAA>Destinatario:</color> <color=#FFDF78><b>{targetLabel}</b></color>");
+        }
+
+        private void OnClientReceiveEarthquake(MsgEarthquake msg)
+        {
+            if (NetworkSession.IsHost) return;
+            StartCoroutine(EarthquakeCoroutine(msg.duration, msg.magnitude));
+        }
+
+        private void OnClientReceivePlayWorldSound(MsgPlayWorldSound msg)
+        {
+            if (NetworkSession.IsHost) return;
+            DaggerfallUI.Instance?.PlayOneShot((SoundClips)msg.soundClip);
+        }
+
+        private void OnClientReceiveGrantGold(MsgGrantGold msg)
+        {
+            if (NetworkSession.IsHost) return;
+            if (msg.targetConnectionId != -1 && msg.targetConnectionId != localConnectionId) return;
+
+            if (GameManager.Instance != null && GameManager.Instance.PlayerEntity != null)
+            {
+                GameManager.Instance.PlayerEntity.GoldPieces += msg.amount;
+                DaggerfallUI.AddHUDText($"[DM Fortuna] ¡El Dungeon Master te ha otorgado {msg.amount:N0} piezas de oro!");
+                DaggerfallUI.Instance?.PlayOneShot(SoundClips.GoldPieces);
+            }
+        }
+
+        private void OnClientReceivePardonCrimes(MsgPardonCrimes msg)
+        {
+            if (NetworkSession.IsHost) return;
+            if (msg.targetConnectionId != -1 && msg.targetConnectionId != localConnectionId) return;
+
+            if (GameManager.Instance != null && GameManager.Instance.PlayerEntity != null)
+            {
+                GameManager.Instance.PlayerEntity.CrimeCommitted = PlayerEntity.Crimes.None;
+                int region = GameManager.Instance.PlayerGPS != null ? GameManager.Instance.PlayerGPS.CurrentRegionIndex : -1;
+                if (region >= 0 && region < GameManager.Instance.PlayerEntity.RegionData.Length)
+                {
+                    GameManager.Instance.PlayerEntity.RegionData[region].LegalRep = 50;
+                }
+                DaggerfallUI.AddHUDText("[DM Indulto] ¡El Dungeon Master ha perdonado todos tus crímenes y restaurado tu reputación legal!");
+            }
+        }
+
+        private void OnClientReceiveGrantForgedItem(MsgGrantForgedItem msg)
+        {
+            if (NetworkSession.IsHost) return;
+            if (msg.targetConnectionId != -1 && msg.targetConnectionId != localConnectionId) return;
+
+            if (GameManager.Instance != null && GameManager.Instance.PlayerEntity != null)
+            {
+                DaggerfallUnityItem item = null;
+                if (msg.isWeapon)
+                {
+                    item = ItemBuilder.CreateWeapon((Weapons)msg.itemType, (WeaponMaterialTypes)msg.materialType);
+                }
+                else
+                {
+                    item = ItemBuilder.CreateArmor(GameManager.Instance.PlayerEntity.Gender, GameManager.Instance.PlayerEntity.Race, (Armor)msg.itemType, (ArmorMaterialTypes)msg.materialType);
+                }
+
+                if (item != null)
+                {
+                    GameManager.Instance.PlayerEntity.Items.AddItem(item);
+                    DaggerfallUI.AddHUDText($"[DM Loot Forge] ¡El Dungeon Master te ha forjado: {item.ItemName}!");
+                    DaggerfallUI.Instance?.PlayOneShot(SoundClips.MakeItem);
+                }
+            }
+        }
+
+        #endregion
+
         #region Cell Transition Coordination
 
         public void ReparentAllPuppets()
@@ -2759,6 +2873,19 @@ namespace DaggerfallWorkshop.Game.Networking
         public void TriggerEarthquake(float duration = 4.0f, float magnitude = 0.35f)
         {
             StartCoroutine(EarthquakeCoroutine(duration, magnitude));
+            if (NetworkServer.active)
+            {
+                NetworkServer.SendToAll(new MsgEarthquake { duration = duration, magnitude = magnitude });
+            }
+        }
+
+        public void TriggerAmbientSound(SoundClips clip)
+        {
+            DaggerfallUI.Instance?.PlayOneShot(clip);
+            if (NetworkServer.active)
+            {
+                NetworkServer.SendToAll(new MsgPlayWorldSound { soundClip = (int)clip });
+            }
         }
 
         private System.Collections.IEnumerator EarthquakeCoroutine(float duration, float magnitude)
@@ -2787,7 +2914,7 @@ namespace DaggerfallWorkshop.Game.Networking
             DaggerfallUI.AddHUDText("[DM World Event] El terremoto ha cesado.");
         }
 
-        public void ForgeCustomWeapon(Weapons weaponType, WeaponMaterialTypes material, bool directToInventory)
+        public void ForgeCustomWeapon(Weapons weaponType, WeaponMaterialTypes material, bool directToInventory, int targetConnId = 0)
         {
             if (GameManager.Instance == null || GameManager.Instance.PlayerEntity == null) return;
             DaggerfallUnityItem item = ItemBuilder.CreateWeapon(weaponType, material);
@@ -2795,8 +2922,34 @@ namespace DaggerfallWorkshop.Game.Networking
 
             if (directToInventory)
             {
-                GameManager.Instance.PlayerEntity.Items.AddItem(item);
-                DaggerfallUI.AddHUDText($"[DM Loot Forge] Forjado {item.ItemName} y guardado en tu inventario.");
+                if (targetConnId == 0 || targetConnId == -1)
+                {
+                    GameManager.Instance.PlayerEntity.Items.AddItem(item);
+                    DaggerfallUI.AddHUDText($"[DM Loot Forge] Forjado {item.ItemName} y guardado en tu inventario.");
+                }
+
+                if (targetConnId != 0 && NetworkServer.active)
+                {
+                    MsgGrantForgedItem msg = new MsgGrantForgedItem
+                    {
+                        targetConnectionId = targetConnId,
+                        isWeapon = true,
+                        itemType = (int)weaponType,
+                        materialType = (int)material
+                    };
+
+                    if (targetConnId == -1)
+                    {
+                        NetworkServer.SendToAll(msg);
+                        DaggerfallUI.AddHUDText($"[DM Loot Forge] Forjado {item.ItemName} y enviado a TODA la party.");
+                    }
+                    else if (NetworkServer.connections.TryGetValue(targetConnId, out var conn) && conn != null)
+                    {
+                        conn.Send(msg);
+                        string tName = connectedPlayerProfiles.TryGetValue(targetConnId, out var p) ? p.playerName : $"ID {targetConnId}";
+                        DaggerfallUI.AddHUDText($"[DM Loot Forge] Forjado {item.ItemName} y enviado al inventario de {tName}.");
+                    }
+                }
             }
             else
             {
@@ -2806,12 +2959,17 @@ namespace DaggerfallWorkshop.Game.Networking
                     Vector3 dropPos = GameManager.Instance.PlayerObject.transform.position + GameManager.Instance.PlayerObject.transform.forward * 1.5f;
                     container.transform.position = new Vector3(dropPos.x, container.transform.position.y, dropPos.z);
                     container.Items.AddItem(item);
-                    DaggerfallUI.AddHUDText($"[DM Loot Forge] Forjado {item.ItemName} y soltado en el suelo.");
+
+                    DFUNetworkLootRegistry.Register(container.LoadID, container);
+                    spawnedLootContainers.Add(container);
+                    BroadcastLootSpawn(container);
+
+                    DaggerfallUI.AddHUDText($"[DM Loot Forge] Forjado {item.ItemName} y soltado en el suelo (visible y sincronizado para todos).");
                 }
             }
         }
 
-        public void ForgeCustomArmor(Armor armorType, ArmorMaterialTypes material, bool directToInventory)
+        public void ForgeCustomArmor(Armor armorType, ArmorMaterialTypes material, bool directToInventory, int targetConnId = 0)
         {
             if (GameManager.Instance == null || GameManager.Instance.PlayerEntity == null) return;
             DaggerfallUnityItem item = ItemBuilder.CreateArmor(GameManager.Instance.PlayerEntity.Gender, GameManager.Instance.PlayerEntity.Race, armorType, material);
@@ -2819,8 +2977,34 @@ namespace DaggerfallWorkshop.Game.Networking
 
             if (directToInventory)
             {
-                GameManager.Instance.PlayerEntity.Items.AddItem(item);
-                DaggerfallUI.AddHUDText($"[DM Loot Forge] Forjado {item.ItemName} y guardado en tu inventario.");
+                if (targetConnId == 0 || targetConnId == -1)
+                {
+                    GameManager.Instance.PlayerEntity.Items.AddItem(item);
+                    DaggerfallUI.AddHUDText($"[DM Loot Forge] Forjado {item.ItemName} y guardado en tu inventario.");
+                }
+
+                if (targetConnId != 0 && NetworkServer.active)
+                {
+                    MsgGrantForgedItem msg = new MsgGrantForgedItem
+                    {
+                        targetConnectionId = targetConnId,
+                        isWeapon = false,
+                        itemType = (int)armorType,
+                        materialType = (int)material
+                    };
+
+                    if (targetConnId == -1)
+                    {
+                        NetworkServer.SendToAll(msg);
+                        DaggerfallUI.AddHUDText($"[DM Loot Forge] Forjado {item.ItemName} y enviado a TODA la party.");
+                    }
+                    else if (NetworkServer.connections.TryGetValue(targetConnId, out var conn) && conn != null)
+                    {
+                        conn.Send(msg);
+                        string tName = connectedPlayerProfiles.TryGetValue(targetConnId, out var p) ? p.playerName : $"ID {targetConnId}";
+                        DaggerfallUI.AddHUDText($"[DM Loot Forge] Forjado {item.ItemName} y enviado al inventario de {tName}.");
+                    }
+                }
             }
             else
             {
@@ -2830,22 +3014,91 @@ namespace DaggerfallWorkshop.Game.Networking
                     Vector3 dropPos = GameManager.Instance.PlayerObject.transform.position + GameManager.Instance.PlayerObject.transform.forward * 1.5f;
                     container.transform.position = new Vector3(dropPos.x, container.transform.position.y, dropPos.z);
                     container.Items.AddItem(item);
-                    DaggerfallUI.AddHUDText($"[DM Loot Forge] Forjado {item.ItemName} y soltado en el suelo.");
+
+                    DFUNetworkLootRegistry.Register(container.LoadID, container);
+                    spawnedLootContainers.Add(container);
+                    BroadcastLootSpawn(container);
+
+                    DaggerfallUI.AddHUDText($"[DM Loot Forge] Forjado {item.ItemName} y soltado en el suelo (visible y sincronizado para todos).");
                 }
             }
         }
 
+        public void GrantGold(int targetConnId, int amount)
+        {
+            if (targetConnId == 0 || targetConnId == -1)
+            {
+                if (GameManager.Instance != null && GameManager.Instance.PlayerEntity != null)
+                {
+                    GameManager.Instance.PlayerEntity.GoldPieces += amount;
+                    DaggerfallUI.AddHUDText($"[DM Oro] +{amount:N0} piezas de oro añadidas a tu inventario.");
+                    DaggerfallUI.Instance?.PlayOneShot(SoundClips.GoldPieces);
+                }
+            }
+
+            if (targetConnId != 0 && NetworkServer.active)
+            {
+                MsgGrantGold msg = new MsgGrantGold
+                {
+                    targetConnectionId = targetConnId,
+                    amount = amount
+                };
+
+                if (targetConnId == -1)
+                {
+                    NetworkServer.SendToAll(msg);
+                    DaggerfallUI.AddHUDText($"[DM Oro] +{amount:N0} piezas de oro otorgadas a TODA la party.");
+                }
+                else if (NetworkServer.connections.TryGetValue(targetConnId, out var conn) && conn != null)
+                {
+                    conn.Send(msg);
+                    string tName = connectedPlayerProfiles.TryGetValue(targetConnId, out var p) ? p.playerName : $"ID {targetConnId}";
+                    DaggerfallUI.AddHUDText($"[DM Oro] +{amount:N0} piezas de oro enviadas a {tName}.");
+                }
+            }
+        }
+
+        public void PardonCrimes(int targetConnId)
+        {
+            if (targetConnId == 0 || targetConnId == -1)
+            {
+                if (GameManager.Instance != null && GameManager.Instance.PlayerEntity != null)
+                {
+                    GameManager.Instance.PlayerEntity.CrimeCommitted = PlayerEntity.Crimes.None;
+                    int region = GameManager.Instance.PlayerGPS != null ? GameManager.Instance.PlayerGPS.CurrentRegionIndex : -1;
+                    if (region >= 0 && region < GameManager.Instance.PlayerEntity.RegionData.Length)
+                    {
+                        GameManager.Instance.PlayerEntity.RegionData[region].LegalRep = 50;
+                    }
+                }
+            }
+
+            if (targetConnId != 0 && NetworkServer.active)
+            {
+                MsgPardonCrimes msg = new MsgPardonCrimes
+                {
+                    targetConnectionId = targetConnId
+                };
+
+                if (targetConnId == -1)
+                {
+                    NetworkServer.SendToAll(msg);
+                }
+                else if (NetworkServer.connections.TryGetValue(targetConnId, out var conn) && conn != null)
+                {
+                    conn.Send(msg);
+                }
+            }
+
+            DespawnAllSpawnedEnemies();
+
+            string tName = targetConnId == -1 ? "Toda la party" : (targetConnId == 0 ? "DM (Tú)" : (connectedPlayerProfiles.TryGetValue(targetConnId, out var p) ? p.playerName : $"ID {targetConnId}"));
+            DaggerfallUI.AddHUDText($"[DM Ley] Crímenes perdonados y reputación legal restaurada para {tName}.");
+        }
+
         public void PardonAllCrimes()
         {
-            if (GameManager.Instance == null || GameManager.Instance.PlayerEntity == null) return;
-            GameManager.Instance.PlayerEntity.CrimeCommitted = PlayerEntity.Crimes.None;
-            int region = GameManager.Instance.PlayerGPS != null ? GameManager.Instance.PlayerGPS.CurrentRegionIndex : -1;
-            if (region >= 0 && region < GameManager.Instance.PlayerEntity.RegionData.Length)
-            {
-                GameManager.Instance.PlayerEntity.RegionData[region].LegalRep = 50;
-            }
-            DespawnAllSpawnedEnemies();
-            DaggerfallUI.AddHUDText("[DM Ley] Todos los crímenes perdonados y reputación legal restaurada.");
+            PardonCrimes(-1);
         }
 
         private readonly List<Guid> spawnedEnemyHistory = new List<Guid>();
@@ -3635,7 +3888,7 @@ namespace DaggerfallWorkshop.Game.Networking
             }
             else
             {
-                if (GUILayout.Button("✦ Poseer Objetivo Apuntado (Aim & Inhabit) [Ctrl+H / Ctrl+P] ✦", DarkFantasyPixelArtTheme.GoldButtonStyle, GUILayout.Height(28)))
+                if (GUILayout.Button("✦ Poseer Objetivo Apuntado (Aim & Inhabit) [Ctrl+H] ✦", DarkFantasyPixelArtTheme.GoldButtonStyle, GUILayout.Height(28)))
                 {
                     if (DMNpcController.Instance != null)
                     {
@@ -3643,7 +3896,7 @@ namespace DaggerfallWorkshop.Game.Networking
                         DMNpcController.Instance.PossessTargetUnderCrosshair();
                     }
                 }
-                GUILayout.Label("<color=#888888><i>Apuntá con la retícula a cualquier enemigo o NPC y pulsa el botón (o Ctrl+H / Ctrl+P) para habitarlo</i></color>");
+                GUILayout.Label("<color=#888888><i>Apuntá con la retícula a cualquier enemigo o NPC y pulsa el botón (o Ctrl+H) para habitarlo</i></color>");
             }
 
             GUILayout.Space(8);
@@ -3946,17 +4199,17 @@ namespace DaggerfallWorkshop.Game.Networking
             }
 
             GUILayout.Space(4);
-            GUILayout.Label("Disparadores de Audio Ambiental:");
+            GUILayout.Label("Disparadores de Audio Ambiental (Transmitido a todos):");
             GUILayout.BeginHorizontal();
-            if (GUILayout.Button("Trueno")) DaggerfallUI.Instance?.PlayOneShot(SoundClips.StormLightningThunder);
-            if (GUILayout.Button("Rugido Monstruo")) DaggerfallUI.Instance?.PlayOneShot(SoundClips.AmbientMonsterRoar);
-            if (GUILayout.Button("Aullido")) DaggerfallUI.Instance?.PlayOneShot(SoundClips.AmbientDistantHowl);
+            if (GUILayout.Button("Trueno")) TriggerAmbientSound(SoundClips.StormLightningThunder);
+            if (GUILayout.Button("Rugido Monstruo")) TriggerAmbientSound(SoundClips.AmbientMonsterRoar);
+            if (GUILayout.Button("Aullido")) TriggerAmbientSound(SoundClips.AmbientDistantHowl);
             GUILayout.EndHorizontal();
 
             GUILayout.BeginHorizontal();
-            if (GUILayout.Button("Grito")) DaggerfallUI.Instance?.PlayOneShot(SoundClips.HighPitchScream);
-            if (GUILayout.Button("Tambores")) DaggerfallUI.Instance?.PlayOneShot(SoundClips.AmbientDrums);
-            if (GUILayout.Button("Lamento")) DaggerfallUI.Instance?.PlayOneShot(SoundClips.ArenaGhost);
+            if (GUILayout.Button("Grito")) TriggerAmbientSound(SoundClips.HighPitchScream);
+            if (GUILayout.Button("Tambores")) TriggerAmbientSound(SoundClips.AmbientDrums);
+            if (GUILayout.Button("Lamento")) TriggerAmbientSound(SoundClips.ArenaGhost);
             GUILayout.EndHorizontal();
 
             // --- PILAR 5: ECONOMÍA & LEYES DM ---
@@ -3964,38 +4217,21 @@ namespace DaggerfallWorkshop.Game.Networking
             GUILayout.Label("✦ ECONOMÍA & LEYES DM ✦", DarkFantasyPixelArtTheme.SectionBannerStyle, GUILayout.ExpandWidth(true));
             GUILayout.Space(4);
 
+            GUILayout.Label("Destinatario de Oro y Gracia Legal:");
+            DrawPartyMemberSelector(ref dmEconomySelectedConnId);
+            GUILayout.Space(4);
+
             GUILayout.Label("Acuñar Oro (Mint Gold):");
             GUILayout.BeginHorizontal();
-            if (GUILayout.Button("+1,000 Oro"))
-            {
-                if (GameManager.Instance != null && GameManager.Instance.PlayerEntity != null)
-                {
-                    GameManager.Instance.PlayerEntity.GoldPieces += 1000;
-                    DaggerfallUI.AddHUDText("[DM Oro] +1,000 piezas de oro acuñadas.");
-                }
-            }
-            if (GUILayout.Button("+10,000 Oro"))
-            {
-                if (GameManager.Instance != null && GameManager.Instance.PlayerEntity != null)
-                {
-                    GameManager.Instance.PlayerEntity.GoldPieces += 10000;
-                    DaggerfallUI.AddHUDText("[DM Oro] +10,000 piezas de oro acuñadas.");
-                }
-            }
-            if (GUILayout.Button("+50,000 Oro"))
-            {
-                if (GameManager.Instance != null && GameManager.Instance.PlayerEntity != null)
-                {
-                    GameManager.Instance.PlayerEntity.GoldPieces += 50000;
-                    DaggerfallUI.AddHUDText("[DM Oro] +50,000 piezas de oro acuñadas.");
-                }
-            }
+            if (GUILayout.Button("+1,000 Oro")) GrantGold(dmEconomySelectedConnId, 1000);
+            if (GUILayout.Button("+10,000 Oro")) GrantGold(dmEconomySelectedConnId, 10000);
+            if (GUILayout.Button("+50,000 Oro")) GrantGold(dmEconomySelectedConnId, 50000);
             GUILayout.EndHorizontal();
 
             GUILayout.Space(4);
             if (GUILayout.Button("✦ Perdonar Crímenes & Recompensas (Pardon Bounties) ✦", DarkFantasyPixelArtTheme.EmeraldButtonStyle, GUILayout.Height(28)))
             {
-                PardonAllCrimes();
+                PardonCrimes(dmEconomySelectedConnId);
             }
         }
 
@@ -4271,15 +4507,19 @@ namespace DaggerfallWorkshop.Game.Networking
                         dmForgeMaterialIndex++;
                     GUILayout.EndHorizontal();
 
+                    GUILayout.Space(4);
+                    GUILayout.Label("Destinatario para Entrega en Inventario:");
+                    DrawPartyMemberSelector(ref dmForgeSelectedConnId);
+
                     GUILayout.Space(5);
                     GUILayout.BeginHorizontal();
-                    if (GUILayout.Button("✦ En Inventario ✦", DarkFantasyPixelArtTheme.EmeraldButtonStyle, GUILayout.Height(28)))
+                    if (GUILayout.Button("✦ Al Inventario ✦", DarkFantasyPixelArtTheme.EmeraldButtonStyle, GUILayout.Height(28)))
                     {
-                        ForgeCustomWeapon(dmForgeWeapons[dmForgeWeaponIndex], dmForgeMaterials[dmForgeMaterialIndex], true);
+                        ForgeCustomWeapon(dmForgeWeapons[dmForgeWeaponIndex], dmForgeMaterials[dmForgeMaterialIndex], true, dmForgeSelectedConnId);
                     }
-                    if (GUILayout.Button("✦ En Suelo ✦", DarkFantasyPixelArtTheme.GoldButtonStyle, GUILayout.Height(28)))
+                    if (GUILayout.Button("✦ En Suelo (Público) ✦", DarkFantasyPixelArtTheme.GoldButtonStyle, GUILayout.Height(28)))
                     {
-                        ForgeCustomWeapon(dmForgeWeapons[dmForgeWeaponIndex], dmForgeMaterials[dmForgeMaterialIndex], false);
+                        ForgeCustomWeapon(dmForgeWeapons[dmForgeWeaponIndex], dmForgeMaterials[dmForgeMaterialIndex], false, dmForgeSelectedConnId);
                     }
                     GUILayout.EndHorizontal();
                 }
@@ -4303,15 +4543,19 @@ namespace DaggerfallWorkshop.Game.Networking
                         dmForgeMaterialIndex++;
                     GUILayout.EndHorizontal();
 
+                    GUILayout.Space(4);
+                    GUILayout.Label("Destinatario para Entrega en Inventario:");
+                    DrawPartyMemberSelector(ref dmForgeSelectedConnId);
+
                     GUILayout.Space(5);
                     GUILayout.BeginHorizontal();
-                    if (GUILayout.Button("✦ En Inventario ✦", DarkFantasyPixelArtTheme.EmeraldButtonStyle, GUILayout.Height(28)))
+                    if (GUILayout.Button("✦ Al Inventario ✦", DarkFantasyPixelArtTheme.EmeraldButtonStyle, GUILayout.Height(28)))
                     {
-                        ForgeCustomArmor(dmForgeArmors[dmForgeArmorIndex], dmForgeArmorMaterials[safeMatIndex], true);
+                        ForgeCustomArmor(dmForgeArmors[dmForgeArmorIndex], dmForgeArmorMaterials[safeMatIndex], true, dmForgeSelectedConnId);
                     }
-                    if (GUILayout.Button("✦ En Suelo ✦", DarkFantasyPixelArtTheme.GoldButtonStyle, GUILayout.Height(28)))
+                    if (GUILayout.Button("✦ En Suelo (Público) ✦", DarkFantasyPixelArtTheme.GoldButtonStyle, GUILayout.Height(28)))
                     {
-                        ForgeCustomArmor(dmForgeArmors[dmForgeArmorIndex], dmForgeArmorMaterials[safeMatIndex], false);
+                        ForgeCustomArmor(dmForgeArmors[dmForgeArmorIndex], dmForgeArmorMaterials[safeMatIndex], false, dmForgeSelectedConnId);
                     }
                     GUILayout.EndHorizontal();
                 }

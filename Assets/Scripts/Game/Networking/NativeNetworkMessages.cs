@@ -750,6 +750,51 @@ namespace DaggerfallWorkshop.Game.Networking
         public string spellBundleJson;
     }
 
+    /// <summary>
+    /// Sent by Server/DM to all clients to trigger an authoritative screen shake and thunder roll.
+    /// </summary>
+    public struct MsgEarthquake : NetworkMessage
+    {
+        public float duration;
+        public float magnitude;
+    }
+
+    /// <summary>
+    /// Sent by Server/DM to all clients to play an environmental ambient sound.
+    /// </summary>
+    public struct MsgPlayWorldSound : NetworkMessage
+    {
+        public int soundClip;
+    }
+
+    /// <summary>
+    /// Sent by Server/DM to a player (or all with -1) to grant minted gold pieces.
+    /// </summary>
+    public struct MsgGrantGold : NetworkMessage
+    {
+        public int targetConnectionId;
+        public int amount;
+    }
+
+    /// <summary>
+    /// Sent by Server/DM to a player (or all with -1) to pardon crimes and restore legal reputation.
+    /// </summary>
+    public struct MsgPardonCrimes : NetworkMessage
+    {
+        public int targetConnectionId;
+    }
+
+    /// <summary>
+    /// Sent by Server/DM to grant a custom forged weapon or armor directly to a player's inventory.
+    /// </summary>
+    public struct MsgGrantForgedItem : NetworkMessage
+    {
+        public int targetConnectionId;
+        public bool isWeapon;
+        public int itemType;
+        public int materialType;
+    }
+
     #endregion
 
     #region Multiplayer Pre-Game Lobby & Mod Verification

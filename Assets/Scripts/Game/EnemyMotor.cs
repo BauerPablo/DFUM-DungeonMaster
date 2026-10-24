@@ -185,7 +185,7 @@ namespace DaggerfallWorkshop.Game
         /// <param name="attacker">Attacker to become hostile towards</param>
         public void MakeEnemyHostileToAttacker(DaggerfallEntityBehaviour attacker)
         {
-            if (attacker && (DFUNetworkManager.Instance != null && DFUNetworkManager.Instance.isDmInvisible))
+            if (attacker && attacker == GameManager.Instance.PlayerEntityBehaviour && (DFUNetworkManager.Instance != null && DFUNetworkManager.Instance.isDmInvisible))
                 return;
 
             if (!senses)

@@ -7,10 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [0.9.14] - In Development (Phase 14)
+## [0.9.15] - 2026-10-24 (Phase 15)
 
-### Planned
-- **Dual-Mode DM Entity:** Seamless switching between Spectator Spirit (intangible, zero physics, invisible) and Physical Admin Avatar.
+### Added
+- **DM NPC Possession (`DMNpcController`):** Full inhabit and live control of spawned creatures and town NPCs via `Ctrl + H` or crosshair raycast targeting. Includes 3rd-person chase camera and 1st-person eye view toggle (`Tab`), WASD locomotion, sprint, jump, and primary attack. Clean release via `Esc` or `F8` restoring original camera and state.
+- **Hierarchical Bestiary & Instant Search Filter:** 5 categorized monster & NPC tabs (*No-Muertos*, *Monstruos*, *Daedra*, *Humanoides*, *Fauna*) with real-time text query filtering, custom HP scaling multipliers (1.0x - 5.0x), and front/cursor terrain spawning.
+- **Synchronized Loot Forge:** Forge custom weapons and armors with selective materials (Iron to Daedric). Public drop spawns authoritative containers registered in `DFUNetworkLootRegistry` and replicated via `BroadcastLootSpawn`. Direct delivery targets selected party members or the entire party via `MsgGrantForgedItem`.
+- **World Cataclysms & Ambient Audio Broadcasting:** Networked earthquake simulation (`MsgEarthquake`) with screen-shake and rolling thunder. Ambient sound triggers (`MsgPlayWorldSound`) for Thunder, Monster Roars, Howls, War Drums, Screams, and Ghost Wails.
+- **Party-Aware Economy & Legal Pardon:** DM toolbar selector allowing gold minting (`+1,000`, `+10,000`, `+50,000`) and crime bounties pardon (`MsgGrantGold`, `MsgPardonCrimes`) for individual clients or party-wide.
+- **PRD Evolution (Phase 19):** Added Downed State (3-minute bleedout countdown), cooperative healing resuscitation, and FreeCam spectator transition to eliminate vanilla single-player death reload desyncs.
+
+### Fixed
+- **Enemy AI Target Recognition:** Corrected DM invisibility checks in `EnemySenses.cs` and `EnemyMotor.cs` that previously caused enemies to ignore non-DM clients.
+- **Camera Teardown & Hotkey Collisions:** Cached camera and mouse look references in `FreeCamController.cs` and `DMNpcController.cs`, preventing `MainCamera` lookups on scene unload. Centralized possession activation to `Ctrl + H` with frame-guard preventing 0ms self-release.
+- **Audio Clip Reference:** Replaced missing `SoundClips.ItemPickup` with native `SoundClips.MakeItem` for forged inventory delivery.
+
+---
+
+## [0.9.14] - 2026-10-17 (Phase 14)
+
+### Added
+- **Dual-Mode DM Entity:** Seamless switching between Spectator Spirit (intangible, zero physics, invisible) and Physical Admin Avatar (`Ctrl + F8`).
 - **God Flight & Tactical Cameras:** Enhanced 6-DOF noclip flight controls, orthogonal/cenital top-down tactical battlefield camera with zoom.
 - **Click-to-Teleport:** Shift+Click on world terrain to instantly move the DM or party members.
 - **Parametric Nametags & Overhead Health Bars:** Configurable billboard tags for party members and enemies with role and distance falloff.

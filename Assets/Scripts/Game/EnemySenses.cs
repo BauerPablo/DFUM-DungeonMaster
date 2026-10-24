@@ -299,11 +299,16 @@ namespace DaggerfallWorkshop.Game
                 }
 
                 // Non-hostile mode
-                if (GameManager.Instance.PlayerEntity.NoTargetMode || !motor.IsHostile)
+                if (!motor.IsHostile)
                 {
-                    if (IsPlayerTarget(target))
+                    target = null;
+                    secondaryTarget = null;
+                }
+                else if (GameManager.Instance.PlayerEntity.NoTargetMode || (DaggerfallWorkshop.Game.Networking.DFUNetworkManager.Instance != null && DaggerfallWorkshop.Game.Networking.DFUNetworkManager.Instance.isDmInvisible))
+                {
+                    if (target == player)
                         target = null;
-                    if (IsPlayerTarget(secondaryTarget))
+                    if (secondaryTarget == player)
                         secondaryTarget = null;
                 }
 
@@ -627,8 +632,8 @@ namespace DaggerfallWorkshop.Game
         {
             // In classic if the target is another AI character true is always returned.
 
-            // DM Invisibility is absolute and cannot be seen through
-            if (DaggerfallWorkshop.Game.Networking.DFUNetworkManager.Instance != null && DaggerfallWorkshop.Game.Networking.DFUNetworkManager.Instance.isDmInvisible)
+            // DM Invisibility is absolute for local DM player and cannot be seen through
+            if (target == player && DaggerfallWorkshop.Game.Networking.DFUNetworkManager.Instance != null && DaggerfallWorkshop.Game.Networking.DFUNetworkManager.Instance.isDmInvisible)
                 return true;
 
             // Some enemy types can see through these effects.
@@ -735,8 +740,13 @@ namespace DaggerfallWorkshop.Game
                 if (targetBehaviour.EntityType == EntityTypes.EnemyMonster || targetBehaviour.EntityType == EntityTypes.EnemyClass
                     || targetBehaviour.EntityType == EntityTypes.Player || isPlayer)
                 {
-                    // NoTarget mode or DM Invisibility
-                    if ((GameManager.Instance.PlayerEntity.NoTargetMode || !motor.IsHostile || enemyEntity.MobileEnemy.Team == MobileTeams.PlayerAlly || (DaggerfallWorkshop.Game.Networking.DFUNetworkManager.Instance != null && DaggerfallWorkshop.Game.Networking.DFUNetworkManager.Instance.isDmInvisible)) && isPlayer)
+                    // DM Invisibility / NoTarget only protects the local DM player, never remote clients
+                    bool isLocalPlayer = (targetBehaviour == player);
+                    if (isLocalPlayer && (GameManager.Instance.PlayerEntity.NoTargetMode || (DaggerfallWorkshop.Game.Networking.DFUNetworkManager.Instance != null && DaggerfallWorkshop.Game.Networking.DFUNetworkManager.Instance.isDmInvisible)))
+                        continue;
+
+                    // Non-hostile motor rejects all targets
+                    if (!motor.IsHostile)
                         continue;
 
                     // Can't target ally

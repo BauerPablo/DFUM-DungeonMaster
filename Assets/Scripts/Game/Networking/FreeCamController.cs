@@ -44,6 +44,9 @@ namespace DaggerfallWorkshop.Game.Networking
         private Transform cameraTransform = null;
         private HeadBobber playerHeadBobber = null;
         private PlayerHeightChanger playerHeightChanger = null;
+        private PlayerMouseLook playerMouseLook = null;
+        private PlayerMotor playerMotor = null;
+        private static bool isQuitting = false;
         private bool wasWeaponShown = true;
 
         [Header("FreeCam Movement")]
@@ -282,17 +285,22 @@ namespace DaggerfallWorkshop.Game.Networking
                 GameManager.Instance.WeaponManager.ScreenWeapon.ShowWeapon = false;
             }
 
-            // Freeze player motor & mouse look
-            if (GameManager.Instance.PlayerMotor != null)
+            // Cache and freeze player motor & mouse look directly without GameManager lookups
+            if (mainCam != null)
+                playerMouseLook = mainCam.GetComponent<PlayerMouseLook>();
+            if (GameManager.Instance != null && GameManager.Instance.PlayerObject != null)
+                playerMotor = GameManager.Instance.PlayerObject.GetComponent<PlayerMotor>();
+
+            if (playerMotor != null)
             {
-                GameManager.Instance.PlayerMotor.CancelMovement = true;
-                GameManager.Instance.PlayerMotor.enabled = false;
+                playerMotor.CancelMovement = true;
+                playerMotor.enabled = false;
             }
 
-            if (GameManager.Instance.PlayerMouseLook != null)
+            if (playerMouseLook != null)
             {
-                GameManager.Instance.PlayerMouseLook.enableMouseLook = false;
-                GameManager.Instance.PlayerMouseLook.enabled = false;
+                playerMouseLook.enableMouseLook = false;
+                playerMouseLook.enabled = false;
             }
 
             if (Application.isFocused)
@@ -334,29 +342,27 @@ namespace DaggerfallWorkshop.Game.Networking
                 playerHeightChanger = null;
             }
 
-            // Restore screen weapon, player motor & mouse look safely
+            // Restore screen weapon, player motor & mouse look safely without GameManager lookups
             try
             {
-                GameObject player = GameObject.FindGameObjectWithTag("Player");
-                if (player != null && GameManager.Instance != null)
+                if (GameManager.HasInstance && GameManager.Instance.WeaponManager != null && GameManager.Instance.WeaponManager.ScreenWeapon != null)
                 {
-                    if (GameManager.Instance.WeaponManager != null && GameManager.Instance.WeaponManager.ScreenWeapon != null)
-                    {
-                        GameManager.Instance.WeaponManager.ScreenWeapon.ShowWeapon = wasWeaponShown;
-                    }
+                    GameManager.Instance.WeaponManager.ScreenWeapon.ShowWeapon = wasWeaponShown;
+                }
 
-                    if (GameManager.Instance.PlayerMotor != null)
-                    {
-                        GameManager.Instance.PlayerMotor.enabled = true;
-                        GameManager.Instance.PlayerMotor.CancelMovement = true;
-                    }
+                if (playerMotor != null)
+                {
+                    playerMotor.enabled = true;
+                    playerMotor.CancelMovement = true;
+                    playerMotor = null;
+                }
 
-                    if (GameManager.Instance.PlayerMouseLook != null)
-                    {
-                        GameManager.Instance.PlayerMouseLook.enabled = true;
-                        GameManager.Instance.PlayerMouseLook.enableMouseLook = true;
-                        GameManager.Instance.PlayerMouseLook.SetFacing(cameraYaw, cameraPitch);
-                    }
+                if (playerMouseLook != null)
+                {
+                    playerMouseLook.enabled = true;
+                    playerMouseLook.enableMouseLook = true;
+                    playerMouseLook.SetFacing(cameraYaw, cameraPitch);
+                    playerMouseLook = null;
                 }
             }
             catch (Exception ex)
@@ -522,14 +528,31 @@ namespace DaggerfallWorkshop.Game.Networking
             }
         }
 
+        private void OnApplicationQuit()
+        {
+            isQuitting = true;
+        }
+
         private void OnDisable()
         {
+            if (isQuitting)
+            {
+                isActive = false;
+                return;
+            }
+
             if (isActive)
                 Deactivate();
         }
 
         private void OnDestroy()
         {
+            if (isQuitting)
+            {
+                isActive = false;
+                return;
+            }
+
             if (isActive)
                 Deactivate();
         }

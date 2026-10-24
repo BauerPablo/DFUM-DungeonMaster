@@ -1,4 +1,4 @@
-# PRD: DFUM TTRPG & Dungeon Master Master Suite (Phases 13 - 18)
+# PRD: DFUM TTRPG & Dungeon Master Master Suite (Phases 13 - 19)
 
 ## 1. Executive Summary & Vision
 
@@ -17,6 +17,7 @@ A dedicated **Dungeon Master (DM)** can orchestrate adventures in real time: cre
 | **III. Mods Catcher & Governance** | Strict 1:1 mod manifest verification, interactive conflict diagnostic modal, and authoritative replication of `modsettings.json` (Climates & Calories). |
 | **IV. Tactical God Tools** | Freecam flight, top-down cenital tactical camera with zoom, RTS-style ghost puppet placement with collision validation, click-to-teleport, and customizable nametags/health bars. |
 | **V. Cohesive Retro UX** | Unified tabbed pixel-art interface matching classic Daggerfall aesthetics and a native Multiplayer Main Menu for launching/joining sessions. |
+| **VI. Party Survival & Anti-Desync Lifecycle** | 3-minute unconscious downed state, ally resuscitation via spells/potions, and seamless FreeCam spectator transition to eliminate death reload desyncs. |
 
 ---
 
@@ -30,6 +31,7 @@ flowchart TD
     P15 --> P16["Phase 16: Tactical RTS Spawner & Ghost Placement Preview"]
     P16 --> P17["Phase 17: Multi-Channel Chat & RPG Language Decryption"]
     P17 --> P18["Phase 18: Mods Catcher & Configuration Sync"]
+    P18 --> P19["Phase 19: Downed State, Co-op Revive & FreeCam Spectator"]
 ```
 
 ---
@@ -180,9 +182,52 @@ flowchart TD
 
 ---
 
+### Phase 19: Downed State, Cooperative Revive & FreeCam Spectator (Anti-Desync Lifecycle)
+
+**Goal:** Eliminate multiplayer desynchronization, scene reloading, and sudden client dropouts caused by vanilla DFU's single-player death sequence (`TitleMenuFromDeath`). Replace instant death at 0 HP with a 3-minute unconscious downed state (bleeding out) where party members can heal/resuscitate the fallen character, followed by a seamless transition into FreeCam Spectator mode if the bleedout timer expires.
+
+#### Background & Root-Cause Analysis:
+- In vanilla single-player Daggerfall Unity, when `PlayerEntity.CurrentHealth <= 0`, `PlayerDeath.cs` takes over: input is paused, the camera tilts to the floor, the screen fades to black, and after 3 seconds (`TimeBeforeReset`), `StartGameBehaviour.StartMethods.TitleMenuFromDeath` triggers.
+- In a multiplayer context, this single-player reset routine triggers scene unloads, destroys player objects, tears down local networking state, and leaves remote puppets orphaned, causing massive world desynchronization for the server and remaining clients.
+
+#### Requirements:
+1. **Unconscious / Downed State Interception (Bleeding Out):**
+   - Intercept `PlayerEntity.OnDeath` or health reduction reaching `<= 0` on multiplayer clients.
+   - Prevent execution of `PlayerDeath.cs`'s transition to `TitleMenuFromDeath`.
+   - The player enters an **Inconsciente (Downed)** state:
+     - Health is pinned at 0 (or a protected non-fatal downed status).
+     - Standard movement, weapon swings, spellcasting, and jumping are disabled (`PlayerMotor.CancelMovement = true`).
+     - The player's puppet enters a prone/collapsed animation state (`animState = Downed/Die`) visible and synchronized across all connected players.
+     - The downed player's screen displays a desaturated/vignette overlay with an audible heartbeat and an onscreen countdown timer: `[Inconsciente] Desangrándote: 03:00`.
+     - Downed players retain access to party chat (`/party`, `/say`) to call out for help and communicate with the group.
+2. **Cooperative Resuscitation & Healing Mechanics:**
+   - Any party member within proximity (< 2.5 meters) can stabilize and revive the fallen player through standard RPG actions:
+     - **Healing Spells:** Casting any targeted restoration/healing spell on or near the downed player immediately revives them with health equal to the spell's magnitude.
+     - **Potions & First Aid:** Using a healing potion from inventory on the downed player (or holding an interact button for 3 seconds) restores a baseline percentage of health (e.g. 15% Max HP) and wakes them up.
+     - **DM Divine Resurrect:** The DM can directly select the downed player in the DM Suite (`Ctrl + F10`) and click `✦ Revivir / Resucitar ✦` to instantly restore them to full health.
+   - **Wake-up Transition:** Upon receiving healing:
+     - The downed status clears, camera and HUD restore to normal, standard player motor and combat controls re-enable.
+     - Remote puppet stands up and resumes standard idle/walk animations.
+     - Broadcasts notification: `[Party] ¡{PlayerName} ha sido reanimado por {HealerName}!`.
+3. **Bleedout Expiration & FreeCam Spectator Mode:**
+   - If the 3-minute timer reaches 00:00 without resuscitation:
+     - The character officially expires (`MsgPlayerPermaDeath`).
+     - The physical body/puppet remains on the ground as a permanent corpse marker (or lootable container if enabled).
+     - **Seamless Spectator FreeCam:** Instead of disconnecting or resetting to the title menu, the player's client immediately activates `FreeCamController` in spectator mode:
+       - No physical collider, invisible, able to fly freely through dungeons and wilderness.
+       - Chat (`/party`, `/say`, `/ooc`) remains completely functional so the player stays engaged with the table until the session concludes.
+       - The NetworkClient connection, scene state, and synchronization loops remain 100% active and healthy.
+4. **Network Synchronization Messages:**
+   - `MsgPlayerDowned`: Informs the server and clients that a player has collapsed at a specific position, synchronizing the downed pose and starting the 3-minute timer.
+   - `MsgPlayerRevive`: Dispatched when healing is applied, authoritatively restoring player state and health.
+   - `MsgPlayerPermaDeath`: Dispatched on timer timeout to spawn permanent corpse and switch victim to spectator mode.
+
+---
+
 ## 4. Architectural Rules & Technical Constraints
 
 1. **Native Integration:** All UI and TTRPG logic lives inside `Assets/Scripts/Game/Networking/` or `Assets/Scripts/Game/UserInterfaceWindows/`.
 2. **Deterministic Language Checks:** Language translation checks occur on the recipient client (or server-evaluated) using DFU's authoritative character sheet stats.
 3. **Clean Session Teardown:** Possession and God flight must cleanly restore motor controllers, colliders, and player layers on exit or disconnect to prevent soft-locks.
 4. **Ghost Puppet Isolation:** Ghost placement previews are strictly client-side local objects and must never instantiate network behaviors, register in `DFUNetworkRegistry`, or allocate network IDs until confirmed.
+5. **Anti-Desync Player Lifecycle:** Under no circumstances may player death trigger vanilla `StartGameBehaviour.StartMethods.TitleMenuFromDeath` during an active multiplayer session. `PlayerEntity.OnDeath` must be intercepted authoritatively to transition the player into the 3-minute Downed state or Spectator FreeCam mode, keeping the NetworkClient connection, scene root, and entity synchronization active.
