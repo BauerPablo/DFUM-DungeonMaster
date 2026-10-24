@@ -278,6 +278,10 @@ namespace DaggerfallWorkshop.Game.Networking
             {
                 gameObject.AddComponent<DMNpcController>();
             }
+            if (GetComponent<DMRtsPlacementController>() == null)
+            {
+                gameObject.AddComponent<DMRtsPlacementController>();
+            }
             PlayerEnterExit.OnPreTransition += HandleOnPreTransition;
             PlayerEnterExit.OnTransitionInterior += HandleOnTransitionInterior;
             PlayerEnterExit.OnTransitionExterior += HandleOnTransitionExterior;
@@ -357,6 +361,29 @@ namespace DaggerfallWorkshop.Game.Networking
                 else if (FreeCamController.Instance != null)
                 {
                     FreeCamController.Instance.ToggleFreeCam();
+                }
+            }
+
+            // DM Quick Tactical RTS Placement: Ctrl + R
+            if (NetworkSession.IsServer || localLobbyIsDm || NetworkSession.IsSinglePlayer)
+            {
+                if (ctrlHeld && Input.GetKeyDown(KeyCode.R))
+                {
+                    if (DMRtsPlacementController.Instance != null)
+                    {
+                        if (DMRtsPlacementController.Instance.IsPlacing)
+                        {
+                            DMRtsPlacementController.Instance.CancelPlacement();
+                        }
+                        else
+                        {
+                            if (showTtrpgSuite)
+                                showTtrpgSuite = false;
+
+                            MobileTypes curEnemy = GetCurrentSelectedDmEnemy();
+                            DMRtsPlacementController.Instance.StartPlacement(curEnemy, dmSpawnHpMultiplier);
+                        }
+                    }
                 }
             }
 
@@ -2870,6 +2897,65 @@ namespace DaggerfallWorkshop.Game.Networking
             return SpawnEnemyInFrontOfPlayer(enemyType, hpMultiplier);
         }
 
+        public GameObject SpawnEnemyAtPlacement(MobileTypes enemyType, Vector3 spawnPos, Quaternion rotation, float hpMultiplier = 1.0f)
+        {
+            if (!NetworkSession.ShouldHandleSpawns)
+            {
+                LogSpawn("[DM Tool] Only the Server / Host can spawn authoritative enemies.");
+                return null;
+            }
+
+            Transform parent = GameObjectHelper.GetBestParent();
+
+            GameObject go = GameObjectHelper.CreateEnemy(
+                enemyType.ToString(),
+                enemyType,
+                spawnPos,
+                MobileGender.Unspecified,
+                parent,
+                MobileReactions.Hostile
+            );
+
+            if (go != null)
+            {
+                go.transform.position = spawnPos;
+                go.transform.rotation = rotation;
+
+                SetupDemoEnemy setupEnemy = go.GetComponent<SetupDemoEnemy>();
+                if (setupEnemy != null)
+                {
+                    MobileUnit mobileUnit = setupEnemy.GetMobileBillboardChild();
+                    if (mobileUnit != null && mobileUnit.Enemy.Behaviour != MobileBehaviour.Flying)
+                    {
+                        GameObjectHelper.AlignControllerToGround(go.GetComponent<CharacterController>());
+                    }
+                }
+
+                if (hpMultiplier > 1.05f)
+                {
+                    DaggerfallEntityBehaviour behaviour = go.GetComponent<DaggerfallEntityBehaviour>();
+                    if (behaviour != null && behaviour.Entity is EnemyEntity enemyEntity)
+                    {
+                        enemyEntity.MaxHealth = (int)(enemyEntity.MaxHealth * hpMultiplier);
+                        enemyEntity.CurrentHealth = enemyEntity.MaxHealth;
+                    }
+                }
+
+                // Authoritatively raise spawn event so NativeNetworkEntity is initialized and broadcast to all clients
+                if (GameManager.Instance != null)
+                {
+                    GameManager.Instance.RaiseOnEnemySpawnEvent(go);
+                }
+
+                NativeNetworkEntity netEntity = go.GetComponent<NativeNetworkEntity>();
+                if (netEntity != null && netEntity.entityId != Guid.Empty)
+                    spawnedEnemyHistory.Add(netEntity.entityId);
+
+                DaggerfallUI.AddHUDText($"[RTS Spawner] Invocado {enemyType} ({hpMultiplier:F1}x HP) en ({spawnPos.x:F1}, {spawnPos.y:F1}, {spawnPos.z:F1}).");
+            }
+            return go;
+        }
+
         public void TriggerEarthquake(float duration = 4.0f, float magnitude = 0.35f)
         {
             StartCoroutine(EarthquakeCoroutine(duration, magnitude));
@@ -3270,6 +3356,40 @@ namespace DaggerfallWorkshop.Game.Networking
             MobileTypes.Rat, MobileTypes.GiantBat, MobileTypes.GrizzlyBear,
             MobileTypes.SabertoothTiger, MobileTypes.Slaughterfish
         };
+
+        public MobileTypes GetCurrentSelectedDmEnemy()
+        {
+            MobileTypes[] pool;
+            switch (dmBestiaryCategoryIndex)
+            {
+                case 1: pool = dmUndead; break;
+                case 2: pool = dmMonsters; break;
+                case 3: pool = dmDaedra; break;
+                case 4: pool = dmHumanoids; break;
+                case 5: pool = dmFauna; break;
+                default:
+                    List<MobileTypes> allList = new List<MobileTypes>();
+                    allList.AddRange(dmUndead);
+                    allList.AddRange(dmMonsters);
+                    allList.AddRange(dmDaedra);
+                    allList.AddRange(dmHumanoids);
+                    allList.AddRange(dmFauna);
+                    pool = allList.ToArray();
+                    break;
+            }
+
+            List<MobileTypes> filteredPool = new List<MobileTypes>();
+            string filterLower = (dmBestiarySearchFilter ?? "").Trim().ToLowerInvariant();
+            foreach (var m in pool)
+            {
+                if (string.IsNullOrEmpty(filterLower) || m.ToString().ToLowerInvariant().Contains(filterLower))
+                    filteredPool.Add(m);
+            }
+
+            if (filteredPool.Count == 0) return MobileTypes.SkeletalWarrior;
+            int idx = Mathf.Clamp(selectedDmIndex, 0, filteredPool.Count - 1);
+            return filteredPool[idx];
+        }
 
         // Phase 15: Loot Forge fields
         private int dmForgeGroupIndex = 0;
@@ -3990,6 +4110,13 @@ namespace DaggerfallWorkshop.Game.Networking
                 SpawnEnemyAtCursor(currentEnemy, dmSpawnHpMultiplier);
             }
             GUILayout.EndHorizontal();
+
+            GUILayout.Space(4);
+            if (GUILayout.Button("✦ Colocación Táctica (Modo RTS Ghost) [Ctrl+R] ✦", DarkFantasyPixelArtTheme.GoldButtonStyle, GUILayout.Height(30)))
+            {
+                showTtrpgSuite = false;
+                DMRtsPlacementController.Instance?.StartPlacement(currentEnemy, dmSpawnHpMultiplier);
+            }
 
             GUILayout.Space(8);
             GUILayout.Label("✦ DESPAWN AUTORITATIVO ✦", DarkFantasyPixelArtTheme.SectionBannerStyle, GUILayout.ExpandWidth(true));

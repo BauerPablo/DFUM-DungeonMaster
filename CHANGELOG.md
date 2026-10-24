@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.9.16] - 2026-10-24 (Phase 16)
+
+### Added
+- **Tactical RTS Spawner (`DMRtsPlacementController`):** Real-time raycast placement of bestiary creatures, NPCs, and monsters from 1st-person avatar, FreeCam, and tactical cenital camera up to 150m.
+- **Local Ghost Puppet Preview:** 100% client-side ghost preview with spectral ghost shader rendering, circular ground indicator ring, and forward facing orientation pointer. Zero network traffic during preview.
+- **Dynamic Rotation & Multi-Spawn Queue:** Mouse scroll wheel and `Q`/`E` keys adjust entity facing angle in 15° increments. Holding `Shift` allows continuous chain spawning without leaving placement mode.
+- **Real-Time Validation (Green / Red):** Automatic slope checking (≤ 50°) and `Physics.OverlapCapsule` collision bounds validation tinting green when valid and red when obstructed by obstacles or other characters.
+- **Suite & Hotkey Integration:** Instant activation via `Ctrl + R` hotkey or dedicated button in the Master Suite (*Spawns & NPCs* tab). Authoritative replication to all clients via `SpawnEnemyAtPlacement()`.
+
+---
+
 ## [0.9.15] - 2026-10-24 (Phase 15)
 
 ### Added
