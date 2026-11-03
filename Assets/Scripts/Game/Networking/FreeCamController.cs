@@ -24,6 +24,9 @@ namespace DaggerfallWorkshop.Game.Networking
         private bool isActive = false;
         public bool IsActive => isActive;
 
+        private bool isSpectatorMode = false;
+        public bool IsSpectatorMode => isSpectatorMode;
+
         private Transform originalCameraParent = null;
         public Transform OriginalCameraParent => originalCameraParent;
         private Vector3 originalCameraLocalPos;
@@ -86,10 +89,12 @@ namespace DaggerfallWorkshop.Game.Networking
 
         private void Update()
         {
-            // Ctrl + F8 hotkey toggle (handled by DFUNetworkManager if present to coordinate DM dual-entity mode)
+            // Ctrl + Shift + F8 hotkey toggle (handled by DFUNetworkManager if present to coordinate DM dual-entity mode)
             if (DFUNetworkManager.Instance == null)
             {
-                if ((Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl)) && Input.GetKeyDown(KeyCode.F8))
+                bool ctrl = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
+                bool shift = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
+                if (ctrl && shift && Input.GetKeyDown(KeyCode.F8))
                 {
                     ToggleFreeCam();
                     return;
@@ -113,7 +118,8 @@ namespace DaggerfallWorkshop.Game.Networking
             // Click-to-Teleport: Shift + Left Click on any ground/floor surface
             if ((Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift)) && Input.GetMouseButtonDown(0))
             {
-                PerformClickToTeleport();
+                if (!isSpectatorMode)
+                    PerformClickToTeleport();
                 return;
             }
 
@@ -234,6 +240,26 @@ namespace DaggerfallWorkshop.Game.Networking
                 Deactivate();
             else
                 Activate();
+        }
+
+        public void ActivateSpectatorMode()
+        {
+            isSpectatorMode = true;
+            Activate();
+
+            if (GameManager.Instance != null && GameManager.Instance.PlayerEntity != null)
+            {
+                GameManager.Instance.PlayerEntity.NoTargetMode = true;
+                GameManager.Instance.PlayerEntity.GodMode = true;
+                GameManager.Instance.PlayerEntity.MagicalConcealmentFlags |= Entity.MagicalConcealmentFlags.InvisibleTrue;
+            }
+
+            if (GameManager.Instance != null && GameManager.Instance.PlayerController != null)
+            {
+                GameManager.Instance.PlayerController.detectCollisions = false;
+            }
+
+            DaggerfallUI.AddHUDText("[ESPECTADOR] Modo Espectador Libre ACTIVO (WASD/Espacio/C volar, Chat /party funcional)");
         }
 
         public void Activate()
@@ -375,6 +401,7 @@ namespace DaggerfallWorkshop.Game.Networking
 
             isActive = false;
             isTopDownView = false;
+            isSpectatorMode = false;
             DaggerfallUI.AddHUDText("[Eagle Eye] FreeCam OFF. Camera restored to player.");
         }
 

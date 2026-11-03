@@ -223,24 +223,37 @@ namespace DaggerfallWorkshop.Game
                 arrowCollider.isTrigger = true;
 
                 // Offset up so it comes from same place LOS check is done from
-                Vector3 adjust;
-                if (caster != GameManager.Instance.PlayerEntityBehaviour)
+                Vector3 adjust = Vector3.zero;
+                if (caster == GameManager.Instance.PlayerEntityBehaviour)
                 {
-                    CharacterController controller = caster.transform.GetComponent<CharacterController>();
+                    if (GameManager.Instance.MainCamera != null)
+                    {
+                        // Offset forward to avoid collision with player
+                        adjust = GameManager.Instance.MainCamera.transform.forward * 0.6f;
+                        // Adjust slightly downward to match bow animation
+                        adjust.y -= 0.11f;
+                        // Adjust to the right or left to match bow animation
+                        if (GameManager.Instance.WeaponManager != null && GameManager.Instance.WeaponManager.ScreenWeapon != null)
+                        {
+                            if (!GameManager.Instance.WeaponManager.ScreenWeapon.FlipHorizontal)
+                                adjust += GameManager.Instance.MainCamera.transform.right * 0.15f;
+                            else
+                                adjust -= GameManager.Instance.MainCamera.transform.right * 0.15f;
+                        }
+                    }
+                }
+                else if (caster != null)
+                {
+                    CharacterController controller = caster.GetComponent<CharacterController>();
                     adjust = caster.transform.forward * 0.6f;
-                    adjust.y += controller.height / 3;
+                    if (controller != null)
+                        adjust.y += controller.height / 3;
+                    else
+                        adjust.y += 0.5f;
                 }
                 else
                 {
-                    // Offset forward to avoid collision with player
-                    adjust = GameManager.Instance.MainCamera.transform.forward * 0.6f;
-                    // Adjust slightly downward to match bow animation
-                    adjust.y -= 0.11f;
-                    // Adjust to the right or left to match bow animation
-                    if (!GameManager.Instance.WeaponManager.ScreenWeapon.FlipHorizontal)
-                        adjust += GameManager.Instance.MainCamera.transform.right * 0.15f;
-                    else
-                        adjust -= GameManager.Instance.MainCamera.transform.right * 0.15f;
+                    adjust = transform.forward * 0.6f;
                 }
 
                 goModel.transform.localPosition = adjust;
@@ -402,6 +415,16 @@ namespace DaggerfallWorkshop.Game
 
         public static DaggerfallEntityBehaviour GetEntityTargetInTouchRange(Vector3 aimPosition, Vector3 aimDirection)
         {
+            // Phase 20: First check if an allied party member puppet is in touch range under crosshair
+            if (DaggerfallWorkshop.Game.Networking.NetworkSession.IsActive && DaggerfallWorkshop.Game.Networking.DFUNetworkManager.Instance != null)
+            {
+                var puppet = DaggerfallWorkshop.Game.Networking.DFUNetworkManager.Instance.GetPartyPuppetInCrosshair(2.0f, 0.40f);
+                if (puppet != null && puppet.EntityBehaviour != null)
+                {
+                    return puppet.EntityBehaviour;
+                }
+            }
+
             // Fire ray along caster facing
             // Origin point of ray is set back slightly to fix issue where strikes against target capsules touching caster capsule do not connect
             RaycastHit hit;
@@ -420,7 +443,8 @@ namespace DaggerfallWorkshop.Game
         // Touch can hit a single target at close range
         void DoTouch()
         {
-            transform.position = caster.transform.position;
+            if (caster != null)
+                transform.position = caster.transform.position;
 
             // Touch does not use default missile collider
             // This prevent touch missile check colliding with self and blocking spell transfer
@@ -533,7 +557,7 @@ namespace DaggerfallWorkshop.Game
             return aimDirection;
         }
 
-        void UseSpellBillboardAnims(int record = 0, bool oneShot = false)
+        public void UseSpellBillboardAnims(int record = 0, bool oneShot = false)
         {
             // Destroy any existing billboard game object
             if (myBillboard)
@@ -626,9 +650,18 @@ namespace DaggerfallWorkshop.Game
                 return;
             }
 
-            if (caster != GameManager.Instance.PlayerEntityBehaviour)
+            if (caster == GameManager.Instance.PlayerEntityBehaviour)
             {
-                if (targetEntities[0] == caster.GetComponent<EnemySenses>().Target)
+                if (arrowHitCollider != null && GameManager.Instance.WeaponManager != null)
+                {
+                    Transform hitTransform = arrowHitCollider.gameObject.transform;
+                    GameManager.Instance.WeaponManager.WeaponDamage(GameManager.Instance.WeaponManager.LastBowUsed, true, isArrowSummoned, hitTransform, hitTransform.position, goModel.transform.forward);
+                }
+            }
+            else if (caster != null)
+            {
+                EnemySenses senses = caster.GetComponent<EnemySenses>();
+                if (senses != null && targetEntities != null && targetEntities.Count > 0 && targetEntities[0] == senses.Target)
                 {
                     EnemyAttack attack = caster.GetComponent<EnemyAttack>();
                     if (attack)
@@ -636,11 +669,6 @@ namespace DaggerfallWorkshop.Game
                         attack.BowDamage(goModel.transform.forward);
                     }
                 }
-            }
-            else
-            {
-                Transform hitTransform = arrowHitCollider.gameObject.transform;
-                GameManager.Instance.WeaponManager.WeaponDamage(GameManager.Instance.WeaponManager.LastBowUsed, true, isArrowSummoned, hitTransform, hitTransform.position, goModel.transform.forward);
             }
         }
 

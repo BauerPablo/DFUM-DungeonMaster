@@ -87,9 +87,10 @@ namespace DaggerfallWorkshop.Game.Networking
             if (attackTimer > 0f)
                 attackTimer -= Time.deltaTime;
 
-            // Check release hotkeys (Esc or F8 or Ctrl+F8)
+            // Check release hotkeys (Esc or F8 or Ctrl+Shift+F8)
             bool ctrlHeld = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
-            if (Input.GetKeyDown(KeyCode.Escape) || Input.GetKeyDown(KeyCode.F8) || (ctrlHeld && Input.GetKeyDown(KeyCode.F8)))
+            bool shiftHeld = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
+            if (Input.GetKeyDown(KeyCode.Escape) || Input.GetKeyDown(KeyCode.F8) || (ctrlHeld && shiftHeld && Input.GetKeyDown(KeyCode.F8)))
             {
                 ReleasePossession();
                 return;

@@ -619,21 +619,44 @@ namespace DaggerfallWorkshop.Game.Entity
             return false;
         }
 
+        public static bool HasPendingGuardContext = false;
+        public static bool PendingGuardInside = false;
+        public static bool PendingGuardDungeon = false;
+        public static int PendingGuardBuildingKey = 0;
+
         // Recreation of guard spawning based on classic
-        public void SpawnCityGuards(bool immediateSpawn)
+        public void SpawnCityGuards(bool immediateSpawn, int civilianPoolIndex = -1, int mapID = 0, Vector3 victimPos = default)
         {
             Vector3 myPos = GameManager.Instance.PlayerMotor != null
                 ? GameManager.Instance.PlayerMotor.transform.position
                 : (entityBehaviour != null ? entityBehaviour.transform.position : Vector3.zero);
 
+            var enterExit = GameManager.Instance.PlayerEnterExit;
+            bool inside = enterExit != null && enterExit.IsPlayerInside;
+            bool dungeon = enterExit != null && enterExit.IsPlayerInsideDungeon;
+            int bKey = (enterExit != null && enterExit.IsPlayerInsideBuilding) ? enterExit.BuildingDiscoveryData.buildingKey : 0;
+
+            if (mapID == 0 && GameManager.Instance.PlayerGPS != null && GameManager.Instance.PlayerGPS.CurrentMapID > 0)
+            {
+                mapID = GameManager.Instance.PlayerGPS.CurrentMapID;
+            }
+
+            Vector3 crimeScenePos = victimPos != default ? victimPos : myPos;
+
             if (NetworkSession.IsClient && !NetworkSession.IsHost)
             {
                 if (NetworkClient.active)
                 {
+                    Debug.Log($"[DFU Crime] Client sending crime to host: crime={crimeCommitted}, poolIndex={civilianPoolIndex}, mapID={mapID}, pos={crimeScenePos}");
                     NetworkClient.Send(new MsgPlayerCrime
                     {
                         crimeType = (int)crimeCommitted,
-                        playerPosition = myPos
+                        playerPosition = crimeScenePos,
+                        civilianPoolIndex = civilianPoolIndex,
+                        mapID = mapID,
+                        isInside = inside,
+                        isInsideDungeon = dungeon,
+                        buildingKey = bKey
                     });
                 }
                 return;
@@ -642,17 +665,89 @@ namespace DaggerfallWorkshop.Game.Entity
             if (NetworkSession.IsServer)
             {
                 DaggerfallWorkshop.Game.Networking.DFUNetworkManager.LastCrimeConnId = 0;
+                DaggerfallWorkshop.Game.Networking.DFUNetworkManager.Instance?.DeactivateAuthoritativeCivilian(civilianPoolIndex, mapID, crimeScenePos);
             }
 
-            SpawnCityGuardsAtPosition(myPos, immediateSpawn);
+            SpawnCityGuardsAtPosition(crimeScenePos, immediateSpawn, inside, dungeon, bKey);
         }
 
-        public void SpawnCityGuardsAtPosition(Vector3 spawnTargetPos, bool immediateSpawn)
+        public void SpawnCityGuardsAtPosition(Vector3 spawnTargetPos, bool immediateSpawn, bool targetIsInside = false, bool targetIsInsideDungeon = false, int targetBuildingKey = 0)
         {
             if (DaggerfallWorkshop.Game.Networking.DFUNetworkManager.Instance != null && DaggerfallWorkshop.Game.Networking.DFUNetworkManager.Instance.isDmInvisible)
                 return;
 
-            const int maxActiveGuardSpawns = 5;
+            const int maxActiveGuardSpawns = 8;
+            if (GameManager.Instance.HowManyEnemiesOfType(MobileTypes.Knight_CityWatch, false, true) > maxActiveGuardSpawns)
+            {
+                PruneDistantGuards(spawnTargetPos);
+            }
+
+            // In multiplayer, authoritatively spawn guards directly at the scene of the crime
+            if (NetworkSession.IsActive)
+            {
+                HasPendingGuardContext = true;
+                PendingGuardInside = targetIsInside;
+                PendingGuardDungeon = targetIsInsideDungeon;
+                PendingGuardBuildingKey = targetBuildingKey;
+
+                try
+                {
+                    int randomGuards = UnityEngine.Random.Range(2, 5);
+                    for (int g = 0; g < randomGuards; g++)
+                    {
+                        Vector3 testPos = spawnTargetPos;
+                        if (targetIsInside)
+                        {
+                            Vector2 jitter = UnityEngine.Random.insideUnitCircle * UnityEngine.Random.Range(1f, 3f);
+                            testPos = spawnTargetPos + new Vector3(jitter.x, 0, jitter.y);
+                        }
+                        else
+                        {
+                            Vector2 circle = UnityEngine.Random.insideUnitCircle.normalized * UnityEngine.Random.Range(8f, 18f);
+                            testPos = spawnTargetPos + new Vector3(circle.x, 0, circle.y);
+                            if (Physics.Raycast(testPos + Vector3.up * 5f, Vector3.down, out RaycastHit hit, 20f))
+                            {
+                                testPos = hit.point;
+                            }
+                        }
+
+                        Vector3 toTarget = (spawnTargetPos - testPos).normalized;
+                        GameObject guard = SpawnCityGuard(testPos, toTarget);
+                        if (guard != null)
+                        {
+                            Transform bestParent = null;
+                            if (!targetIsInside)
+                            {
+                                DaggerfallLocation dfLoc = GameManager.Instance.StreamingWorld != null ? GameManager.Instance.StreamingWorld.CurrentPlayerLocationObject : null;
+                                bestParent = dfLoc != null ? dfLoc.transform : (GameManager.Instance.StreamingTarget != null ? GameManager.Instance.StreamingTarget.transform : null);
+                            }
+                            else
+                            {
+                                PlayerEnterExit pee = GameManager.Instance.PlayerEnterExit;
+                                bestParent = (pee != null && pee.Interior != null) ? pee.Interior.transform : GameObjectHelper.GetBestParent();
+                            }
+                            if (bestParent != null && guard.transform.parent != bestParent)
+                            {
+                                guard.transform.SetParent(bestParent, true);
+                            }
+
+                            NativeNetworkEntity netEnt = guard.GetComponent<NativeNetworkEntity>();
+                            if (netEnt != null)
+                            {
+                                netEnt.isInside = targetIsInside;
+                                netEnt.isInsideDungeon = targetIsInsideDungeon;
+                                netEnt.buildingKey = targetBuildingKey;
+                                netEnt.cellContextAssigned = true;
+                            }
+                        }
+                    }
+                }
+                finally
+                {
+                    HasPendingGuardContext = false;
+                }
+                return;
+            }
 
             // Only spawn if player is not in a dungeon, and if there are fewer than max active guards
             if (!GameManager.Instance.PlayerEnterExit.IsPlayerInsideDungeon && GameManager.Instance.HowManyEnemiesOfType(MobileTypes.Knight_CityWatch, false, true) <= maxActiveGuardSpawns)
@@ -713,7 +808,7 @@ namespace DaggerfallWorkshop.Game.Entity
                         }
                     }
 
-                    // If no guards spawned from nearby NPCs, spawn randomly with a foeSpawner
+                    // If no guards spawned from nearby NPCs, spawn around crime target position
                     if (guardsSpawnedFromNPCs == 0)
                     {
                         GameObjectHelper.CreateFoeSpawner(true, MobileTypes.Knight_CityWatch, UnityEngine.Random.Range(2, 5 + 1), 12.8f, 51.2f);
@@ -831,6 +926,23 @@ namespace DaggerfallWorkshop.Game.Entity
             cityWatch[0].SetActive(true);
 
             return cityWatch[0];
+        }
+
+        private void PruneDistantGuards(Vector3 nearPos)
+        {
+            EnemySenses[] sensesList = UnityEngine.Object.FindObjectsOfType<EnemySenses>();
+            for (int i = 0; i < sensesList.Length; i++)
+            {
+                if (sensesList[i] == null) continue;
+                DaggerfallEntityBehaviour behaviour = sensesList[i].GetComponent<DaggerfallEntityBehaviour>();
+                if (behaviour != null && behaviour.Entity is EnemyEntity enemyEntity && enemyEntity.MobileEnemy.ID == (int)MobileTypes.Knight_CityWatch)
+                {
+                    if (Vector3.Distance(sensesList[i].transform.position, nearPos) > 60f)
+                    {
+                        GameObject.Destroy(sensesList[i].gameObject);
+                    }
+                }
+            }
         }
 
         void MakeNPCGuardsIntoEnemiesIfGuardsSpawned()
@@ -1266,6 +1378,18 @@ namespace DaggerfallWorkshop.Game.Entity
         /// </summary>
         public override int SetHealth(int amount, bool restoreMode = false)
         {
+            // Phase 19: Multiplayer Downed / Spectator state handling
+            if (NetworkSession.IsActive && DFUPlayerLifecycleController.Instance != null && DFUPlayerLifecycleController.Instance.IsDownedOrSpectator)
+            {
+                if (amount > 0 && (restoreMode || DFUPlayerLifecycleController.Instance.IsDowned))
+                {
+                    currentHealth = Mathf.Clamp(amount, 0, MaxHealth);
+                    DFUPlayerLifecycleController.Instance.OnLocalPlayerHealthRestored(currentHealth);
+                    return currentHealth;
+                }
+                return currentHealth = 0;
+            }
+
             if (godMode)
                 return currentHealth = MaxHealth;
 
@@ -1287,6 +1411,7 @@ namespace DaggerfallWorkshop.Game.Entity
         /// </summary>
         public override int SetFatigue(int amount, bool restoreMode = false)
         {
+
             if (godMode)
                 return currentFatigue = MaxFatigue;
             else
@@ -1299,6 +1424,7 @@ namespace DaggerfallWorkshop.Game.Entity
         /// </summary>
         public override int SetMagicka(int amount, bool restoreMode = false)
         {
+
             if (godMode)
                 return currentMagicka = MaxMagicka;
             else
@@ -2380,6 +2506,9 @@ namespace DaggerfallWorkshop.Game.Entity
 
         public bool SurrenderToCityGuards(bool voluntarySurrender)
         {
+            if (CurrentHealth <= 0)
+                SetHealth(1, restoreMode: true);
+
             int regionIndex = GameManager.Instance.PlayerGPS.CurrentRegionIndex;
             short legalRep = regionData[regionIndex].LegalRep;
 
@@ -2404,7 +2533,7 @@ namespace DaggerfallWorkshop.Game.Entity
             // Transition outside if player inside or they are hurled into void
             // Doing this before showing court window so exterior transition takes place first
             if (GameManager.Instance.PlayerEnterExit.IsPlayerInside)
-                GameManager.Instance.PlayerEnterExit.TransitionExterior(true);
+                GameManager.Instance.PlayerEnterExit.TransitionExterior(false);
 
             arrested = true;
             halfOfLegalRepPlayerLostFromCrime = (short)(reputationLossPerCrime[(int)crimeCommitted] / 2);

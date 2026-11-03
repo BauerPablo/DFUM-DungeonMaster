@@ -234,6 +234,11 @@ namespace DaggerfallWorkshop
         /// </summary>
         public void PlayOneShot(uint soundID, float spatialBlend = 1, float volumeScale = 1f)
         {
+            if (dfUnity == null)
+                dfUnity = DaggerfallUnity.Instance;
+            if (dfUnity == null || dfUnity.SoundReader == null)
+                return;
+
             int soundIndex = dfUnity.SoundReader.GetSoundIndex(soundID);
             PlayOneShot(soundIndex, spatialBlend, volumeScale);
         }

@@ -279,10 +279,26 @@ namespace DaggerfallWorkshop.Game
             {
                 if (entity.MobileEnemy.ID == (int)MobileTypes.Knight_CityWatch)
                 {
+                    // Phase 21: If player is under arrest prompt, court, or justice stasis, cancel attack & deal zero damage
+                    if (IsSurrenderDialogueActive || (DaggerfallWorkshop.Game.Networking.DFUNetworkManager.Instance != null && DaggerfallWorkshop.Game.Networking.DFUNetworkManager.Instance.IsPlayerInJusticeStasis(0)))
+                    {
+                        return 0;
+                    }
+
+                    // Default crime to Assault if None so the legal dialog is never bypassed
+                    if (playerEntity.CrimeCommitted == PlayerEntity.Crimes.None)
+                    {
+                        playerEntity.CrimeCommitted = PlayerEntity.Crimes.Assault;
+                    }
+
                     // If hit by a guard, lower reputation and show the surrender dialogue
-                    if (!playerEntity.HaveShownSurrenderToGuardsDialogue && playerEntity.CrimeCommitted != PlayerEntity.Crimes.None)
+                    if (!playerEntity.HaveShownSurrenderToGuardsDialogue)
                     {
                         playerEntity.LowerRepForCrime();
+
+                        IsSurrenderDialogueActive = true;
+                        if (DaggerfallWorkshop.Game.Networking.DFUNetworkManager.Instance != null)
+                            DaggerfallWorkshop.Game.Networking.DFUNetworkManager.Instance.HaltAndStandDownGuards(0);
 
                         DaggerfallMessageBox messageBox = new DaggerfallMessageBox(DaggerfallUI.UIManager);
                         messageBox.SetTextTokens(DaggerfallUnity.Instance.TextProvider.GetRSCTokens(doYouSurrenderToGuardsTextID));
@@ -293,10 +309,11 @@ namespace DaggerfallWorkshop.Game
                         messageBox.Show();
 
                         playerEntity.HaveShownSurrenderToGuardsDialogue = true;
+                        return 0;
                     }
                     // Surrender dialogue has been shown and player refused to surrender
-                    // Guard damages player if player can survive hit, or if hit is fatal but guard rejects player's forced surrender
-                    else if (playerEntity.CurrentHealth > damage || !playerEntity.SurrenderToCityGuards(false))
+                    // Guard damages player if player can survive hit, or if hit is fatal force surrender to court
+                    else if (playerEntity.CurrentHealth > damage || !playerEntity.SurrenderToCityGuards(true))
                         SendDamageToPlayer();
                 }
                 else
@@ -399,6 +416,18 @@ namespace DaggerfallWorkshop.Game
             {
                 if (DaggerfallWorkshop.Game.Networking.DFUNetworkManager.Instance != null && Mirror.NetworkServer.active)
                 {
+                    if (entity.MobileEnemy.ID == (int)MobileTypes.Knight_CityWatch)
+                    {
+                        // Phase 21: Guard Stand-Down stasis for remote client
+                        if (DaggerfallWorkshop.Game.Networking.DFUNetworkManager.Instance.IsPlayerInJusticeStasis(targetPuppet.connectionId))
+                        {
+                            return 0;
+                        }
+
+                        DaggerfallWorkshop.Game.Networking.DFUNetworkManager.Instance.SendGuardArrestPrompt(targetPuppet.connectionId);
+                        DaggerfallWorkshop.Game.Networking.DFUNetworkManager.Instance.HaltAndStandDownGuards(targetPuppet.connectionId);
+                        return 0; // Stand-down stasis: do NOT damage the player while surrender prompt is pending!
+                    }
                     DaggerfallWorkshop.Game.Networking.DFUNetworkManager.Instance.SendPlayerDamage(targetPuppet.connectionId, damage);
                 }
             }
@@ -415,8 +444,11 @@ namespace DaggerfallWorkshop.Game
             return damage;
         }
 
+        public static bool IsSurrenderDialogueActive = false;
+
         private void SurrenderToGuardsDialogue_OnButtonClick(DaggerfallMessageBox sender, DaggerfallMessageBox.MessageBoxButtons messageBoxButton)
         {
+            IsSurrenderDialogueActive = false;
             sender.CloseWindow();
             if (messageBoxButton == DaggerfallMessageBox.MessageBoxButtons.Yes)
                 GameManager.Instance.PlayerEntity.SurrenderToCityGuards(true);

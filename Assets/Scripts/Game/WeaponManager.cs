@@ -508,20 +508,83 @@ namespace DaggerfallWorkshop.Game
             EnemySounds enemySounds = hitTransform.GetComponent<EnemySounds>();
 
             // Check if hit a mobile NPC
-            MobilePersonNPC mobileNpc = hitTransform.GetComponent<MobilePersonNPC>();
+            MobilePersonNPC mobileNpc = hitTransform.GetComponent<MobilePersonNPC>() ?? hitTransform.GetComponentInParent<MobilePersonNPC>();
             if (mobileNpc)
             {
+                int civilianPoolIndex = mobileNpc.PopulationPoolIndex;
+                int mapID = 0;
+                PopulationManager popMgr = mobileNpc.GetComponentInParent<PopulationManager>();
+                DaggerfallLocation dfLocation = mobileNpc.GetComponentInParent<DaggerfallLocation>();
+                if (dfLocation == null && GameManager.Instance.StreamingWorld != null)
+                {
+                    dfLocation = GameManager.Instance.StreamingWorld.CurrentPlayerLocationObject;
+                }
+                if (popMgr == null && dfLocation != null)
+                {
+                    popMgr = dfLocation.GetComponent<PopulationManager>();
+                }
+                if (popMgr == null)
+                {
+                    popMgr = FindObjectOfType<PopulationManager>();
+                }
+
+                if (dfLocation != null && dfLocation.Summary.MapID != 0)
+                {
+                    mapID = dfLocation.Summary.MapID;
+                }
+                else if (GameManager.Instance.PlayerGPS != null && GameManager.Instance.PlayerGPS.CurrentMapID > 0)
+                {
+                    mapID = GameManager.Instance.PlayerGPS.CurrentMapID;
+                }
+
+                if (popMgr != null && popMgr.PopulationPool != null)
+                {
+                    if (civilianPoolIndex < 0)
+                    {
+                        for (int i = 0; i < popMgr.PopulationPool.Count; i++)
+                        {
+                            var poolEntry = popMgr.PopulationPool[i];
+                            if (poolEntry.npc == mobileNpc || (poolEntry.npc != null && poolEntry.npc.gameObject == mobileNpc.gameObject))
+                            {
+                                civilianPoolIndex = i;
+                                mobileNpc.PopulationPoolIndex = i;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (civilianPoolIndex >= 0 && civilianPoolIndex < popMgr.PopulationPool.Count)
+                    {
+                        var poolEntry = popMgr.PopulationPool[civilianPoolIndex];
+                        poolEntry.active = false;
+                        poolEntry.scheduleEnable = false;
+                        poolEntry.scheduleRecycle = false;
+                        poolEntry.isDead = true;
+                        popMgr.PopulationPool[civilianPoolIndex] = poolEntry;
+                    }
+                }
+
+                if (civilianPoolIndex >= 0)
+                {
+                    DFUNetworkManager.Instance?.MarkCivilianLocallyKilled(civilianPoolIndex);
+                    Debug.Log($"[DFU Weapon] Hit civilian '{mobileNpc.NameNPC}', poolIndex={civilianPoolIndex}, mapID={mapID}");
+                }
+
+                EnemyBlood blood = hitTransform.GetComponent<EnemyBlood>() ?? hitTransform.GetComponentInParent<EnemyBlood>();
+                if (blood)
+                {
+                    blood.ShowBloodSplash(0, impactPosition);
+                }
+
+                if (mobileNpc.Motor != null)
+                    mobileNpc.Motor.gameObject.SetActive(false);
+                mobileNpc.gameObject.SetActive(false);
+
                 if (!mobileNpc.IsGuard)
                 {
-                    EnemyBlood blood = hitTransform.GetComponent<EnemyBlood>();
-                    if (blood)
-                    {
-                        blood.ShowBloodSplash(0, impactPosition);
-                    }
-                    mobileNpc.Motor.gameObject.SetActive(false);
                     playerEntity.TallyCrimeGuildRequirements(false, 5);
                     playerEntity.CrimeCommitted = PlayerEntity.Crimes.Murder;
-                    playerEntity.SpawnCityGuards(true);
+                    playerEntity.SpawnCityGuards(true, civilianPoolIndex, mapID, mobileNpc.transform.position);
 
                     // Allow custom race handling of weapon hit against mobile NPCs, e.g. vampire feeding or lycanthrope killing
                     if (entityBehaviour)
@@ -535,13 +598,23 @@ namespace DaggerfallWorkshop.Game
                 else
                 {
                     playerEntity.CrimeCommitted = PlayerEntity.Crimes.Assault;
-                    GameObject guard = playerEntity.SpawnCityGuard(mobileNpc.transform.position, mobileNpc.transform.forward);
-                    entityBehaviour = guard.GetComponent<DaggerfallEntityBehaviour>();
-                    entityMobileUnit = guard.GetComponentInChildren<MobileUnit>();
-                    enemyMotor = guard.GetComponent<EnemyMotor>();
-                    enemySounds = guard.GetComponent<EnemySounds>();
+                    if (Networking.NetworkSession.ShouldHandleSpawns)
+                    {
+                        GameObject guard = playerEntity.SpawnCityGuard(mobileNpc.transform.position, mobileNpc.transform.forward);
+                        entityBehaviour = guard.GetComponent<DaggerfallEntityBehaviour>();
+                        entityMobileUnit = guard.GetComponentInChildren<MobileUnit>();
+                        enemyMotor = guard.GetComponent<EnemyMotor>();
+                        enemySounds = guard.GetComponent<EnemySounds>();
+                    }
+                    else
+                    {
+                        playerEntity.SpawnCityGuards(true, civilianPoolIndex, mapID, mobileNpc.transform.position);
+                    }
                 }
-                mobileNpc.Motor.gameObject.SetActive(false);
+
+                if (mobileNpc.Motor != null)
+                    mobileNpc.Motor.gameObject.SetActive(false);
+                mobileNpc.gameObject.SetActive(false);
             }
 
             // Check if hit an entity and remove health

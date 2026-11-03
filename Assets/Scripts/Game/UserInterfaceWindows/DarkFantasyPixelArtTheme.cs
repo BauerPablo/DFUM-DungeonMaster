@@ -24,6 +24,8 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
         public static readonly Color BronzeOuter = new Color32(115, 88, 48, 255);
         public static readonly Color GoldHighlight = new Color32(214, 178, 96, 255);
         public static readonly Color GoldBright = new Color32(245, 215, 128, 255);
+        public static readonly Color GoldBase = new Color32(94, 70, 32, 245);
+        public static readonly Color GoldShadow = new Color32(58, 42, 18, 255);
 
         public static readonly Color ParchmentBase = new Color32(194, 175, 148, 255);
         public static readonly Color ParchmentDark = new Color32(166, 146, 118, 255);
@@ -499,6 +501,39 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
         private static GUIStyle cachedSectionBannerStyle;
         private static GUIStyle cachedSpeechBubbleBoxStyle;
         private static Texture2D cachedDividerTex;
+
+        private static Texture2D cachedEmeraldBtnTex;
+        public static Texture2D EmeraldButtonTexture
+        {
+            get
+            {
+                if (cachedEmeraldBtnTex == null)
+                    cachedEmeraldBtnTex = CreatePixelButtonTexture(120, 16, EmeraldBase, EmeraldHighlight, EmeraldShadow);
+                return cachedEmeraldBtnTex;
+            }
+        }
+
+        private static Texture2D cachedCrimsonBtnTex;
+        public static Texture2D CrimsonButtonTexture
+        {
+            get
+            {
+                if (cachedCrimsonBtnTex == null)
+                    cachedCrimsonBtnTex = CreatePixelButtonTexture(120, 16, CrimsonBase, CrimsonHighlight, CrimsonShadow);
+                return cachedCrimsonBtnTex;
+            }
+        }
+
+        private static Texture2D cachedGoldBtnTex;
+        public static Texture2D GoldButtonTexture
+        {
+            get
+            {
+                if (cachedGoldBtnTex == null)
+                    cachedGoldBtnTex = CreatePixelButtonTexture(120, 16, GoldBase, GoldHighlight, GoldShadow);
+                return cachedGoldBtnTex;
+            }
+        }
 
         public static GUIStyle TabActiveStyle
         {

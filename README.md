@@ -7,7 +7,7 @@
 
 [![Unity](https://img.shields.io/badge/Unity-2019.4%20LTS-blue.svg?logo=unity)](https://unity.com/)
 [![Networking](https://img.shields.io/badge/Mirror-KCP%20UDP-orange.svg)](https://mirror-networking.gitbook.io/docs)
-[![Version](https://img.shields.io/badge/Version-v0.9.13-gold.svg)]()
+[![Version](https://img.shields.io/badge/Version-v0.9.21-gold.svg)]()
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)]()
 
@@ -46,9 +46,36 @@
 - **Synchronized Corpse Looting:** Defeated monsters and bandits leave persistent, lootable corpses that party members can search simultaneously.
 - **Party Rest Voting:** Coordinate resting and camping in taverns or around wilderness campfires with synchronized blackout transitions and natural health recovery.
 
-### 🦅 6. Tactical DM Observation & FreeCam
+### 🦅 6. Tactical DM Observation, Possession & RTS Placement
 - **Decoupled Flight Mode:** The DM can decouple their view into 6-DOF freecam flight to scout upcoming dungeon chambers or oversee large open-field battles from above.
-- **Smooth Speed Scaling:** Adjust flight speed dynamically to glide through tight hallways or soar across expansive wilderness provinces.
+- **Full NPC Body Possession:** Inhabit any living creature, guard, or civilian to control movement, melee attacks, and speak in-character with custom speech bubbles.
+- **Tactical RTS Ghost Spawner:** Preview creature placement with ground-projected colored bounds and terrain validation before committing spawns.
+
+### 🎲 7. BG3-Style D20 Dice Tray & RPG Language Ciphers (Phase 17)
+- **Interactive D20 Dice Tray:** Animated 3D tumbling icosahedron with realistic felt bounces, sound effects, Nat 20 critical triumphs, and Nat 1 fumbles.
+- **Live DM Challenge Composer:** The DM issues party-wide or target DC skill challenges with dramatic outcome banners.
+- **Multi-Channel Chat:** Tabs for `/say`, `/party`, `/whisper`, `/dm`, `/ooc`, `/roll`, and `/system`.
+- **In-Character Language Decryption:** Real-time ciphering of Tamrielic tongues (*Orcish*, *Daedric*, *Dragonish*, *Giantish*, *Nedic*, etc.) based on character sheet linguistic proficiencies.
+
+### 📦 8. Strict 1:1 Mod Catcher & Config Sync (Phase 18)
+- **Cryptographic Mod Verification:** SHA-256 hash validation during lobby handshake prevents desyncs caused by mod version mismatches.
+- **Interactive Diagnostic Modal:** Pinpoints missing, extra, or modified `.dfmod` files with clear remediation guidance.
+- **Authoritative Configuration Sync:** Replicates gameplay parameters (such as *Climates & Calories* temperature and nutritional requirements) from host to connecting clients.
+
+### 🩸 9. Downed State, Co-op Revives & Spectator FreeCam (Phase 19)
+- **Unconscious Bleedout State:** Eliminates single-player death reload desyncs; dropping to 0 HP initiates a 3-minute heartbeat bleedout countdown.
+- **Cooperative Resuscitation:** Allies can revive fallen companions using targeted healing spells, inventory potions, field first aid, or DM Divine Resurrect.
+- **Seamless Spectator Mode:** If the timer expires, the player smoothly transitions to an invisible freecam spectator while maintaining active chat and network sessions.
+
+### 🩹 10. Cooperative Party Restoration & Smart Support Spells (Phase 20)
+- **Smart Support Spell Adapter:** Re-routes vanilla caster-only beneficial spells (Cure Poison/Paralysis, Heal, Levitate, Water Breathing) directly to targeted allies.
+- **Non-Magical Field Medicine:** Non-caster classes can administer healing potions or apply bandages directly to companions in melee range.
+
+### ⚖️ 11. Party Justice, Narrative Prison Escapes & World Stasis (Phase 21)
+- **Guard Stand-Down & Combat Stasis:** Surrendering to city guards initiates combat stasis and damage immunity during court trials and arrest dialogue.
+- **Synchronized Courtroom Broadcasts:** Trials display live proceedings to the accused while broadcasting verdicts and fines to the rest of the party.
+- **Choose Your Own Adventure Jailbreak:** Suppresses destructive time-skips in jail; inmates and parties choose between Communal Waiting, Inmate Solo Escape Rolls, or a 3-stage branching Party Jailbreak with DM-adjudicated D20 checks.
+- **Anti-Skip Narrative Lifecycles:** Real-time non-destructive progress for Vampirism and Lycanthropy lethargy, Daedric invocations, and main quest cutscenes with damage stasis.
 
 ---
 
@@ -68,6 +95,9 @@
      │  Authoritative AI   │       │  Client Enemy Proxy │
      │  Authoritative Loot │       │  Client Puppet Sync │
      │  DM Master Suite    │       │  Party Consensus    │
+     │  DMDiceTrayControl  │       │  DMDiceTrayControl  │
+     │  DFUModSyncControl  │       │  DFUModSyncControl  │
+     │  DFUPlayerLifecycle │       │  DFUPlayerLifecycle │
      └──────────┬──────────┘       └──────────▲──────────┘
                 │   Mirror Networking (KCP)   │
                 └───────────────►─────────────┘
@@ -100,20 +130,28 @@
 
 - [x] **Phase 12:** Core Standalone Decoupling & Cleanup
 - [x] **Phase 13 (v0.9.13):** Tabbed Retro UI Suite, Multiplayer Lobby Hub & Dark Fantasy Pixel-Art Framing
-- [ ] **Phase 14 (v0.9.14):** DM Dual Entity (Spectator Spirit vs Admin Avatar), God Flight & Tactical View
-- [ ] **Phase 15 (v0.9.15):** NPC Body Possession, Expanded Spawner & Dynamic World Events
-- [ ] **Phase 16 (v0.9.16):** Multi-Channel Chat, Whispers & RPG Language Decryption (Orcish, Daedric, Dragonish)
-- [ ] **Phase 17 (v0.9.17):** Strict 1:1 Mod Catcher & Authoritative Configuration Sync (*Climates & Calories*)
+- [x] **Phase 14 (v0.9.14):** DM Dual Entity (Spectator Spirit vs Admin Avatar), God Flight & Tactical View
+- [x] **Phase 15 (v0.9.15):** NPC Body Possession, Expanded Spawner & Dynamic World Events
+- [x] **Phase 16 (v0.9.16):** Tactical RTS Spawner & Ghost Placement Preview
+- [x] **Phase 17 (v0.9.17):** Multi-Channel Chat, Language Decryption & BG3 D20 Dice Tray
+- [x] **Phase 18 (v0.9.18):** Strict 1:1 Mod Catcher & Authoritative Configuration Sync (*Climates & Calories*)
+- [x] **Phase 19 (v0.9.19):** Downed State, Cooperative Revive & FreeCam Spectator
+- [x] **Phase 20 (v0.9.20):** Cooperative Party Restoration, Smart Support Spells & Field Medic First Aid
+- [x] **Phase 21 (v0.9.21):** Party Justice, World Stasis & Narrative Prison Escapes (CYOA Jailbreak)
 
-*For detailed technical specifications of upcoming milestones, see [Docs/PRD_TTRPG_MASTER_SUITE.md](Docs/PRD_TTRPG_MASTER_SUITE.md).*
+*For detailed technical specifications of all milestones, see [Docs/PRD_TTRPG_MASTER_SUITE.md](Docs/PRD_TTRPG_MASTER_SUITE.md).*
 
 ---
 
 ## 📄 Documentation
 
 - [Changelog & Release History](CHANGELOG.md)
-- [TTRPG Master Suite PRD (Phases 13-17)](Docs/PRD_TTRPG_MASTER_SUITE.md)
-- [Phase 13 Manual Testing Verification](Docs/testing_docs/manual-testing-phase-13-tabbed-suite.md)
+- [TTRPG Master Suite PRD (Phases 13-21)](Docs/PRD_TTRPG_MASTER_SUITE.md)
+- [Phase 17 Testing: Multi-Channel Chat & Languages](Docs/testing_docs/manual-testing-phase-17-multi-channel-chat-and-languages.md)
+- [Phase 18 Testing: Mods Catcher & Config Sync](Docs/testing_docs/manual-testing-phase-18-mods-catcher-and-config-sync.md)
+- [Phase 19 Testing: Downed State & Spectator](Docs/testing_docs/manual-testing-phase-19-downed-state-and-spectator.md)
+- [Phase 20 Testing: Cooperative Restoration & Buffs](Docs/testing_docs/manual-testing-phase-20-cooperative-restoration-and-buffs.md)
+- [Phase 21 Testing: Party Justice & World Stasis](Docs/testing_docs/manual-testing-phase-21-party-justice-and-world-stasis.md)
 - [Multiplayer Architecture & Networking Protocol](Docs/PRD_NATIVE_MULTIPLAYER.md)
 
 ---

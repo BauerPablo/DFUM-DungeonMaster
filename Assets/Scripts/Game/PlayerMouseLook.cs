@@ -103,12 +103,18 @@ namespace DaggerfallWorkshop.Game
                 return;
             }
 
-            // Suppress mouse look and unlock cursor when multiplayer debug/DM GUI is open
-            if (DaggerfallWorkshop.Game.Networking.DFUNetworkManager.Instance != null &&
-                DaggerfallWorkshop.Game.Networking.DFUNetworkManager.Instance.IsAnyGuiOpen)
+            // Suppress mouse look and unlock cursor when multiplayer debug/DM GUI, Chat, or Dice Tray is open
+            if ((DaggerfallWorkshop.Game.Networking.DFUNetworkManager.Instance != null &&
+                 DaggerfallWorkshop.Game.Networking.DFUNetworkManager.Instance.IsAnyGuiOpen) ||
+                (DaggerfallWorkshop.Game.Networking.DMChatController.Instance != null &&
+                 DaggerfallWorkshop.Game.Networking.DMChatController.Instance.IsChatOpen) ||
+                (DaggerfallWorkshop.Game.Networking.DMDiceTrayController.Instance != null &&
+                 DaggerfallWorkshop.Game.Networking.DMDiceTrayController.Instance.IsTrayOpen))
             {
                 Cursor.lockState = CursorLockMode.None;
-                InputManager.Instance.CursorVisible = true;
+                Cursor.visible = true;
+                if (InputManager.Instance != null)
+                    InputManager.Instance.CursorVisible = true;
                 return;
             }
 
@@ -119,7 +125,9 @@ namespace DaggerfallWorkshop.Game
             // When cursor activated during gameplay, player can click on world objects to activate them
             // When cursor simply active from closing a popup, etc. a click will recapture cursor
             // We handle activated cursor first as it takes precendence over mouse look and normal cursor recapture
-            if (!GameManager.IsGamePaused && InputManager.Instance.ActionStarted(InputManager.Actions.ActivateCursor))
+            if (!GameManager.IsGamePaused &&
+                !(DaggerfallWorkshop.Game.Networking.DMChatController.Instance != null && DaggerfallWorkshop.Game.Networking.DMChatController.Instance.IsChatOpen) &&
+                InputManager.Instance.ActionStarted(InputManager.Actions.ActivateCursor))
             {
                 // Don't allow activate cursor for 0.3 seconds after closing an input message box
                 // Helps prevent player accidentally activating cursor when responding to some input

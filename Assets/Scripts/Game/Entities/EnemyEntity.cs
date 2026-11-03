@@ -18,6 +18,7 @@ using DaggerfallWorkshop.Game.MagicAndEffects;
 using DaggerfallWorkshop.Game.MagicAndEffects.MagicEffects;
 using DaggerfallWorkshop.Game.Utility;
 using DaggerfallWorkshop.Game.Items;
+using DaggerfallWorkshop.Game.Networking;
 
 namespace DaggerfallWorkshop.Game.Entity
 {
@@ -183,10 +184,34 @@ namespace DaggerfallWorkshop.Game.Entity
             // Despawn city watch when active crime state returns to none
             // This can happen when exiting city area, after fast travel, or via console
             if (entityType == EntityTypes.EnemyClass &&
-                careerIndex == (int)MobileTypes.Knight_CityWatch - 128 &&
-                GameManager.Instance.PlayerEntity.CrimeCommitted == PlayerEntity.Crimes.None)
+                careerIndex == (int)MobileTypes.Knight_CityWatch - 128)
             {
-                GameObject.Destroy(sender.gameObject);
+                if (NetworkSession.IsActive)
+                {
+                    EnemyMotor motor = sender.GetComponent<EnemyMotor>();
+                    EnemySenses senses = sender.GetComponent<EnemySenses>();
+                    if (motor != null && motor.IsHostile && senses != null && senses.Target != null)
+                    {
+                        return; // Guard is actively pursuing target/criminal, do not despawn!
+                    }
+
+                    if (DFUNetworkManager.Instance != null && DFUNetworkManager.Instance.HasActiveCrimes())
+                    {
+                        return; // Remote players still have active crimes in this session
+                    }
+
+                    if (GameManager.Instance.PlayerEntity != null && GameManager.Instance.PlayerEntity.CrimeCommitted == PlayerEntity.Crimes.None)
+                    {
+                        GameObject.Destroy(sender.gameObject);
+                    }
+                }
+                else
+                {
+                    if (GameManager.Instance.PlayerEntity.CrimeCommitted == PlayerEntity.Crimes.None)
+                    {
+                        GameObject.Destroy(sender.gameObject);
+                    }
+                }
             }
         }
 

@@ -368,6 +368,26 @@ namespace DaggerfallWorkshop.Game.MagicAndEffects
             // Otherwise instatiate missile prefab based on element type
             if (readySpell.Settings.TargetType == TargetTypes.CasterOnly)
             {
+                if (DaggerfallWorkshop.Game.Networking.NetworkSession.IsActive && DaggerfallWorkshop.Game.Networking.DFUNetworkManager.Instance != null && entityBehaviour == GameManager.Instance.PlayerEntityBehaviour)
+                {
+                    if (DaggerfallWorkshop.Game.Networking.DFUNetworkManager.Instance.TryHandlePartySupportSpell(readySpell))
+                    {
+                        RaiseOnCastReadySpell(readySpell);
+                        DaggerfallWorkshop.Game.Networking.DFUNetworkManager.Instance.BroadcastLocalSpellCast(readySpell);
+
+                        if (!readySpellDoesNotCostSpellPoints)
+                        {
+                            lastSpell = readySpell;
+                            lastReadySpellCastingCost = readySpellCastingCost;
+                        }
+                        readySpell = null;
+                        readySpellCastingCost = 0;
+                        instantCast = false;
+                        castInProgress = false;
+                        readySpellDoesNotCostSpellPoints = false;
+                        return;
+                    }
+                }
                 AssignBundle(readySpell);
             }
             else
@@ -2067,6 +2087,26 @@ namespace DaggerfallWorkshop.Game.MagicAndEffects
             // Otherwise instatiate missile prefab based on element type
             if (readySpell.Settings.TargetType == TargetTypes.CasterOnly)
             {
+                if (DaggerfallWorkshop.Game.Networking.NetworkSession.IsActive && DaggerfallWorkshop.Game.Networking.DFUNetworkManager.Instance != null && entityBehaviour == GameManager.Instance.PlayerEntityBehaviour)
+                {
+                    if (DaggerfallWorkshop.Game.Networking.DFUNetworkManager.Instance.TryHandlePartySupportSpell(readySpell))
+                    {
+                        if (!readySpellDoesNotCostSpellPoints)
+                            entityBehaviour.Entity.DecreaseMagicka(readySpellCastingCost);
+
+                        RaiseOnCastReadySpell(readySpell);
+                        DaggerfallWorkshop.Game.Networking.DFUNetworkManager.Instance.BroadcastLocalSpellCast(readySpell);
+
+                        lastSpell = null;
+                        readySpell = null;
+                        readySpellCastingCost = 0;
+                        lastReadySpellCastingCost = 0;
+                        instantCast = false;
+                        castInProgress = false;
+                        readySpellDoesNotCostSpellPoints = false;
+                        return;
+                    }
+                }
                 AssignBundle(readySpell);
             }
             else

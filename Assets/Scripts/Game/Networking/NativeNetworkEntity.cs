@@ -33,6 +33,7 @@ namespace DaggerfallWorkshop.Game.Networking
         public bool isInsideDungeon = false;
         public int buildingKey = 0;
         public bool isQuestSpawn = false;
+        public bool cellContextAssigned = false;
 
         /// <summary>
         /// Unique numeric identifier for network combat messages.
@@ -82,6 +83,7 @@ namespace DaggerfallWorkshop.Game.Networking
                 // If running on authoritative server, broadcast despawn message
                 if (NetworkSession.IsServer && NetworkServer.active)
                 {
+                    DaggerfallUnity.LogMessage($"[DFU Spawn] Server despawning network entity: {entityName} (GUID: {entityId})");
                     NetworkServer.SendToAll(new MsgDespawnEnemy { entityId = entityId });
                 }
             }
@@ -104,6 +106,7 @@ namespace DaggerfallWorkshop.Game.Networking
             isInsideDungeon = dungeon;
             buildingKey = bKey;
             isQuestSpawn = quest;
+            cellContextAssigned = true;
 
             DFUNetworkRegistry.RegisterEntity(entityId, gameObject);
         }
@@ -114,9 +117,9 @@ namespace DaggerfallWorkshop.Game.Networking
         public MsgSpawnEnemy ToSpawnMessage()
         {
             PlayerEnterExit pee = GameManager.Instance != null ? GameManager.Instance.PlayerEnterExit : null;
-            bool inside = pee != null && pee.IsPlayerInside;
-            bool insideDungeon = pee != null && pee.IsPlayerInsideDungeon;
-            int bKey = (pee != null && pee.Interior != null) ? pee.Interior.EntryDoor.buildingKey : 0;
+            bool inside = cellContextAssigned ? isInside : (pee != null && pee.IsPlayerInside);
+            bool insideDungeon = cellContextAssigned ? isInsideDungeon : (pee != null && pee.IsPlayerInsideDungeon);
+            int bKey = cellContextAssigned ? buildingKey : ((pee != null && pee.Interior != null) ? pee.Interior.EntryDoor.buildingKey : 0);
             DaggerfallEnemy dfEnemy = GetComponent<DaggerfallEnemy>();
             bool quest = (dfEnemy != null && dfEnemy.QuestSpawn) || isQuestSpawn;
 

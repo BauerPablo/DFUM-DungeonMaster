@@ -206,14 +206,62 @@ namespace DaggerfallWorkshop.Game.Entity
                 // Handle civilian NPC crime reporting
                 if (EntityType == EntityTypes.CivilianNPC)
                 {
-                    MobilePersonNPC mobileNpc = transform.GetComponent<MobilePersonNPC>();
+                    MobilePersonNPC mobileNpc = transform.GetComponent<MobilePersonNPC>() ?? transform.GetComponentInParent<MobilePersonNPC>();
                     if (mobileNpc)
                     {
+                        int civilianPoolIndex = mobileNpc.PopulationPoolIndex;
+                        int mapID = 0;
+                        Utility.PopulationManager popMgr = mobileNpc.GetComponentInParent<Utility.PopulationManager>();
+                        DaggerfallLocation dfLocation = mobileNpc.GetComponentInParent<DaggerfallLocation>();
+                        if (dfLocation == null && GameManager.Instance.StreamingWorld != null)
+                            dfLocation = GameManager.Instance.StreamingWorld.CurrentPlayerLocationObject;
+                        if (popMgr == null && dfLocation != null)
+                            popMgr = dfLocation.GetComponent<Utility.PopulationManager>();
+                        if (popMgr == null)
+                            popMgr = UnityEngine.Object.FindObjectOfType<Utility.PopulationManager>();
+
+                        if (dfLocation != null && dfLocation.Summary.MapID != 0)
+                            mapID = dfLocation.Summary.MapID;
+                        else if (GameManager.Instance.PlayerGPS != null && GameManager.Instance.PlayerGPS.CurrentMapID > 0)
+                            mapID = GameManager.Instance.PlayerGPS.CurrentMapID;
+
+                        if (popMgr != null && popMgr.PopulationPool != null)
+                        {
+                            if (civilianPoolIndex < 0)
+                            {
+                                for (int i = 0; i < popMgr.PopulationPool.Count; i++)
+                                {
+                                    var poolEntry = popMgr.PopulationPool[i];
+                                    if (poolEntry.npc == mobileNpc || (poolEntry.npc != null && poolEntry.npc.gameObject == mobileNpc.gameObject))
+                                    {
+                                        civilianPoolIndex = i;
+                                        mobileNpc.PopulationPoolIndex = i;
+                                        break;
+                                    }
+                                }
+                            }
+
+                            if (civilianPoolIndex >= 0 && civilianPoolIndex < popMgr.PopulationPool.Count)
+                            {
+                                var poolEntry = popMgr.PopulationPool[civilianPoolIndex];
+                                poolEntry.active = false;
+                                poolEntry.scheduleEnable = false;
+                                poolEntry.scheduleRecycle = false;
+                                poolEntry.isDead = true;
+                                popMgr.PopulationPool[civilianPoolIndex] = poolEntry;
+                            }
+                        }
+
+                        if (civilianPoolIndex >= 0)
+                        {
+                            DaggerfallWorkshop.Game.Networking.DFUNetworkManager.Instance?.MarkCivilianLocallyKilled(civilianPoolIndex);
+                        }
+
                         // Handle assault or murder
                         if (Entity.CurrentHealth > 0)
                         {
                             playerEntity.CrimeCommitted = PlayerEntity.Crimes.Assault;
-                            playerEntity.SpawnCityGuards(true);
+                            playerEntity.SpawnCityGuards(true, civilianPoolIndex, mapID, mobileNpc.transform.position);
                         }
                         else
                         {
@@ -221,16 +269,25 @@ namespace DaggerfallWorkshop.Game.Entity
                             {
                                 playerEntity.TallyCrimeGuildRequirements(false, 5);
                                 playerEntity.CrimeCommitted = PlayerEntity.Crimes.Murder;
-                                playerEntity.SpawnCityGuards(true);
+                                playerEntity.SpawnCityGuards(true, civilianPoolIndex, mapID, mobileNpc.transform.position);
                             }
                             else
                             {
                                 playerEntity.CrimeCommitted = PlayerEntity.Crimes.Assault;
-                                playerEntity.SpawnCityGuard(mobileNpc.transform.position, mobileNpc.transform.forward);
+                                if (DaggerfallWorkshop.Game.Networking.NetworkSession.ShouldHandleSpawns)
+                                {
+                                    playerEntity.SpawnCityGuard(mobileNpc.transform.position, mobileNpc.transform.forward);
+                                }
+                                else
+                                {
+                                    playerEntity.SpawnCityGuards(true, civilianPoolIndex, mapID, mobileNpc.transform.position);
+                                }
                             }
 
                             // Disable when dead
-                            mobileNpc.Motor.gameObject.SetActive(false);
+                            if (mobileNpc.Motor != null)
+                                mobileNpc.Motor.gameObject.SetActive(false);
+                            mobileNpc.gameObject.SetActive(false);
                         }
                     }
                 }

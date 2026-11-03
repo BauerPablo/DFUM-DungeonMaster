@@ -695,20 +695,31 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
 
             // Bottom Action Bar: Ready Toggle & DM Launch Button
             bool hasSelectedChar = netMgr.localLobbySelectionMode != 0;
+            bool hasModConflicts = DFUModSyncController.Instance != null && DFUModSyncController.Instance.HasModConflicts;
+
             Button readyBtn = DaggerfallUI.AddButton(new Vector2(8, 116), new Vector2(132, 18), contentPanel);
-            readyBtn.BackgroundTexture = !hasSelectedChar
-                ? ironBtnTex
-                : (netMgr.localLobbyIsReady ? emeraldBtnTex : goldBtnTex);
+            readyBtn.BackgroundTexture = hasModConflicts
+                ? crimsonBtnTex
+                : (!hasSelectedChar ? ironBtnTex : (netMgr.localLobbyIsReady ? emeraldBtnTex : goldBtnTex));
 
             TextLabel readyLbl = DaggerfallUI.AddDefaultShadowedTextLabel(new Vector2(0, 5), readyBtn);
-            readyLbl.Text = !hasSelectedChar
-                ? "SELECT CHAR FIRST"
-                : (netMgr.localLobbyIsReady ? "STATUS: READY [OK]" : "MARK AS READY");
-            readyLbl.TextColor = !hasSelectedChar ? DarkFantasyPixelArtTheme.TextMuted : DarkFantasyPixelArtTheme.TextIvory;
+            readyLbl.Text = hasModConflicts
+                ? "[!] CONFLICTO MODS (VER)"
+                : (!hasSelectedChar
+                    ? "SELECT CHAR FIRST"
+                    : (netMgr.localLobbyIsReady ? "STATUS: READY [OK]" : "MARK AS READY"));
+            readyLbl.TextColor = hasModConflicts
+                ? DarkFantasyPixelArtTheme.TextIvory
+                : (!hasSelectedChar ? DarkFantasyPixelArtTheme.TextMuted : DarkFantasyPixelArtTheme.TextIvory);
             readyLbl.HorizontalAlignment = HorizontalAlignment.Center;
 
             readyBtn.OnMouseClick += (s, e) =>
             {
+                if (hasModConflicts)
+                {
+                    DaggerfallUI.UIManager.PushWindow(new DFUModConflictModalWindow(DaggerfallUI.UIManager, this));
+                    return;
+                }
                 if (netMgr.localLobbySelectionMode == 0)
                     return;
                 netMgr.localLobbyIsReady = !netMgr.localLobbyIsReady;
@@ -1139,6 +1150,21 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
                         modsListBox.AddItem($"  [HOST] {hm}");
                 }
             }
+
+            Button diagBtn = DaggerfallUI.AddButton(new Vector2(10, 130), new Vector2(268, 16), contentPanel);
+            diagBtn.BackgroundTexture = (DFUModSyncController.Instance != null && DFUModSyncController.Instance.HasModConflicts)
+                ? crimsonBtnTex
+                : emeraldBtnTex;
+            TextLabel diagLbl = DaggerfallUI.AddDefaultShadowedTextLabel(new Vector2(0, 4), diagBtn);
+            diagLbl.Text = (DFUModSyncController.Instance != null && DFUModSyncController.Instance.HasModConflicts)
+                ? "✦ VER DETALLES DE CONFLICTOS DE MODS ✦"
+                : "✦ VERIFICAR PARIDAD 1:1 DE MODS ✦";
+            diagLbl.TextColor = DarkFantasyPixelArtTheme.TextIvory;
+            diagLbl.HorizontalAlignment = HorizontalAlignment.Center;
+            diagBtn.OnMouseClick += (s, e) =>
+            {
+                DaggerfallUI.UIManager.PushWindow(new DFUModConflictModalWindow(DaggerfallUI.UIManager, this));
+            };
         }
 
         #endregion

@@ -54,6 +54,7 @@ namespace DaggerfallWorkshop.Game
         private int personFaceRecordId;                         // used for portrait in talk window
         private bool pickpocketByPlayerAttempted = false;       // player can only attempt pickpocket on a mobile NPC once
         private MobilePersonMotor motor;                        // motor for npc
+        public int PopulationPoolIndex = -1;
 
         // these public fields are used for setting person attributes through Unity Inspector Window with function ApplyPersonSettings
         // (properties not available) as fields are randomized (e.g. name and face variant)

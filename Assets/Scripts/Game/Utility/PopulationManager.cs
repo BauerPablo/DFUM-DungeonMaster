@@ -58,6 +58,7 @@ namespace DaggerfallWorkshop.Game.Utility
             public bool active;                             // NPC is currently active/inactive
             public bool scheduleEnable;                     // NPC is active and waiting to be made visible
             public bool scheduleRecycle;                    // NPC is active and waiting to be hidden for recycling
+            public bool isDead;                             // NPC was killed (suppresses respawn recycle until location reset)
             public float distanceToPlayer;                  // Distance to player
             public MobilePersonNPC npc;                     // NPC motor
         }
@@ -295,7 +296,7 @@ namespace DaggerfallWorkshop.Game.Utility
             // Look for an available inactive pool item
             for (int i = 0; i < populationPool.Count; i++)
             {
-                if (!populationPool[i].active)
+                if (!populationPool[i].active && !populationPool[i].isDead)
                     return i;
             }
 
@@ -333,6 +334,7 @@ namespace DaggerfallWorkshop.Game.Utility
 
             // Add to pool
             populationPool.Add(poolItem);
+            npc.PopulationPoolIndex = populationPool.Count - 1;
 
             OnMobileNPCCreate?.Invoke(poolItem);
 

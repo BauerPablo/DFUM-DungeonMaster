@@ -8,6 +8,7 @@ using UnityEngine;
 using DaggerfallWorkshop;
 using DaggerfallWorkshop.Game;
 using DaggerfallWorkshop.Game.Entity;
+using DaggerfallWorkshop.Utility;
 
 namespace DaggerfallWorkshop.Game.Networking
 {
@@ -51,6 +52,10 @@ namespace DaggerfallWorkshop.Game.Networking
         private Texture2D crouchFrontTex;
         private Texture2D crouchBackTex;
         private bool hasCrouchTextures = false;
+
+        private bool isDowned = false;
+        public bool IsDowned => isDowned;
+        private GameObject downedBillboardObject;
 
         public void Initialize(MsgPlayerProfile profile)
         {
@@ -172,31 +177,135 @@ namespace DaggerfallWorkshop.Game.Networking
             }
         }
 
-        private void CreateOverheadNameTag()
+        private void InitializeDownedBillboard()
         {
-            if (nameTagObject != null)
+            if (downedBillboardObject != null)
                 return;
 
-            nameTagObject = new GameObject("NameTag");
-            nameTagObject.transform.SetParent(transform, false);
-            nameTagObject.transform.localPosition = new Vector3(0, 2.15f, 0);
-
-            nameTextMesh = nameTagObject.AddComponent<TextMesh>();
-            if (isDm)
+            try
             {
-                nameTextMesh.text = $"[DUNGEON MASTER]\n{playerName}";
-                nameTagBaseColor = new Color(1.0f, 0.84f, 0.0f, 1.0f); // Radiant Gold
+                downedBillboardObject = new GameObject("DownedBillboard");
+                downedBillboardObject.transform.SetParent(transform, false);
+
+                DaggerfallBillboard dfBillboard = downedBillboardObject.AddComponent<DaggerfallBillboard>();
+
+                int arch = 401;
+                int rec = 1;
+                if (EnemyBasics.GetEnemy(GameObjectHelper.ResolvePlayerClassMobileType(careerName), out MobileEnemy mobileEnemy))
+                {
+                    int corpseTex = (gender == 1 && mobileEnemy.FemaleCorpseTexture != 0) ? mobileEnemy.FemaleCorpseTexture : mobileEnemy.CorpseTexture;
+                    EnemyBasics.ReverseCorpseTexture(corpseTex, out arch, out rec);
+                }
+
+                dfBillboard.SetMaterial(arch, rec);
+                downedBillboardObject.SetActive(false);
+            }
+            catch (System.Exception ex)
+            {
+                Debug.LogWarning($"[DFU Puppet] Could not initialize downed corpse billboard: {ex.Message}");
+            }
+        }
+
+        private void UpdateDownedBillboardPosition()
+        {
+            if (downedBillboardObject == null)
+                return;
+
+            DaggerfallBillboard dfBillboard = downedBillboardObject.GetComponent<DaggerfallBillboard>();
+            float spriteHeight = (dfBillboard != null && dfBillboard.Summary.Size.y > 0) ? dfBillboard.Summary.Size.y : 0.8f;
+            float groundY = transform.position.y - 0.9f;
+
+            // Raycast down from slightly above puppet center to locate exact ground floor
+            if (Physics.Raycast(transform.position + Vector3.up * 0.5f, Vector3.down, out RaycastHit floorHit, 4.0f))
+            {
+                groundY = floorHit.point.y;
+            }
+
+            // Align bottom of billboard flush with floor
+            float localY = (groundY + (spriteHeight * 0.5f)) - transform.position.y;
+            downedBillboardObject.transform.localPosition = new Vector3(0, localY, 0);
+        }
+
+        public void SetDowned(bool downed)
+        {
+            isDowned = downed;
+
+            if (isDowned)
+            {
+                InitializeDownedBillboard();
+                UpdateDownedBillboardPosition();
+
+                if (mobileUnit != null && mobileUnit.gameObject.activeSelf)
+                    mobileUnit.gameObject.SetActive(false);
+
+                if (crouchBillboardObject != null && crouchBillboardObject.activeSelf)
+                    crouchBillboardObject.SetActive(false);
+
+                if (downedBillboardObject != null && !downedBillboardObject.activeSelf)
+                    downedBillboardObject.SetActive(true);
+
+                if (nameTagObject != null)
+                {
+                    nameTagObject.transform.localPosition = new Vector3(0, 0.40f, 0);
+                }
+                if (nameTextMesh != null)
+                {
+                    nameTextMesh.text = $"[INCONSCIENTE]\n{playerName}";
+                    nameTextMesh.color = new Color(1.0f, 0.25f, 0.25f, 1.0f);
+                }
             }
             else
             {
-                nameTextMesh.text = playerName;
-                nameTagBaseColor = new Color(0.2f, 0.9f, 1.0f, 1.0f); // Bright cyan
+                if (downedBillboardObject != null && downedBillboardObject.activeSelf)
+                    downedBillboardObject.SetActive(false);
+
+                if (mobileUnit != null && !mobileUnit.gameObject.activeSelf)
+                {
+                    mobileUnit.gameObject.SetActive(true);
+                    mobileUnit.ChangeEnemyState(MobileStates.Idle);
+                }
+
+                if (nameTagObject != null)
+                {
+                    nameTagObject.transform.localPosition = isCrouching ? new Vector3(0, 1.05f, 0) : new Vector3(0, 2.15f, 0);
+                }
+                if (nameTextMesh != null)
+                {
+                    nameTextMesh.text = isDm ? $"[DUNGEON MASTER]\n{playerName}" : playerName;
+                    nameTextMesh.color = nameTagBaseColor;
+                }
             }
-            nameTextMesh.color = nameTagBaseColor;
-            nameTextMesh.alignment = TextAlignment.Center;
-            nameTextMesh.anchor = TextAnchor.MiddleCenter;
-            nameTextMesh.characterSize = 0.12f;
-            nameTextMesh.fontSize = 24;
+        }
+
+        private void CreateOverheadNameTag()
+        {
+            if (nameTagObject == null)
+            {
+                nameTagObject = new GameObject("NameTag");
+                nameTagObject.transform.SetParent(transform, false);
+                nameTagObject.transform.localPosition = new Vector3(0, 2.15f, 0);
+
+                nameTextMesh = nameTagObject.AddComponent<TextMesh>();
+                nameTextMesh.alignment = TextAlignment.Center;
+                nameTextMesh.anchor = TextAnchor.MiddleCenter;
+                nameTextMesh.characterSize = 0.12f;
+                nameTextMesh.fontSize = 24;
+            }
+
+            if (nameTextMesh != null)
+            {
+                if (isDm)
+                {
+                    nameTextMesh.text = $"[DUNGEON MASTER]\n{playerName}";
+                    nameTagBaseColor = new Color(1.0f, 0.84f, 0.0f, 1.0f); // Radiant Gold
+                }
+                else
+                {
+                    nameTextMesh.text = playerName;
+                    nameTagBaseColor = new Color(0.2f, 0.9f, 1.0f, 1.0f); // Bright cyan
+                }
+                nameTextMesh.color = nameTagBaseColor;
+            }
         }
 
         private void Update()
@@ -248,7 +357,10 @@ namespace DaggerfallWorkshop.Game.Networking
 
                             if (nameTextMesh != null)
                             {
-                                nameTextMesh.color = new Color(nameTagBaseColor.r, nameTagBaseColor.g, nameTagBaseColor.b, alpha);
+                                Color textColor = isDowned ? new Color(1.0f, 0.25f, 0.25f) : nameTagBaseColor;
+                                nameTextMesh.color = new Color(textColor.r, textColor.g, textColor.b, alpha);
+                                if (isDowned)
+                                    nameTextMesh.text = $"[INCONSCIENTE]\n{playerName}";
                             }
                         }
                     }
@@ -258,7 +370,7 @@ namespace DaggerfallWorkshop.Game.Networking
             // Crouching handling
             if (nameTagObject != null)
             {
-                nameTagObject.transform.localPosition = isCrouching ? new Vector3(0, 1.05f, 0) : new Vector3(0, 2.15f, 0);
+                nameTagObject.transform.localPosition = isDowned ? new Vector3(0, 0.40f, 0) : (isCrouching ? new Vector3(0, 1.05f, 0) : new Vector3(0, 2.15f, 0));
             }
             if (capsuleCollider != null)
             {
@@ -272,7 +384,20 @@ namespace DaggerfallWorkshop.Game.Networking
                 }
             }
 
-            if (hasCrouchTextures && crouchBillboardObject != null)
+            if (isDowned)
+            {
+                if (mobileUnit != null && mobileUnit.gameObject.activeSelf)
+                    mobileUnit.gameObject.SetActive(false);
+
+                if (crouchBillboardObject != null && crouchBillboardObject.activeSelf)
+                    crouchBillboardObject.SetActive(false);
+
+                if (downedBillboardObject != null && !downedBillboardObject.activeSelf)
+                    downedBillboardObject.SetActive(true);
+
+                UpdateDownedBillboardPosition();
+            }
+            else if (hasCrouchTextures && crouchBillboardObject != null)
             {
                 if (isCrouching)
                 {
@@ -310,13 +435,13 @@ namespace DaggerfallWorkshop.Game.Networking
                     if (crouchBillboardObject.activeSelf)
                         crouchBillboardObject.SetActive(false);
 
-                    if (mobileUnit != null && !mobileUnit.gameObject.activeSelf)
+                    if (!isDowned && mobileUnit != null && !mobileUnit.gameObject.activeSelf)
                         mobileUnit.gameObject.SetActive(true);
                 }
             }
 
             // Attack and motion animations
-            if (mobileUnit != null && mobileUnit.gameObject.activeSelf)
+            if (!isDowned && mobileUnit != null && mobileUnit.gameObject.activeSelf)
             {
                 if (castAnimTimer > 0f)
                 {

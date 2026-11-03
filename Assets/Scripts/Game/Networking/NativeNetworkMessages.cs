@@ -394,6 +394,27 @@ namespace DaggerfallWorkshop.Game.Networking
     {
         public int crimeType;
         public Vector3 playerPosition;
+        public int civilianPoolIndex;
+        public int mapID;
+        public bool isInside;
+        public bool isInsideDungeon;
+        public int buildingKey;
+    }
+
+    /// <summary>
+    /// Sent from Server to Client when a City Watch guard engages a criminal player, prompting surrender.
+    /// </summary>
+    public struct MsgGuardArrestPrompt : NetworkMessage
+    {
+        public int guardEntityId;
+    }
+
+    /// <summary>
+    /// Sent from Client to Server responding to guard surrender prompt or completion of court.
+    /// </summary>
+    public struct MsgPlayerSurrender : NetworkMessage
+    {
+        public bool surrendered;
     }
 
     /// <summary>
@@ -795,6 +816,60 @@ namespace DaggerfallWorkshop.Game.Networking
         public int materialType;
     }
 
+    /// <summary>
+    /// Phase 17: Multi-channel chat message packet.
+    /// Channels: 0=Say, 1=Party, 2=Whisper, 3=DM, 4=OOC, 5=Roll, 6=System.
+    /// </summary>
+    public struct MsgChatMessage : NetworkMessage
+    {
+        public byte channel;
+        public string senderName;
+        public int senderConnectionId;
+        public int targetConnectionId;
+        public string text;
+        public byte languageId;
+        public Vector3 worldPosition;
+    }
+
+    /// <summary>
+    /// Phase 17: DM initiates a Baldur's Gate 3-style DC Skill Challenge.
+    /// </summary>
+    public struct MsgDiceChallenge : NetworkMessage
+    {
+        public int challengeId;
+        public string challengeTitle;
+        public int targetDC;
+        public bool showDC;
+    }
+
+    /// <summary>
+    /// Phase 17: Client submits their roll for an active DC Challenge or free roll.
+    /// </summary>
+    public struct MsgSubmitDiceRoll : NetworkMessage
+    {
+        public int challengeId;
+        public int rollResult;
+        public string rollerName;
+        public int rollerConnectionId;
+    }
+
+    /// <summary>
+    /// Phase 17: Broadcast of resolved DC challenge outcome or free roll to all clients.
+    /// </summary>
+    public struct MsgDiceResultBroadcast : NetworkMessage
+    {
+        public int challengeId;
+        public string challengeTitle;
+        public string rollerName;
+        public int rollerConnectionId;
+        public int rollResult;
+        public int targetDC;
+        public bool showDC;
+        public bool isCriticalSuccess;
+        public bool isCriticalFail;
+        public bool passed;
+    }
+
     #endregion
 
     #region Multiplayer Pre-Game Lobby & Mod Verification
@@ -864,6 +939,219 @@ namespace DaggerfallWorkshop.Game.Networking
     {
         public int sessionMode; // 1 = Start New Character, 2 = Load Saved Character
         public int hostSaveKey;
+    }
+
+    #endregion
+
+    #region Phase 18: Mods Catcher & Configuration Replication
+
+    /// <summary>
+    /// Metadata for a single loaded mod in the 1:1 manifest handshake.
+    /// </summary>
+    [Serializable]
+    public class ModManifestEntry
+    {
+        public string fileName;
+        public string title;
+        public string version;
+        public string guid;
+        public string sha256Hash;
+        public long fileSizeBytes;
+        public bool hasSettings;
+        public bool isEnabled;
+    }
+
+    /// <summary>
+    /// Container for transmitting full mod manifests over the network.
+    /// </summary>
+    [Serializable]
+    public class ModManifestBundle
+    {
+        public int connectionId;
+        public List<ModManifestEntry> entries = new List<ModManifestEntry>();
+    }
+
+    /// <summary>
+    /// Sent by client to server reporting its complete mod manifest with SHA-256 hashes.
+    /// </summary>
+    public struct MsgModManifestReport : NetworkMessage
+    {
+        public string manifestBundleJson;
+    }
+
+    /// <summary>
+    /// Authoritative diagnostic evaluation sent from Host to Client detailing parity or conflicts.
+    /// </summary>
+    public struct MsgModCompatibilityResponse : NetworkMessage
+    {
+        public bool is100PercentMatch;
+        public string missingModsJson;       // JSON array of strings
+        public string extraModsJson;         // JSON array of strings
+        public string versionMismatchesJson; // JSON array of strings
+        public string diagnosticSummary;
+    }
+
+    /// <summary>
+    /// Replicated mod configuration payload containing the raw JSON settings for a single mod.
+    /// </summary>
+    [Serializable]
+    public class ModConfigPayload
+    {
+        public string guid;
+        public string fileName;
+        public string title;
+        public string settingsJson;
+    }
+
+    /// <summary>
+    /// Authoritative mod settings broadcast sent from Host to Client upon connection or world entry.
+    /// </summary>
+    public struct MsgModSettingsSync : NetworkMessage
+    {
+        public string configsJson; // JSON array of ModConfigPayload
+    }
+
+    #endregion
+
+    #region Phase 19: Downed State, Cooperative Revive & FreeCam Spectator
+
+    /// <summary>
+    /// Message broadcast when a player character drops to 0 HP and enters the unconscious downed (bleedout) state.
+    /// </summary>
+    public struct MsgPlayerDowned : NetworkMessage
+    {
+        public int connectionId;
+        public string playerName;
+        public Vector3 position;
+        public float bleedoutSeconds;
+    }
+
+    /// <summary>
+    /// Message broadcast when a downed player is resuscitated (via first aid, potion, healing spell, or DM resurrect).
+    /// </summary>
+    public struct MsgPlayerRevive : NetworkMessage
+    {
+        public int targetConnectionId;
+        public string revivedPlayerName;
+        public string healerPlayerName;
+        public int restoredHealth;
+    }
+
+    /// <summary>
+    /// Message broadcast when a downed player's bleedout timer expires, transitioning them to FreeCam spectator.
+    /// </summary>
+    public struct MsgPlayerPermaDeath : NetworkMessage
+    {
+        public int connectionId;
+        public string playerName;
+        public Vector3 position;
+        public float yaw;
+        public int corpseTexture;
+    }
+
+    #endregion
+
+    #region Phase 20: Cooperative Party Restoration, Shared Buffs & Non-Magical First Aid
+
+    public enum PartySupportActionType
+    {
+        HealingPotion,
+        StaminaPotion,
+        CurePoisonPotion,
+        MedicalFirstAid,
+        Bandage
+    }
+
+    /// <summary>
+    /// Routed between party members to deliver non-magical support actions (potions, medical treatment).
+    /// </summary>
+    public struct MsgPartySupportAction : NetworkMessage
+    {
+        public int senderConnectionId;
+        public int targetConnectionId;
+        public string senderName;
+        public string targetName;
+        public PartySupportActionType actionType;
+        public int amount;
+        public string actionDescription;
+    }
+
+    #endregion
+
+    #region Phase 21: Party Justice, World Stasis & Narrative Prison Escapes
+
+    public enum JusticeEventType
+    {
+        ArrestAndTrial = 0,
+        PrisonDilemma = 1,
+        InfectionProgress = 2,
+        DaedricSummonCutscene = 3,
+        DungeonTeleportTrap = 4,
+        CommunalRestVote = 5,
+        GuardStandDown = 6
+    }
+
+    /// <summary>
+    /// Sent by Server/DM or triggered between peers to execute justice, stasis, prison dilemma, or cutscene sync.
+    /// </summary>
+    public struct MsgTriggerJusticeEvent : NetworkMessage
+    {
+        public int targetConnectionId;
+        public JusticeEventType eventType;
+        public int extraIntParam;
+        public string extraStringParam;
+    }
+
+    /// <summary>
+    /// Synchronizes combat stasis state for a player (immune to damage / guard pursuit).
+    /// </summary>
+    public struct MsgJusticeStasisSync : NetworkMessage
+    {
+        public int targetConnectionId;
+        public bool isStasisActive;
+        public string reason;
+    }
+
+    /// <summary>
+    /// Phase 21: Client requests an escape challenge from the DM (solo or party jailbreak step).
+    /// </summary>
+    public struct MsgRequestEscapeChallenge : NetworkMessage
+    {
+        public int rollerConnectionId;
+        public string rollerName;
+        public int escapeMode; // 0: Solo, 1: Grupal
+        public int stepIndex;  // 0, 1, 2
+        public string stepTitle;
+        public string tacticDescription;
+    }
+
+    /// <summary>
+    /// Phase 21: Server/DM issues an interactive D20 roll challenge for prison escape.
+    /// </summary>
+    public struct MsgStartEscapeRollChallenge : NetworkMessage
+    {
+        public int challengeId;
+        public int rollerConnectionId;
+        public int escapeMode; // 0: Solo, 1: Grupal
+        public int stepIndex;  // 0, 1, 2
+        public string title;
+        public int targetDC;
+    }
+
+    /// <summary>
+    /// Phase 21: Server broadcasts outcome of escape roll challenge (advancing step or doubling sentence).
+    /// </summary>
+    public struct MsgEscapeRollResolution : NetworkMessage
+    {
+        public int challengeId;
+        public int targetConnectionId;
+        public int escapeMode; // 0: Solo, 1: Grupal
+        public int rollResult;
+        public int targetDC;
+        public bool passed;
+        public int newSentenceDays;
+        public int newStepIndex; // 0, 1, 2, or 3 (complete)
+        public string feedback;
     }
 
     #endregion

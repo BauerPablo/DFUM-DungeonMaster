@@ -19,6 +19,7 @@ using DaggerfallConnect;
 using DaggerfallConnect.Arena2;
 using DaggerfallWorkshop.Game.Utility;
 using DaggerfallWorkshop.Game.Guilds;
+using DaggerfallWorkshop.Game.Networking;
 
 namespace DaggerfallWorkshop.Game.UserInterfaceWindows
 {
@@ -94,11 +95,31 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
 
             playerEntity = GameManager.Instance.PlayerEntity;
             AllowCancel = false;
+
+            DaggerfallUI.Instance?.FadeBehaviour?.ClearFade();
+            if (DFUNetworkManager.Instance != null)
+            {
+                DFUNetworkManager.Instance.isLocalPlayerInPrison = false;
+                DFUNetworkManager.Instance.showPrisonDilemmaWindow = false;
+            }
+        }
+
+        public override void OnPush()
+        {
+            base.OnPush();
+            state = 0;
+            DaggerfallUI.Instance?.FadeBehaviour?.ClearFade();
+            if (DFUNetworkManager.Instance != null)
+            {
+                DFUNetworkManager.Instance.isLocalPlayerInPrison = false;
+                DFUNetworkManager.Instance.showPrisonDilemmaWindow = false;
+            }
         }
 
         public override void Update()
         {
             base.Update();
+            DaggerfallUI.Instance?.FadeBehaviour?.ClearFade();
 
             HandleCourtLogic();
         }
@@ -181,10 +202,10 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
                     {
                         if (guild.Rank >= UnityEngine.Random.Range(0, 20))
                         {
-                            messageBox = new DaggerfallMessageBox(uiManager, this, false, 149);
+                            messageBox = new DaggerfallMessageBox(uiManager, this, false, 75);
                             messageBox.SetTextTokens(DaggerfallUnity.Instance.TextProvider.GetRSCTokens(courtTextDB));
                             messageBox.ScreenDimColor = new Color32(0, 0, 0, 0);
-                            messageBox.ParentPanel.VerticalAlignment = VerticalAlignment.Bottom;
+                            messageBox.ParentPanel.VerticalAlignment = VerticalAlignment.Middle;
                             messageBox.ClickAnywhereToClose = true;
                             uiManager.PushWindow(messageBox);
                             playerEntity.FillVitalSigns();
@@ -202,10 +223,10 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
                     {
                         if (guild.Rank >= UnityEngine.Random.Range(0, 20))
                         {
-                            messageBox = new DaggerfallMessageBox(uiManager, this, false, 149);
+                            messageBox = new DaggerfallMessageBox(uiManager, this, false, 75);
                             messageBox.SetTextTokens(DaggerfallUnity.Instance.TextProvider.GetRSCTokens(courtTextTG));
                             messageBox.ScreenDimColor = new Color32(0, 0, 0, 0);
-                            messageBox.ParentPanel.VerticalAlignment = VerticalAlignment.Bottom;
+                            messageBox.ParentPanel.VerticalAlignment = VerticalAlignment.Middle;
                             messageBox.ClickAnywhereToClose = true;
                             messageBox.AllowCancel = false;
                             uiManager.PushWindow(messageBox);
@@ -217,23 +238,23 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
                     }
                 }
 
-                messageBox = new DaggerfallMessageBox(uiManager, this, false, 105);
+                messageBox = new DaggerfallMessageBox(uiManager, this, false, 65);
                 messageBox.SetTextTokens(DaggerfallUnity.Instance.TextProvider.GetRSCTokens(courtTextStart));
                 messageBox.ScreenDimColor = new Color32(0, 0, 0, 0);
                 messageBox.AddButton(DaggerfallMessageBox.MessageBoxButtons.Guilty);
                 messageBox.AddButton(DaggerfallMessageBox.MessageBoxButtons.NotGuilty);
                 messageBox.OnButtonClick += GuiltyNotGuilty_OnButtonClick;
-                messageBox.ParentPanel.VerticalAlignment = VerticalAlignment.Bottom;
+                messageBox.ParentPanel.VerticalAlignment = VerticalAlignment.Middle;
                 messageBox.AllowCancel = false;
                 uiManager.PushWindow(messageBox);
                 state = 1; // Done with initial message
             }
             else if (state == 2) // Found guilty
             {
-                DaggerfallMessageBox messageBox = new DaggerfallMessageBox(uiManager, this, false, 149);
+                DaggerfallMessageBox messageBox = new DaggerfallMessageBox(uiManager, this, false, 75);
                 messageBox.SetTextTokens(DaggerfallUnity.Instance.TextProvider.GetRSCTokens(courtTextFoundGuilty));
                 messageBox.ScreenDimColor = new Color32(0, 0, 0, 0);
-                messageBox.ParentPanel.VerticalAlignment = VerticalAlignment.Bottom;
+                messageBox.ParentPanel.VerticalAlignment = VerticalAlignment.Middle;
                 messageBox.ClickAnywhereToClose = true;
                 messageBox.AllowCancel = false;
                 uiManager.PushWindow(messageBox);
@@ -253,6 +274,14 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
             else if (state == 3) // Serve prison sentence
             {
                 playerEntity.InPrison = true;
+                if (NetworkSession.IsActive && DFUNetworkManager.Instance != null)
+                {
+                    playerEntity.RaiseReputationForDoingSentence();
+                    DFUNetworkManager.Instance.OpenPrisonDilemmaWindow(daysInPrison);
+                    CloseWindow();
+                    return;
+                }
+
                 SwitchToPrisonScreen();
                 daysInPrisonLeft = daysInPrison;
                 playerEntity.RaiseReputationForDoingSentence();
@@ -261,10 +290,10 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
             }
             else if (state == 4) // Banished
             {
-                DaggerfallMessageBox messageBox = new DaggerfallMessageBox(uiManager, this, false, 149);
+                DaggerfallMessageBox messageBox = new DaggerfallMessageBox(uiManager, this, false, 75);
                 messageBox.SetTextTokens(DaggerfallUnity.Instance.TextProvider.GetRSCTokens(courtTextBanished));
                 messageBox.ScreenDimColor = new Color32(0, 0, 0, 0);
-                messageBox.ParentPanel.VerticalAlignment = VerticalAlignment.Bottom;
+                messageBox.ParentPanel.VerticalAlignment = VerticalAlignment.Middle;
                 messageBox.ClickAnywhereToClose = true;
                 messageBox.AllowCancel = false;
                 uiManager.PushWindow(messageBox);
@@ -278,10 +307,10 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
             // Note: Seems like an execution sentence can't be given in classic. It can't be given here, either.
             else if (state == 5) // Execution
             {
-                DaggerfallMessageBox messageBox = new DaggerfallMessageBox(uiManager, this, false, 149);
+                DaggerfallMessageBox messageBox = new DaggerfallMessageBox(uiManager, this, false, 75);
                 messageBox.SetTextTokens(DaggerfallUnity.Instance.TextProvider.GetRSCTokens(courtTextExecuted));
                 messageBox.ScreenDimColor = new Color32(0, 0, 0, 0);
-                messageBox.ParentPanel.VerticalAlignment = VerticalAlignment.Bottom;
+                messageBox.ParentPanel.VerticalAlignment = VerticalAlignment.Middle;
                 messageBox.ClickAnywhereToClose = true;
                 messageBox.AllowCancel = false;
                 uiManager.PushWindow(messageBox);
@@ -353,13 +382,13 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
             }
             else // Pleading not guilty
             {
-                DaggerfallMessageBox messageBox = new DaggerfallMessageBox(uiManager, this, false, 127);
+                DaggerfallMessageBox messageBox = new DaggerfallMessageBox(uiManager, this, false, 65);
                 messageBox.SetTextTokens(DaggerfallUnity.Instance.TextProvider.GetRSCTokens(courtTextHowConvince));
                 messageBox.ScreenDimColor = new Color32(0, 0, 0, 0);
                 messageBox.AddButton(DaggerfallMessageBox.MessageBoxButtons.Debate);
                 messageBox.AddButton(DaggerfallMessageBox.MessageBoxButtons.Lie);
                 messageBox.OnButtonClick += DebateLie_OnButtonClick;
-                messageBox.ParentPanel.VerticalAlignment = VerticalAlignment.Bottom;
+                messageBox.ParentPanel.VerticalAlignment = VerticalAlignment.Middle;
                 messageBox.AllowCancel = false;
                 uiManager.PushWindow(messageBox);
             }
@@ -411,10 +440,10 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
             }
             else
             {
-                DaggerfallMessageBox messageBox = new DaggerfallMessageBox(uiManager, this, false, 149);
+                DaggerfallMessageBox messageBox = new DaggerfallMessageBox(uiManager, this, false, 75);
                 messageBox.SetTextTokens(DaggerfallUnity.Instance.TextProvider.GetRSCTokens(courtTextFreeToGo));
                 messageBox.ScreenDimColor = new Color32(0, 0, 0, 0);
-                messageBox.ParentPanel.VerticalAlignment = VerticalAlignment.Bottom;
+                messageBox.ParentPanel.VerticalAlignment = VerticalAlignment.Middle;
                 messageBox.ClickAnywhereToClose = true;
                 messageBox.AllowCancel = false;
                 uiManager.PushWindow(messageBox);
@@ -450,6 +479,9 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
 
         public void PositionPlayerAtLocationEntrance()
         {
+            if (NetworkSession.IsActive)
+                return;
+
             DFPosition mapPixel = GameManager.Instance.PlayerGPS.CurrentMapPixel;
             ContentReader.MapSummary mapSummary;
             if (DaggerfallUnity.Instance.ContentReader.HasLocation(mapPixel.X, mapPixel.Y, out mapSummary))
@@ -471,20 +503,33 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
             {
                 playerEntity.PreventEnemySpawns = true;
                 playerEntity.PreventNormalizingReputations = true;
-                DaggerfallUnity.WorldTime.DaggerfallDateTime.RaiseTime(daysInPrison * 1440 * 60);
+                if (!NetworkSession.IsActive)
+                    DaggerfallUnity.WorldTime.DaggerfallDateTime.RaiseTime(daysInPrison * 1440 * 60);
                 RaiseOnEndPrisonTimeEvent();
                 playerEntity.InPrison = false;
                 playerEntity.FillVitalSigns();
+                if (NetworkSession.IsActive && DFUNetworkManager.Instance != null)
+                {
+                    DFUNetworkManager.Instance.OpenPrisonDilemmaWindow(daysInPrison);
+                }
             }
         }
 
         public void ReleaseFromPrison()
         {
             playerEntity.PreventEnemySpawns = true;
-            DaggerfallUnity.WorldTime.DaggerfallDateTime.RaiseTime(240 * 60);
+            if (!NetworkSession.IsActive)
+            {
+                DaggerfallUnity.WorldTime.DaggerfallDateTime.RaiseTime(240 * 60);
+                if (repositionPlayer)
+                    PositionPlayerAtLocationEntrance();
+            }
+            else if (DFUNetworkManager.Instance != null)
+            {
+                int myConn = NetworkSession.IsHost ? 0 : DFUNetworkManager.Instance.localConnectionId;
+                DFUNetworkManager.Instance.SetPlayerJusticeStasis(myConn, false);
+            }
             playerEntity.CrimeCommitted = Entity.PlayerEntity.Crimes.None;
-            if (repositionPlayer)
-                PositionPlayerAtLocationEntrance();
             GameManager.Instance.ClearEnemies();
             CancelWindow();
         }

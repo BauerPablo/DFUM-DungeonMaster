@@ -56,12 +56,16 @@ namespace DaggerfallWorkshop.Utility
         /// <returns>Texture2D.</returns>
         public static Texture2D GetTexture(Color32[] colors, int srcWidth, int srcHeight)
         {
+            if (srcWidth <= 0 || srcHeight <= 0)
+                return new Texture2D(1, 1, TextureFormat.ARGB32, false);
+
             Texture2D texture = new Texture2D(srcWidth, srcHeight, TextureFormat.ARGB32, false);
-            if (colors != null)
+            if (colors != null && colors.Length == srcWidth * srcHeight)
             {
                 texture.SetPixels32(colors, 0);
                 texture.Apply(false, false);
-                texture.filterMode = DaggerfallUI.Instance.GlobalFilterMode;
+                if (DaggerfallUI.Instance != null)
+                    texture.filterMode = DaggerfallUI.Instance.GlobalFilterMode;
             }
 
             return texture;

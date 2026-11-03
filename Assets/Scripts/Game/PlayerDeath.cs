@@ -1,4 +1,4 @@
-﻿// Project:         Daggerfall Unity
+// Project:         Daggerfall Unity
 // Copyright:       Copyright (C) 2009-2022 Daggerfall Workshop
 // Web Site:        http://www.dfworkshop.net
 // License:         MIT License (http://www.opensource.org/licenses/mit-license.php)
@@ -14,6 +14,7 @@ using System;
 using System.Collections;
 using DaggerfallWorkshop.Game.Entity;
 using DaggerfallWorkshop.Game.Utility;
+using DaggerfallWorkshop.Game.Networking;
 
 namespace DaggerfallWorkshop.Game
 {
@@ -86,6 +87,10 @@ namespace DaggerfallWorkshop.Game
                     mainCamera.transform.localPosition = pos;
                 }
 
+                // Phase 19: In active multiplayer, never reset to TitleMenuFromDeath
+                if (NetworkSession.IsActive)
+                    return;
+
                 if (Time.fixedTime - timeOfDeath > TimeBeforeReset)
                 {
                     // Start new game from death cinematic
@@ -147,6 +152,15 @@ namespace DaggerfallWorkshop.Game
 
         private void PlayerEntity_OnDeath(DaggerfallEntity entity)
         {
+            if (NetworkSession.IsActive)
+            {
+                if (DFUPlayerLifecycleController.Instance != null)
+                {
+                    DFUPlayerLifecycleController.Instance.TriggerLocalPlayerDowned();
+                    return;
+                }
+            }
+
             if (deathInProgress || !mainCamera)
                 return;
 

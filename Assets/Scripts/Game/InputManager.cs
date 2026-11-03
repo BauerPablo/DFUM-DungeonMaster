@@ -1825,12 +1825,27 @@ namespace DaggerfallWorkshop.Game
         // Enumerate all keyboard actions in progress
         void FindKeyboardActions()
         {
+            bool ctrlHeld = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl) ||
+                            Input.GetKey(KeyCode.LeftCommand) || Input.GetKey(KeyCode.RightCommand);
+            bool shiftHeld = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
+            bool dmChord = ctrlHeld && shiftHeld;
+
             var enumerator = existingKeyDict.GetEnumerator();
             while (enumerator.MoveNext())
             {
                 var element = enumerator.Current;
                 if (GetKey(element.Key))
                 {
+                    // When the dual DM modifier chord (Ctrl + Shift) is active, suppress gameplay actions for non-modifier keys
+                    // so that shortcuts like Ctrl+Shift+R, Ctrl+Shift+H, Ctrl+Shift+F10 do not leak into game actions.
+                    if (dmChord && element.Key != KeyCode.LeftControl && element.Key != KeyCode.RightControl &&
+                        element.Key != KeyCode.LeftCommand && element.Key != KeyCode.RightCommand &&
+                        element.Key != KeyCode.LeftShift && element.Key != KeyCode.RightShift &&
+                        (int)element.Key < startingComboKeyCode)
+                    {
+                        continue;
+                    }
+
                     // Add current action to list
                     currentActions.Add(element.Value);
 

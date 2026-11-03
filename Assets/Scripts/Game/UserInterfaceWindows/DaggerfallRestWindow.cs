@@ -91,6 +91,8 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
 
         #region Properties
 
+        public bool AllowStopButton { get; set; } = true;
+
         protected RestModes currentRestMode
         {
             get { return GameManager.Instance.PlayerEntity.CurrentRestMode; }
@@ -191,7 +193,8 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
             {
                 // Toggle window closed with same hotkey used to open it, or the DaggerfallBaseWindow's exitKey
                 // Window will properly end the rest if the player was currently resting
-                if (InputManager.Instance.GetKeyUp(toggleClosedBinding) || InputManager.Instance.GetBackButtonUp())
+                bool isCommunalRest = (!AllowStopButton) || (stopButton != null && !stopButton.Enabled) || (DFUNetworkManager.Instance != null && DFUNetworkManager.Instance.IsPartyResting);
+                if ((InputManager.Instance.GetKeyUp(toggleClosedBinding) || InputManager.Instance.GetBackButtonUp()) && !isCommunalRest)
                     if (currentRestMode != RestModes.Selection)
                         EndRest();
                     else
@@ -309,6 +312,9 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
 
         public void StartAuthoritativeRest(int hours)
         {
+            AllowStopButton = false;
+            if (stopButton != null)
+                stopButton.Enabled = false;
             hoursRemaining = hours;
             waitTimer = Time.realtimeSinceStartup;
             currentRestMode = RestModes.TimedRest;
@@ -317,6 +323,9 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
 
         public void StartAuthoritativeLoiter(int hours)
         {
+            AllowStopButton = false;
+            if (stopButton != null)
+                stopButton.Enabled = false;
             hoursRemaining = hours;
             waitTimer = Time.realtimeSinceStartup;
             currentRestMode = RestModes.Loiter;
@@ -364,6 +373,12 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
                 counterPanel.BackgroundTexture = hoursRemainingTexture;
                 counterLabel.Text = hoursRemaining.ToString();
             }
+
+            if (stopButton != null)
+            {
+                bool hideStop = (!AllowStopButton) || (DFUNetworkManager.Instance != null && DFUNetworkManager.Instance.IsPartyResting);
+                stopButton.Enabled = !hideStop;
+            }
         }
 
         bool TickRest()
@@ -396,8 +411,11 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
 
                 // Progress world time and tick quest machine
                 // This could cause enemies to be spawned
-                DaggerfallUnity.WorldTime.Now.RaiseTime(minutesPerTick * 60);
-                Questing.QuestMachine.Instance.Tick();
+                if (!NetworkSession.IsClient)
+                {
+                    DaggerfallUnity.WorldTime.Now.RaiseTime(minutesPerTick * 60);
+                    Questing.QuestMachine.Instance.Tick();
+                }
 
                 // Count a full hour
                 minutesOfHour += minutesPerTick;
@@ -767,12 +785,16 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
 
         private void StopButton_OnMouseClick(BaseScreenComponent sender, Vector2 position)
         {
+            if (stopButton != null && !stopButton.Enabled)
+                return;
             EndRest();
             DaggerfallUI.Instance.PlayOneShot(SoundClips.ButtonClick);
         }
 
         protected void StopButton_OnKeyboardEvent(BaseScreenComponent sender, Event keyboardEvent)
         {
+            if (stopButton != null && !stopButton.Enabled)
+                return;
             if (keyboardEvent.type == EventType.KeyDown)
             {
                 DaggerfallUI.Instance.PlayOneShot(SoundClips.ButtonClick);

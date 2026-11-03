@@ -155,30 +155,41 @@ flowchart TD
      - High skill: Player B reads normal text `[Orcish] "¡Ataquen por la retaguardia!"`.
      - Low/No skill: Player B reads scrambled guttural syllables `[Orcish] "Ghor lagash mog durat!"`.
      - The DM always reads the translated text with the source language tag.
+3. **Interactive Visual D20 Tray & BG3-Style DC Skill Challenges:**
+   - **Top-Center Puller Tab:** Downward triangular tab at top-center of screen that toggles a pixel-art D20 dice tray.
+   - **Free Rolls:** Any player can pull the tray and roll a 1D20 at any time for spontaneous tabletop checks.
+   - **DM DC Challenge System:**
+     - DM configures Challenge Reason (e.g. *Perception Check*, *Athletics*), target DC (Difficulty Class, e.g. 15), and a checkbox to show/hide the DC from players.
+     - Broadcasts challenge to party; tray unfolds automatically on clients.
+     - First player to roll submits the active check result.
+   - **Rolling Suspense & Animation:** The die tumbles with shuffling numbers and audio rattles for ~1.8 seconds before locking in.
+   - **Evaluation & Feedback:**
+     - **Nat 20:** *¡Éxito Crítico!* highlighted in radiant gold.
+     - **Nat 1:** *¡Fallo Crítico!* highlighted in crimson red.
+     - **Success / Fail:** Evaluated against DC (if hidden, displays whether passed without revealing exact DC).
+     - Authoritative broadcast to all connected players with Dark Fantasy pixel-art banner.
 
 ---
 
-### Phase 18: Mods Catcher & Configuration Replication
+### Phase 18: Mods Catcher & Configuration Replication (Implemented)
 
 **Goal:** Ensure 100% mod parity across clients and authoritatively replicate gameplay rules (such as Climates & Calories) from Host to Clients.
 
-#### Requirements:
-1. **1:1 Mod Manifest Handshake:**
-   - During network connection handshake, Client transmits `MsgModManifest` containing lists of all loaded `.dfmod` files, assembly versions, and file hashes.
-   - Host compares against its own loaded mod list.
-2. **Conflict & Mismatch Diagnostic Modal:**
-   - If client is missing mods, has extra unapproved mods, or has version mismatches:
-     - Connection is held in a diagnostic state.
-     - A clear UI window displays:
-       - **Faltantes:** Mods active on server that client must install.
-       - **Sobrantes:** Mods active on client that are not allowed on server.
-       - **Versión en Conflicto:** Mods with different versions.
-       - Exact instructions and links to match the host setup.
-3. **Authoritative `modsettings.json` Sync:**
-   - When mods match 1:1, Host serializes its active `modsettings.json` configs (e.g. *Climates & Calories* temperature curves, thirst/hunger rates) and pushes them to connecting clients.
-   - Clients apply host settings for the duration of the multiplayer session, restoring their local defaults on disconnect.
-4. **Modding Installation Guide:**
-   - Comprehensive documentation (`Docs/modding_guide_climates_and_calories.md`) covering installation, compatible mods, and configuration guidelines.
+#### Implemented Features:
+1. **1:1 Mod Manifest Handshake (`MsgModManifestReport` & `MsgModCompatibilityResponse`):**
+   - Transmits active `.dfmod` files, versions, and cryptographic SHA-256 hashes computed via [`DFUModSyncController.cs`](file:///D:/11%20Workspace/17%20DFU-Multiplayer/Assets/Scripts/Game/Networking/DFUModSyncController.cs).
+   - Host validates 1:1 parity, categorizing conflicts into Missing, Extra, and Mismatched mods.
+2. **Conflict & Mismatch Diagnostic Modal ([`DFUModConflictModalWindow.cs`](file:///D:/11%20Workspace/17%20DFU-Multiplayer/Assets/Scripts/Game/UserInterfaceWindows/DFUModConflictModalWindow.cs)):**
+   - In Pre-Game Lobby (`Tab 2`), parity conflicts lock the Ready button with `[!] CONFLICTO MODS (VER)`.
+   - Displays a 320x200 pixel-art modal detailing missing mods, extra unapproved mods, and version/hash differences.
+   - Host Launch button remains locked until all clients achieve 100% parity.
+3. **Authoritative `modsettings.json` Sync & Rollback (`MsgModSettingsSync`):**
+   - Host pushes active configurations (e.g. *Climates & Calories* survival parameters) to verified clients.
+   - Client backs up local settings to `modsettings.mp_backup.json`, live-applies Host settings via `mod.LoadSettings()`.
+   - On disconnect (`OnStopClient`), seamlessly restores local client settings and deletes temporary backups.
+4. **Documentation & Testing:**
+   - Modding Guide: [`Docs/modding_guide_climates_and_calories.md`](file:///D:/11%20Workspace/17%20DFU-Multiplayer/Docs/modding_guide_climates_and_calories.md).
+   - Manual Testing: [`Docs/testing_docs/manual-testing-phase-18-mods-catcher-and-config-sync.md`](file:///D:/11%20Workspace/17%20DFU-Multiplayer/Docs/testing_docs/manual-testing-phase-18-mods-catcher-and-config-sync.md).
 
 ---
 
@@ -221,6 +232,65 @@ flowchart TD
    - `MsgPlayerDowned`: Informs the server and clients that a player has collapsed at a specific position, synchronizing the downed pose and starting the 3-minute timer.
    - `MsgPlayerRevive`: Dispatched when healing is applied, authoritatively restoring player state and health.
    - `MsgPlayerPermaDeath`: Dispatched on timer timeout to spawn permanent corpse and switch victim to spectator mode.
+5. **Documentation & Testing:**
+   - Manual Testing: [`Docs/testing_docs/manual-testing-phase-19-downed-state-and-spectator.md`](file:///D:/11%20Workspace/17%20DFU-Multiplayer/Docs/testing_docs/manual-testing-phase-19-downed-state-and-spectator.md).
+
+### Phase 20: Cooperative Party Restoration, Shared Buffs & Non-Magical First Aid
+
+1. **Party Smart-Support Spell Adapter:**
+   - Resolves the single-player legacy constraint where all baseline Restoration and Buff spells are hardcoded to `TargetTypes.CasterOnly`.
+   - Introduces an authoritative Targeting Adapter:
+     - When a player has a beneficial or curative spell readied (Heal Health/Fatigue/Magicka, Cure Poison/Paralysis/Disease, Levitate, Water Breathing, Invisibility, Resistances), holding a designated Support Modifier key (or aiming crosshair directly at an allied player puppet / allied NPC within 4 meters) re-routes the cast payload to the targeted entity.
+     - Automatically serializes and routes the `EntityEffectBundle` over Mirror RPCs (`SendSpellPayloadToPlayer`), executing cleanly on the recipient's `PlayerEffectManager`.
+2. **Area of Effect (AoE) Aura Synchronization:**
+   - Spells created with `TargetTypes.AreaAroundCaster` or `TargetTypes.AreaAtRange` intelligently identify party puppets in radius:
+     - Harmful effects respect `net_pvp` friendly-fire toggle.
+     - Beneficial effects (Mass Cure, Aura of Protection, Group Levitate, Light) are automatically multi-cast and applied to all friendly party members within the blast radius without manual single-target aiming.
+3. **Non-Magical First Aid & Consumable Injection:**
+   - Supports non-caster classes (Warriors, Rogues, Rangers) who lack Magicka pools:
+     - **Direct Potion Application:** Players can use healing, stamina, or antidote potions from inventory directly on a targeted party member in melee range (< 2.5m) or via the Player Interaction Menu.
+     - **Field Medic (Medical Skill):** Using bandages or rest kits applies a Medical check to restore fatigue and stabilize bleeding companions.
+4. **Allied NPC & Summon Support:**
+   - Beneficial spells and touch payloads applied to friendly/summoned creatures (Atronachs, pacified beasts, escort quest NPCs) restore health without triggering hostility or combat aggro.
+5. **Network Protocol & Messages:**
+   - `MsgPartySupportAction`: Routes direct non-spell healing actions (potions, medical bandages) with authoritative consumable consumption.
+   - Extends `MsgApplySpellBundle` with support-tagging and friendly target acknowledgment.
+6. **Documentation & Testing:**
+   - Manual Testing: `Docs/testing_docs/manual-testing-phase-20-cooperative-restoration-and-buffs.md`.
+
+### Phase 21: Party Justice, World Stasis & Narrative Prison Escapes
+
+1. **Guard Arrest & Combat Stasis (Stand Down):**
+   - Intercepts guard combat cycles upon arrest initiation.
+   - When a city guard triggers `SurrenderToGuardsDialogue`, all guards in a 25m radius immediately halt attacks and enter a non-hostile stand-down state.
+   - The accused player receives authoritative combat stasis (immunity to guard and external damage while interacting with dialogue and court proceedings).
+2. **Synchronized Courtroom & Party Broadcast:**
+   - The defendant player alone interacts with the trial interface (`DaggerfallCourtWindow`), entering pleas and arguments.
+   - Remote party peers receive a synchronized HUD broadcast: `✦ TRIBUNAL EN SESIÓN ✦`, displaying the defendant's name, jurisdiction, charges, and verdict.
+3. **Imprisonment, Inmate Escape & "Choose Your Own Adventure" Party Jailbreak:**
+   - Completely suppresses legacy single-player destructive `RaiseTime` skips during jail sentences.
+   - Presents a dedicated Dark Fantasy Pixel Art interactive window featuring 3 distinct gameplay paths:
+     - **Serve Sentence (Communal Wait):** The party waits out the sentence collectively via the synchronized party rest/wait system.
+     - **Inmate Solo Escape Roll (D20 Check):** The imprisoned player attempts an escape roll inside the dungeon cell. Success breaks them out to the city entrance as a wanted fugitive; failure doubles the prison sentence.
+     - **Party Jailbreak (Choose Your Own Adventure):** Allied party members initiate a 3-stage branching rescue adventure (e.g. Infiltrate Guardhouse -> Picklock/Bribe Jailer -> Escape & Evacuation). The DM configures the DC checks in real time via the DM Suite dice tray. If the party succeeds all 3 checks, the prisoner is freed. If any check fails, the rescuers are arrested and imprisoned together.
+4. **Vampirism & Lycanthropy Anti-Skip Lifecycle:**
+   - Transformation dream and nightmare cinematics play locally for the infected player only, granting combat stasis while viewing.
+   - Suppresses the classic 14-day time leap in `DeployFullBlownVampirism`. Time progresses day-by-day in real time.
+   - During the vampiric lethargy phase, the player views a placeholder screen: `[Acá va video en loop - Letargo Vampírico]`.
+   - The sleeping player can participate in party rest votes to accelerate the days collectively.
+   - Upon completion, the transformed player awakens in the cemetery crypt without temporal desync.
+5. **Shared Daedric Invocations & Cutscene Stasis:**
+   - When a party member invokes a Daedric Prince at a coven/shrine or activates a main story video (`DaggerfallVidPlayerWindow`), the video is synchronized and played for all connected peers.
+   - All party members are granted total damage stasis for the duration of the cutscene.
+6. **Silent Dungeon Teleport Traps & Kidnappings:**
+   - Teleport pads and quest traps silently relocate the victim without chat spoiler announcements, preserving authentic TTRPG mystery and organic party search efforts.
+7. **Synchronized Guild Training & Temple Healing:**
+   - Services requiring hours of rest/training (guild skill training, temple disease recovery) dispatch `MsgPartyWaitVote`.
+   - Time advances authoritatively on the server only upon unanimous party consent.
+8. **Communal Rest Ambush Awakening:**
+   - Enemy spawns during rest wake up all sleeping players simultaneously, granting a 3-second defensive reaction stasis to prevent instant darkness deaths.
+9. **Documentation & Testing:**
+   - Manual Testing: `Docs/testing_docs/manual-testing-phase-21-party-justice-and-world-stasis.md`.
 
 ---
 

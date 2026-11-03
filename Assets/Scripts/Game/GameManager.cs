@@ -556,63 +556,67 @@ namespace DaggerfallWorkshop.Game
             if (!IsPlayingGame() || (NetworkSession.IsActive && (isGamePaused || (DaggerfallUI.UIManager != null && DaggerfallUI.UIManager.TopWindow != null && !(DaggerfallUI.UIManager.TopWindow is DaggerfallHUD)))))
                 return;
 
+            // Don't process in-game window hotkeys while multiplayer chat input is open
+            if (DaggerfallWorkshop.Game.Networking.DMChatController.Instance != null && DaggerfallWorkshop.Game.Networking.DMChatController.Instance.IsChatOpen)
+                return;
+
             // Post message to open options dialog on escape during gameplay
             if (InputManager.Instance.ActionComplete(InputManager.Actions.Escape))
             {
                 DaggerfallUI.PostMessage(DaggerfallUIMessages.dfuiOpenPauseOptionsDialog);
             }
 
+            // Handle quick save and load (ignore if Control modifier is held, e.g. Ctrl+F11 TTRPG Master Suite, Ctrl+T, etc.)
+            bool ctrlHeld = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl) ||
+                            Input.GetKey(KeyCode.LeftCommand) || Input.GetKey(KeyCode.RightCommand);
+
             // Handle in-game windows
-            if (InputManager.Instance.ActionComplete(InputManager.Actions.CharacterSheet))
+            if (!ctrlHeld && InputManager.Instance.ActionComplete(InputManager.Actions.CharacterSheet))
             {
                 DaggerfallUI.PostMessage(DaggerfallUIMessages.dfuiOpenCharacterSheetWindow);
             }
-            else if (InputManager.Instance.ActionComplete(InputManager.Actions.Inventory))
+            else if (!ctrlHeld && InputManager.Instance.ActionComplete(InputManager.Actions.Inventory))
             {
                 DaggerfallUI.PostMessage(DaggerfallUIMessages.dfuiOpenInventoryWindow);
             }
-            else if (!(DaggerfallWorkshop.Game.Networking.FreeCamController.Instance != null && DaggerfallWorkshop.Game.Networking.FreeCamController.Instance.IsActive) && InputManager.Instance.ActionComplete(InputManager.Actions.TravelMap))
+            else if (!ctrlHeld && !(DaggerfallWorkshop.Game.Networking.FreeCamController.Instance != null && DaggerfallWorkshop.Game.Networking.FreeCamController.Instance.IsActive) && InputManager.Instance.ActionComplete(InputManager.Actions.TravelMap))
             {
                 DaggerfallUI.PostMessage(DaggerfallUIMessages.dfuiOpenTravelMapWindow);
             }
-            else if (InputManager.Instance.ActionComplete(InputManager.Actions.Rest))
+            else if (!ctrlHeld && InputManager.Instance.ActionComplete(InputManager.Actions.Rest))
             {
                 DaggerfallUI.PostMessage(DaggerfallUIMessages.dfuiOpenRestWindow);
             }
-            else if (!(DaggerfallWorkshop.Game.Networking.FreeCamController.Instance != null && DaggerfallWorkshop.Game.Networking.FreeCamController.Instance.IsActive) && InputManager.Instance.ActionComplete(InputManager.Actions.Transport))
+            else if (!ctrlHeld && !(DaggerfallWorkshop.Game.Networking.FreeCamController.Instance != null && DaggerfallWorkshop.Game.Networking.FreeCamController.Instance.IsActive) && InputManager.Instance.ActionComplete(InputManager.Actions.Transport))
             {
 	            DaggerfallUI.PostMessage(DaggerfallUIMessages.dfuiOpenTransportWindow);
             }
-            else if (InputManager.Instance.ActionComplete(InputManager.Actions.LogBook))
+            else if (!ctrlHeld && InputManager.Instance.ActionComplete(InputManager.Actions.LogBook))
             {
                 DaggerfallUI.PostMessage(DaggerfallUIMessages.dfuiOpenQuestJournalWindow);
             }
-            else if (InputManager.Instance.ActionComplete(InputManager.Actions.NoteBook))
+            else if (!ctrlHeld && InputManager.Instance.ActionComplete(InputManager.Actions.NoteBook))
             {
                 DaggerfallUI.PostMessage(DaggerfallUIMessages.dfuiOpenNotebookWindow);
             }
-            else if (InputManager.Instance.ActionComplete(InputManager.Actions.CastSpell))
+            else if (!ctrlHeld && InputManager.Instance.ActionComplete(InputManager.Actions.CastSpell))
             {
                 DaggerfallUI.PostMessage(DaggerfallUIMessages.dfuiOpenSpellBookWindow);
             }
-            else if (InputManager.Instance.ActionComplete(InputManager.Actions.UseMagicItem))
+            else if (!ctrlHeld && InputManager.Instance.ActionComplete(InputManager.Actions.UseMagicItem))
             {
                 DaggerfallUI.PostMessage(DaggerfallUIMessages.dfuiOpenUseMagicItemWindow);
             }
 
-            if (InputManager.Instance.ActionComplete(InputManager.Actions.Status))
+            if (!ctrlHeld && InputManager.Instance.ActionComplete(InputManager.Actions.Status))
             {
                 DaggerfallUI.PostMessage(DaggerfallUIMessages.dfuiStatusInfo);
             }
 
-            if (InputManager.Instance.ActionComplete(InputManager.Actions.AutoMap))
+            if (!ctrlHeld && InputManager.Instance.ActionComplete(InputManager.Actions.AutoMap))
             {
                 DaggerfallUI.PostMessage(DaggerfallUIMessages.dfuiOpenAutomap);
             }
-
-            // Handle quick save and load (ignore if Control modifier is held, e.g. Ctrl+F11 TTRPG Master Suite)
-            bool ctrlHeld = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl) ||
-                            Input.GetKey(KeyCode.LeftCommand) || Input.GetKey(KeyCode.RightCommand);
 
             if (!ctrlHeld && InputManager.Instance.ActionStarted(InputManager.Actions.QuickSave))
             {

@@ -185,7 +185,11 @@ namespace DaggerfallWorkshop.Game.Items
             {
                 string message = string.Format("Item index out of range: Group={0} Index={1}", itemGroup.ToString(), groupIndex);
                 Debug.Log(message);
-                return new ItemTemplate();
+                ItemTemplate fallback = new ItemTemplate();
+                fallback.name = "Unknown Item";
+                fallback.worldTextureArchive = 205;
+                fallback.worldTextureRecord = 0;
+                return fallback;
             }
 
             int templateIndex = Convert.ToInt32(values.GetValue(groupIndex));
@@ -210,7 +214,11 @@ namespace DaggerfallWorkshop.Game.Items
             {
                 string message = string.Format("Item template index out of range: TemplateIndex={0}", templateIndex);
                 Debug.Log(message);
-                return new ItemTemplate();
+                ItemTemplate fallback = new ItemTemplate();
+                fallback.name = "Unknown Item";
+                fallback.worldTextureArchive = 205;
+                fallback.worldTextureRecord = 0;
+                return fallback;
             }
 
             return itemTemplates[templateIndex];
@@ -273,13 +281,20 @@ namespace DaggerfallWorkshop.Game.Items
                 return DaggerfallUnity.Instance.ItemHelper.GetBookTitle(item.message, item.shortName);
 
             // Start with base name
-            string result = item.shortName;
+            string result = item.shortName ?? string.Empty;
 
             // Resolve %it parameter
             if (!string.IsNullOrEmpty(template.name))
+            {
                 result = result.Replace("%it", template.name);
+            }
             else
-                Debug.LogErrorFormat("Item template index {0} has a null template.name", template.index);
+            {
+                if (result.Contains("%it"))
+                    result = result.Replace("%it", !string.IsNullOrEmpty(item.shortName) ? item.shortName : "Item").Trim();
+                else if (string.IsNullOrEmpty(result))
+                    result = "Item";
+            }
 
             return result;
         }
@@ -430,6 +445,8 @@ namespace DaggerfallWorkshop.Game.Items
             {
                 archive = item.ItemTemplate.worldTextureArchive;
                 record = item.ItemTemplate.worldTextureRecord;
+                if (archive <= 0)
+                    archive = 205;
             }
 
             // Get unique key

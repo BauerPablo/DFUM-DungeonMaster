@@ -52,7 +52,7 @@ namespace DaggerfallWorkshop.Game.Networking
 
         [Tooltip("Unified TTRPG Master Suite overlay (toggle via Ctrl+F11 or console command ttrpg_gui / dm_gui)")]
         public bool showTtrpgSuite = false;
-        private Rect ttrpgSuiteRect = new Rect(200, 20, 660, 620);
+        private Rect ttrpgSuiteRect = new Rect(140, 20, 780, 620);
         public int ttrpgSelectedTab = 0;
         public readonly string[] ttrpgTabNames = new string[]
         {
@@ -61,7 +61,8 @@ namespace DaggerfallWorkshop.Game.Networking
             "Mundo & Clima",
             "Quests & Diálogos",
             "Loot & Forja",
-            "Party & DM"
+            "Party & DM",
+            "Eventos & Justicia"
         };
         private Vector2 ttrpgSuiteScrollPos = Vector2.zero;
 
@@ -120,7 +121,7 @@ namespace DaggerfallWorkshop.Game.Networking
 
         // P2P Interactive Player Menu & Map Sharing
         public bool showPlayerInteractionWindow = false;
-        private Rect playerInteractionWindowRect = new Rect((Screen.width - 380) * 0.5f, (Screen.height - 270) * 0.5f, 380, 270);
+        private Rect playerInteractionWindowRect = new Rect((Screen.width - 440) * 0.5f, (Screen.height - 340) * 0.5f, 440, 340);
         private NativePlayerPuppet interactionTargetPuppet = null;
 
         // Party Reputation Inspector state
@@ -166,7 +167,7 @@ namespace DaggerfallWorkshop.Game.Networking
         /// <summary>
         /// True if any network, DM, loot, quest, player interaction, or trade debug overlay is open.
         /// </summary>
-        public bool IsAnyGuiOpen => showTtrpgSuite || showDebugGui || showDmGui || showLootGui || showQuestGui || showPlayerInteractionWindow || showTradeWindow || showTradeInvitePrompt;
+        public bool IsAnyGuiOpen => showTtrpgSuite || showDebugGui || showDmGui || showLootGui || showQuestGui || showPlayerInteractionWindow || showTradeWindow || showTradeInvitePrompt || showPrisonDilemmaWindow || showInfectionWindow || dmPendingEscapePrompt || (DMChatController.Instance != null && DMChatController.Instance.IsChatOpen) || (DMDiceTrayController.Instance != null && DMDiceTrayController.Instance.IsTrayOpen);
 
         private KcpTransport kcpTransport;
 
@@ -174,6 +175,32 @@ namespace DaggerfallWorkshop.Game.Networking
         /// Track active player connections on the server.
         /// </summary>
         public readonly HashSet<NetworkConnection> connectedClients = new HashSet<NetworkConnection>();
+        private readonly HashSet<int> pendingArrestPrompts = new HashSet<int>();
+        private readonly HashSet<int> clientLocallyKilledCivilians = new HashSet<int>();
+        private readonly HashSet<int> activeCrimeConnections = new HashSet<int>();
+
+        public bool HasActiveCrimes()
+        {
+            return activeCrimeConnections.Count > 0;
+        }
+
+        public void RegisterCrimeConnection(int connId)
+        {
+            activeCrimeConnections.Add(connId);
+        }
+
+        public void ClearCrimeConnection(int connId)
+        {
+            activeCrimeConnections.Remove(connId);
+        }
+
+        public void MarkCivilianLocallyKilled(int poolIndex)
+        {
+            if (poolIndex >= 0)
+            {
+                clientLocallyKilledCivilians.Add(poolIndex);
+            }
+        }
 
         /// <summary>
         /// Local player connection ID assigned by the server (Host is always 0).
@@ -229,6 +256,7 @@ namespace DaggerfallWorkshop.Game.Networking
         private Dictionary<int, string> restVoteMemberStatuses => currentVoteMemberStatuses;
 
         private bool isPartyResting = false;
+        public bool IsPartyResting => isPartyResting;
         private bool isPartyRestingBlackout = false;
         private int partyRestHours = 0;
         private bool partyRestIsLoiter = false;
@@ -282,6 +310,23 @@ namespace DaggerfallWorkshop.Game.Networking
             {
                 gameObject.AddComponent<DMRtsPlacementController>();
             }
+            if (GetComponent<DMDiceTrayController>() == null)
+            {
+                gameObject.AddComponent<DMDiceTrayController>();
+            }
+            if (GetComponent<DMChatController>() == null)
+            {
+                gameObject.AddComponent<DMChatController>();
+            }
+            if (GetComponent<DFUModSyncController>() == null)
+            {
+                gameObject.AddComponent<DFUModSyncController>();
+            }
+            if (GetComponent<DFUPlayerLifecycleController>() == null)
+            {
+                gameObject.AddComponent<DFUPlayerLifecycleController>();
+            }
+            DMDiceTrayController.OnDiceRollCompleted += HandleDiceRollCompleted;
             PlayerEnterExit.OnPreTransition += HandleOnPreTransition;
             PlayerEnterExit.OnTransitionInterior += HandleOnTransitionInterior;
             PlayerEnterExit.OnTransitionExterior += HandleOnTransitionExterior;
@@ -294,6 +339,7 @@ namespace DaggerfallWorkshop.Game.Networking
 
         public override void OnDestroy()
         {
+            DMDiceTrayController.OnDiceRollCompleted -= HandleDiceRollCompleted;
             PlayerEnterExit.OnPreTransition -= HandleOnPreTransition;
             PlayerEnterExit.OnTransitionInterior -= HandleOnTransitionInterior;
             PlayerEnterExit.OnTransitionExterior -= HandleOnTransitionExterior;
@@ -306,25 +352,18 @@ namespace DaggerfallWorkshop.Game.Networking
 
         private void Update()
         {
-            bool ctrlHeld = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
+            bool ctrlHeld = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl) ||
+                            Input.GetKey(KeyCode.LeftCommand) || Input.GetKey(KeyCode.RightCommand);
+            bool shiftHeld = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
+            bool dmChord = ctrlHeld && shiftHeld;
 
-            if (ctrlHeld && Input.GetKeyDown(KeyCode.F11))
+            // DM Suite Toggle: Ctrl + Shift + F10 (or F11)
+            if (dmChord && (Input.GetKeyDown(KeyCode.F10) || Input.GetKeyDown(KeyCode.F11)))
             {
                 showTtrpgSuite = !showTtrpgSuite;
             }
 
-            if (ctrlHeld && Input.GetKeyDown(KeyCode.F10))
-            {
-                if (showTtrpgSuite && ttrpgSelectedTab == 0)
-                    showTtrpgSuite = false;
-                else
-                {
-                    showTtrpgSuite = true;
-                    ttrpgSelectedTab = 0;
-                }
-            }
-
-            if (ctrlHeld && Input.GetKeyDown(KeyCode.F12))
+            if (dmChord && Input.GetKeyDown(KeyCode.F12))
             {
                 if (NetworkSession.IsServer || localLobbyIsDm)
                 {
@@ -338,7 +377,7 @@ namespace DaggerfallWorkshop.Game.Networking
                 }
             }
 
-            if (ctrlHeld && Input.GetKeyDown(KeyCode.F7))
+            if (dmChord && Input.GetKeyDown(KeyCode.F7))
             {
                 if (NetworkSession.IsServer || localLobbyIsDm)
                 {
@@ -352,7 +391,8 @@ namespace DaggerfallWorkshop.Game.Networking
                 }
             }
 
-            if (ctrlHeld && Input.GetKeyDown(KeyCode.F8))
+            // DM Entity Mode / FreeCam Toggle: Ctrl + Shift + F8
+            if (dmChord && Input.GetKeyDown(KeyCode.F8))
             {
                 if (NetworkSession.IsServer || localLobbyIsDm)
                 {
@@ -364,10 +404,10 @@ namespace DaggerfallWorkshop.Game.Networking
                 }
             }
 
-            // DM Quick Tactical RTS Placement: Ctrl + R
+            // DM Quick Tactical RTS Placement: Ctrl + Shift + R
             if (NetworkSession.IsServer || localLobbyIsDm || NetworkSession.IsSinglePlayer)
             {
-                if (ctrlHeld && Input.GetKeyDown(KeyCode.R))
+                if (dmChord && Input.GetKeyDown(KeyCode.R))
                 {
                     if (DMRtsPlacementController.Instance != null)
                     {
@@ -387,10 +427,10 @@ namespace DaggerfallWorkshop.Game.Networking
                 }
             }
 
-            // DM Quick Possess / Inhabit NPC under crosshair: Ctrl + H
+            // DM Quick Possess / Inhabit NPC under crosshair: Ctrl + Shift + H
             if (NetworkSession.IsServer || localLobbyIsDm || NetworkSession.IsSinglePlayer)
             {
-                if (ctrlHeld && Input.GetKeyDown(KeyCode.H))
+                if (dmChord && Input.GetKeyDown(KeyCode.H))
                 {
                     if (DMNpcController.Instance != null)
                     {
@@ -411,7 +451,7 @@ namespace DaggerfallWorkshop.Game.Networking
             // DM Quick Teleport in Physical Avatar mode: Ctrl + Shift + Left Click
             if ((NetworkSession.IsServer || localLobbyIsDm) && (FreeCamController.Instance == null || !FreeCamController.Instance.IsActive))
             {
-                if (ctrlHeld && (Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift)) && Input.GetMouseButtonDown(0))
+                if (dmChord && Input.GetMouseButtonDown(0))
                 {
                     if (GameManager.Instance != null && GameManager.Instance.MainCamera != null)
                     {
@@ -669,6 +709,7 @@ namespace DaggerfallWorkshop.Game.Networking
             NetworkServer.RegisterHandler<MsgPartyVoteRequest>(OnServerReceivePartyVoteRequest);
             NetworkServer.RegisterHandler<MsgPartyVoteResponse>(OnServerReceivePartyVoteResponse);
             NetworkServer.RegisterHandler<MsgPlayerCrime>(OnServerReceivePlayerCrime);
+            NetworkServer.RegisterHandler<MsgPlayerSurrender>(OnServerReceivePlayerSurrender);
             NetworkServer.RegisterHandler<MsgDialogueSpeech>(OnServerReceiveDialogueSpeech);
             NetworkServer.RegisterHandler<MsgDialogueEnded>(OnServerReceiveDialogueEnded);
             NetworkServer.RegisterHandler<MsgShareMapData>(OnServerReceiveShareMapData);
@@ -682,6 +723,12 @@ namespace DaggerfallWorkshop.Game.Networking
             NetworkServer.RegisterHandler<MsgApplySpellBundle>(OnServerReceiveApplySpellBundle);
             NetworkServer.RegisterHandler<MsgArrowShot>(OnServerReceiveArrowShot);
             NetworkServer.RegisterHandler<MsgLobbyClientUpdate>(OnServerReceiveLobbyClientUpdate);
+            NetworkServer.RegisterHandler<MsgPlayerDowned>(OnServerReceivePlayerDowned);
+            NetworkServer.RegisterHandler<MsgPlayerRevive>(OnServerReceivePlayerRevive);
+            NetworkServer.RegisterHandler<MsgPlayerPermaDeath>(OnServerReceivePlayerPermaDeath);
+            NetworkServer.RegisterHandler<MsgPartySupportAction>(OnServerReceivePartySupportAction);
+            NetworkServer.RegisterHandler<MsgTriggerJusticeEvent>(OnServerReceiveTriggerJusticeEvent);
+            NetworkServer.RegisterHandler<MsgRequestEscapeChallenge>(OnServerReceiveRequestEscapeChallenge);
             GameManager.OnEnemySpawn += OnServerEnemySpawned;
             WeatherManager.OnWeatherChange += OnServerWeatherChanged;
             worldTimeSyncTimer = 0f;
@@ -689,6 +736,9 @@ namespace DaggerfallWorkshop.Game.Networking
                 lastBroadcastTimeInSeconds = DaggerfallUnity.Instance.WorldTime.Now.ToSeconds();
 
             RegisterExistingSceneEnemies();
+            DMDiceTrayController.Instance?.RegisterNetworkHandlers();
+            DMChatController.Instance?.RegisterNetworkHandlers();
+            DFUModSyncController.Instance?.RegisterNetworkHandlers();
 
             MsgPlayerProfile hostProfile = BuildLocalPlayerProfile(0);
             connectedPlayerProfiles[0] = hostProfile;
@@ -708,12 +758,16 @@ namespace DaggerfallWorkshop.Game.Networking
             NetworkServer.UnregisterHandler<MsgAttackEntity>();
             NetworkServer.UnregisterHandler<MsgRequestLootSync>();
             NetworkServer.UnregisterHandler<MsgLootTakeItem>();
+            DMDiceTrayController.Instance?.UnregisterNetworkHandlers();
+            DMChatController.Instance?.UnregisterNetworkHandlers();
+            DFUModSyncController.Instance?.UnregisterNetworkHandlers();
             NetworkServer.UnregisterHandler<MsgLootDropItem>();
             NetworkServer.UnregisterHandler<MsgPartyRestVoteRequest>();
             NetworkServer.UnregisterHandler<MsgPartyRestVoteResponse>();
             NetworkServer.UnregisterHandler<MsgPartyVoteRequest>();
             NetworkServer.UnregisterHandler<MsgPartyVoteResponse>();
             NetworkServer.UnregisterHandler<MsgPlayerCrime>();
+            NetworkServer.UnregisterHandler<MsgPlayerSurrender>();
             NetworkServer.UnregisterHandler<MsgDialogueSpeech>();
             NetworkServer.UnregisterHandler<MsgDialogueEnded>();
             NetworkServer.UnregisterHandler<MsgShareMapData>();
@@ -727,7 +781,14 @@ namespace DaggerfallWorkshop.Game.Networking
             NetworkServer.UnregisterHandler<MsgApplySpellBundle>();
             NetworkServer.UnregisterHandler<MsgArrowShot>();
             NetworkServer.UnregisterHandler<MsgLobbyClientUpdate>();
+            NetworkServer.UnregisterHandler<MsgPlayerDowned>();
+            NetworkServer.UnregisterHandler<MsgPlayerRevive>();
+            NetworkServer.UnregisterHandler<MsgPlayerPermaDeath>();
+            NetworkServer.UnregisterHandler<MsgPartySupportAction>();
+            NetworkServer.UnregisterHandler<MsgRequestEscapeChallenge>();
             serverLobbyPlayers.Clear();
+            pendingArrestPrompts.Clear();
+            activeCrimeConnections.Clear();
             serverPendingTradeCommits.Clear();
             activeDialogueBubbles.Clear();
             remotePlayerReputations.Clear();
@@ -831,6 +892,8 @@ namespace DaggerfallWorkshop.Game.Networking
         public override void OnServerDisconnect(NetworkConnection conn)
         {
             connectedClients.Remove(conn);
+            pendingArrestPrompts.Remove(conn.connectionId);
+            ClearCrimeConnection(conn.connectionId);
             if (isRestVoteActive)
             {
                 restVoteApprovedClients.Remove(conn.connectionId);
@@ -901,6 +964,7 @@ namespace DaggerfallWorkshop.Game.Networking
             NetworkClient.RegisterHandler<MsgTradeCancel>(OnClientReceiveTradeCancel);
             NetworkClient.RegisterHandler<MsgTradeCompleted>(OnClientReceiveTradeCompleted);
             NetworkClient.RegisterHandler<MsgPopulationSync>(OnClientReceivePopulationSync);
+            NetworkClient.RegisterHandler<MsgGuardArrestPrompt>(OnClientReceiveGuardArrestPrompt);
             NetworkClient.RegisterHandler<MsgCastSpell>(OnClientReceiveCastSpell);
             NetworkClient.RegisterHandler<MsgApplySpellBundle>(OnClientReceiveApplySpellBundle);
             NetworkClient.RegisterHandler<MsgPvpStateSync>(OnClientReceivePvpStateSync);
@@ -913,6 +977,17 @@ namespace DaggerfallWorkshop.Game.Networking
             NetworkClient.RegisterHandler<MsgGrantGold>(OnClientReceiveGrantGold);
             NetworkClient.RegisterHandler<MsgPardonCrimes>(OnClientReceivePardonCrimes);
             NetworkClient.RegisterHandler<MsgGrantForgedItem>(OnClientReceiveGrantForgedItem);
+            NetworkClient.RegisterHandler<MsgPlayerDowned>(OnClientReceivePlayerDowned);
+            NetworkClient.RegisterHandler<MsgPlayerRevive>(OnClientReceivePlayerRevive);
+            NetworkClient.RegisterHandler<MsgPlayerPermaDeath>(OnClientReceivePlayerPermaDeath);
+            NetworkClient.RegisterHandler<MsgPartySupportAction>(OnClientReceivePartySupportAction);
+            NetworkClient.RegisterHandler<MsgTriggerJusticeEvent>(OnClientReceiveTriggerJusticeEvent);
+            NetworkClient.RegisterHandler<MsgJusticeStasisSync>(OnClientReceiveJusticeStasisSync);
+            NetworkClient.RegisterHandler<MsgStartEscapeRollChallenge>(OnClientReceiveStartEscapeRollChallenge);
+            NetworkClient.RegisterHandler<MsgEscapeRollResolution>(OnClientReceiveEscapeRollResolution);
+            DMDiceTrayController.Instance?.RegisterNetworkHandlers();
+            DMChatController.Instance?.RegisterNetworkHandlers();
+            DFUModSyncController.Instance?.RegisterNetworkHandlers();
         }
 
         public override void OnStopClient()
@@ -953,6 +1028,7 @@ namespace DaggerfallWorkshop.Game.Networking
             NetworkClient.UnregisterHandler<MsgTradeCancel>();
             NetworkClient.UnregisterHandler<MsgTradeCompleted>();
             NetworkClient.UnregisterHandler<MsgPopulationSync>();
+            NetworkClient.UnregisterHandler<MsgGuardArrestPrompt>();
             NetworkClient.UnregisterHandler<MsgCastSpell>();
             NetworkClient.UnregisterHandler<MsgApplySpellBundle>();
             NetworkClient.UnregisterHandler<MsgPvpStateSync>();
@@ -965,6 +1041,17 @@ namespace DaggerfallWorkshop.Game.Networking
             NetworkClient.UnregisterHandler<MsgGrantGold>();
             NetworkClient.UnregisterHandler<MsgPardonCrimes>();
             NetworkClient.UnregisterHandler<MsgGrantForgedItem>();
+            NetworkClient.UnregisterHandler<MsgPlayerDowned>();
+            NetworkClient.UnregisterHandler<MsgPlayerRevive>();
+            NetworkClient.UnregisterHandler<MsgPlayerPermaDeath>();
+            NetworkClient.UnregisterHandler<MsgPartySupportAction>();
+            NetworkClient.UnregisterHandler<MsgStartEscapeRollChallenge>();
+            NetworkClient.UnregisterHandler<MsgEscapeRollResolution>();
+            DFUPlayerLifecycleController.Instance?.ResetLifecycleState();
+            DMDiceTrayController.Instance?.UnregisterNetworkHandlers();
+            DMChatController.Instance?.UnregisterNetworkHandlers();
+            DFUModSyncController.Instance?.UnregisterNetworkHandlers();
+            DFUModSyncController.Instance?.RestoreLocalModSettings();
             activeDialogueBubbles.Clear();
             ClosePartyVoteWindow();
             showPlayerInteractionWindow = false;
@@ -979,6 +1066,7 @@ namespace DaggerfallWorkshop.Game.Networking
             DestroyClientProxies();
             DestroyAllRemotePlayerPuppets();
             DFUNetworkLootRegistry.Clear();
+            clientLocallyKilledCivilians.Clear();
             localConnectionId = NetworkSession.IsHost ? 0 : -1;
             base.OnStopClient();
         }
@@ -1048,15 +1136,28 @@ namespace DaggerfallWorkshop.Game.Networking
             MobileReactions reaction = setup != null ? setup.EnemyReaction : MobileReactions.Hostile;
             ulong loadID = dfEnemy != null ? dfEnemy.LoadID : 0;
 
-            PlayerEnterExit pee = GameManager.Instance.PlayerEnterExit;
-            bool isInside = pee != null && pee.IsPlayerInside;
-            bool isInsideDungeon = pee != null && pee.IsPlayerInsideDungeon;
-            int bKey = (pee != null && pee.BuildingDiscoveryData.buildingKey != 0) ? pee.BuildingDiscoveryData.buildingKey : 0;
+            if (!netEntity.cellContextAssigned)
+            {
+                if (DaggerfallWorkshop.Game.Entity.PlayerEntity.HasPendingGuardContext)
+                {
+                    netEntity.isInside = DaggerfallWorkshop.Game.Entity.PlayerEntity.PendingGuardInside;
+                    netEntity.isInsideDungeon = DaggerfallWorkshop.Game.Entity.PlayerEntity.PendingGuardDungeon;
+                    netEntity.buildingKey = DaggerfallWorkshop.Game.Entity.PlayerEntity.PendingGuardBuildingKey;
+                    netEntity.cellContextAssigned = true;
+                }
+                else
+                {
+                    PlayerEnterExit pee = GameManager.Instance.PlayerEnterExit;
+                    netEntity.isInside = pee != null && pee.IsPlayerInside;
+                    netEntity.isInsideDungeon = pee != null && pee.IsPlayerInsideDungeon;
+                    netEntity.buildingKey = (pee != null && pee.BuildingDiscoveryData.buildingKey != 0) ? pee.BuildingDiscoveryData.buildingKey : 0;
+                }
+            }
             bool isQuest = (dfEnemy != null && dfEnemy.QuestSpawn);
 
             if (netEntity.entityId == Guid.Empty)
             {
-                netEntity.Initialize(Guid.NewGuid(), go.name, mobileType, mobileGender, reaction, loadID, proxy: false, isInside, isInsideDungeon, bKey, isQuest);
+                netEntity.Initialize(Guid.NewGuid(), go.name, mobileType, mobileGender, reaction, loadID, proxy: false, netEntity.isInside, netEntity.isInsideDungeon, netEntity.buildingKey, isQuest);
             }
             else
             {
@@ -1065,9 +1166,6 @@ namespace DaggerfallWorkshop.Game.Networking
                 netEntity.mobileGender = mobileGender;
                 netEntity.reaction = reaction;
                 netEntity.loadID = loadID;
-                netEntity.isInside = isInside;
-                netEntity.isInsideDungeon = isInsideDungeon;
-                netEntity.buildingKey = bKey;
                 netEntity.isQuestSpawn = isQuest;
                 netEntity.isClientProxy = false;
                 DFUNetworkRegistry.RegisterEntity(netEntity.entityId, go);
@@ -1319,7 +1417,8 @@ namespace DaggerfallWorkshop.Game.Networking
 
         #region Remote Player Replication & Transform Streaming
 
-        private readonly Dictionary<int, MsgPlayerProfile> connectedPlayerProfiles = new Dictionary<int, MsgPlayerProfile>();
+        public readonly Dictionary<int, MsgPlayerProfile> connectedPlayerProfiles = new Dictionary<int, MsgPlayerProfile>();
+        public Dictionary<int, MsgPlayerProfile> ConnectedPlayerProfiles => connectedPlayerProfiles;
         public readonly Dictionary<int, NativePlayerPuppet> remotePlayerPuppets = new Dictionary<int, NativePlayerPuppet>();
         public Dictionary<int, NativePlayerPuppet> RemotePlayerPuppets => remotePlayerPuppets;
 
@@ -1430,11 +1529,35 @@ namespace DaggerfallWorkshop.Game.Networking
                 race = GameManager.Instance.PlayerEntity.Race.ToString();
             }
 
+            bool isDm = (connId == 0 && (NetworkSession.IsServer || localLobbyIsDm)) || (localConnectionId == connId && localLobbyIsDm);
+
+            // If the entity still has the default engine placeholder 'Nameless', resolve to character or lobby nickname
+            if (string.IsNullOrEmpty(pName) || pName == "Nameless" || pName == "Adventurer")
+            {
+                if (!string.IsNullOrEmpty(localLobbyCharacterName) && localLobbyCharacterName != "Nameless")
+                    pName = localLobbyCharacterName;
+                else if (!string.IsNullOrEmpty(localLobbyPlayerName))
+                    pName = localLobbyPlayerName;
+                else
+                {
+                    string pref = PlayerPrefs.GetString("DFU_LastPlayerName", "");
+                    if (!string.IsNullOrEmpty(pref) && pref != "Nameless")
+                        pName = pref;
+                }
+
+                if (string.IsNullOrEmpty(pName) || pName == "Nameless" || pName == "Adventurer")
+                {
+                    pName = isDm ? "Dungeon Master" : (connId == 0 ? "Host" : $"Jugador_{connId}");
+                }
+
+                if (GameManager.Instance.PlayerEntity != null && !string.IsNullOrEmpty(pName))
+                    GameManager.Instance.PlayerEntity.Name = pName;
+            }
+
             PlayerEnterExit pee = GameManager.Instance.PlayerEnterExit;
             bool isInside = pee != null && pee.IsPlayerInside;
             bool isInsideDungeon = pee != null && pee.IsPlayerInsideDungeon;
             int bKey = (pee != null && pee.BuildingDiscoveryData.buildingKey != 0) ? pee.BuildingDiscoveryData.buildingKey : 0;
-            bool isDm = (connId == 0 && (NetworkSession.IsServer || localLobbyIsDm)) || (localConnectionId == connId && localLobbyIsDm);
 
             return new MsgPlayerProfile
             {
@@ -3168,10 +3291,12 @@ namespace DaggerfallWorkshop.Game.Networking
 
                 if (targetConnId == -1)
                 {
+                    activeCrimeConnections.Clear();
                     NetworkServer.SendToAll(msg);
                 }
                 else if (NetworkServer.connections.TryGetValue(targetConnId, out var conn) && conn != null)
                 {
+                    activeCrimeConnections.Remove(targetConnId);
                     conn.Send(msg);
                 }
             }
@@ -3420,6 +3545,163 @@ namespace DaggerfallWorkshop.Game.Networking
             ArmorMaterialTypes.Adamantium, ArmorMaterialTypes.Ebony, ArmorMaterialTypes.Orcish, ArmorMaterialTypes.Daedric
         };
 
+        #region Managed Window System (Minimize, Expand, Close & Top-Right Dock)
+
+        public class ManagedWindowState
+        {
+            public string key;
+            public string icon;
+            public string title;
+            public bool isMinimized = false;
+            public bool isMaximized = false;
+            public Rect normalRect;
+
+            public ManagedWindowState(string key, string icon, string title, Rect defaultRect)
+            {
+                this.key = key;
+                this.icon = icon;
+                this.title = title;
+                this.normalRect = defaultRect;
+            }
+        }
+
+        private readonly Dictionary<string, ManagedWindowState> windowStates = new Dictionary<string, ManagedWindowState>();
+
+        public ManagedWindowState GetWindowState(string key, string icon, string title, Rect defaultRect)
+        {
+            if (!windowStates.TryGetValue(key, out var state))
+            {
+                state = new ManagedWindowState(key, icon, title, defaultRect);
+                windowStates[key] = state;
+            }
+            return state;
+        }
+
+        private bool DrawWindowHeaderControls(string key, string icon, string title, ref bool isOpen, ref Rect currentRect, Rect defaultRect, Action onClose = null)
+        {
+            var state = GetWindowState(key, icon, title, defaultRect);
+
+            float btnW = 22f;
+            float btnH = 18f;
+            float topY = 3f;
+            float gap = 3f;
+            float rightMargin = 8f;
+
+            Rect closeRect = new Rect(currentRect.width - rightMargin - btnW, topY, btnW, btnH);
+            Rect maxRect = new Rect(currentRect.width - rightMargin - (btnW * 2) - gap, topY, btnW, btnH);
+            Rect minRect = new Rect(currentRect.width - rightMargin - (btnW * 3) - (gap * 2), topY, btnW, btnH);
+
+            // Minimize [_]
+            if (GUI.Button(minRect, "_", DarkFantasyPixelArtTheme.TabInactiveStyle ?? GUI.skin.button))
+            {
+                state.isMinimized = true;
+                DaggerfallUI.Instance?.PlayOneShot(SoundClips.ButtonClick);
+                return false;
+            }
+
+            // Maximize / Restore [□] / [❐]
+            string maxLabel = state.isMaximized ? "❐" : "□";
+            if (GUI.Button(maxRect, maxLabel, DarkFantasyPixelArtTheme.TabInactiveStyle ?? GUI.skin.button))
+            {
+                state.isMaximized = !state.isMaximized;
+                if (state.isMaximized)
+                {
+                    state.normalRect = currentRect;
+                    currentRect = new Rect(20, 20, Screen.width - 40, Screen.height - 40);
+                }
+                else
+                {
+                    currentRect = state.normalRect;
+                }
+                DaggerfallUI.Instance?.PlayOneShot(SoundClips.ButtonClick);
+            }
+
+            // Close [✕]
+            if (GUI.Button(closeRect, "✕", DarkFantasyPixelArtTheme.CrimsonButtonStyle ?? GUI.skin.button))
+            {
+                isOpen = false;
+                state.isMinimized = false;
+                if (state.isMaximized)
+                {
+                    currentRect = state.normalRect;
+                    state.isMaximized = false;
+                }
+                onClose?.Invoke();
+                DaggerfallUI.Instance?.PlayOneShot(SoundClips.ButtonClick);
+                return false;
+            }
+
+            return true;
+        }
+
+        private bool IsWindowActive(string key)
+        {
+            switch (key)
+            {
+                case "TtrpgSuite": return showTtrpgSuite;
+                case "PrisonDilemma": return showPrisonDilemmaWindow || isLocalPlayerInPrison;
+                case "Infection": return showInfectionWindow;
+                case "DmEscapePrompt": return dmPendingEscapePrompt;
+                case "Trade": return showTradeWindow;
+                case "PlayerInteraction": return showPlayerInteractionWindow;
+                case "Multiplayer": return showDebugGui;
+                case "DmTool": return showDmGui;
+                case "LootTool": return showLootGui;
+                case "QuestTool": return showQuestGui;
+                case "TradeInvite": return showTradeInvitePrompt;
+                default: return false;
+            }
+        }
+
+        private void SetWindowActive(string key, bool active)
+        {
+            switch (key)
+            {
+                case "TtrpgSuite": showTtrpgSuite = active; break;
+                case "PrisonDilemma": showPrisonDilemmaWindow = active; break;
+                case "Infection": showInfectionWindow = active; break;
+                case "DmEscapePrompt": dmPendingEscapePrompt = active; break;
+                case "Trade": showTradeWindow = active; break;
+                case "PlayerInteraction": showPlayerInteractionWindow = active; break;
+                case "Multiplayer": showDebugGui = active; break;
+                case "DmTool": showDmGui = active; break;
+                case "LootTool": showLootGui = active; break;
+                case "QuestTool": showQuestGui = active; break;
+                case "TradeInvite": showTradeInvitePrompt = active; break;
+            }
+        }
+
+        private void DrawTopRightMinimizedDock()
+        {
+            float badgeW = 150f;
+            float badgeH = 26f;
+            float gap = 6f;
+            float rightMargin = 12f;
+            float topY = 6f;
+
+            int index = 0;
+            foreach (var kvp in windowStates)
+            {
+                var state = kvp.Value;
+                if (state.isMinimized && IsWindowActive(state.key))
+                {
+                    float x = Screen.width - rightMargin - (index + 1) * badgeW - index * gap;
+                    Rect badgeRect = new Rect(x, topY, badgeW, badgeH);
+
+                    string label = $"{state.icon} {state.title}";
+                    if (GUI.Button(badgeRect, label, DarkFantasyPixelArtTheme.TabActiveStyle ?? GUI.skin.button))
+                    {
+                        state.isMinimized = false;
+                        SetWindowActive(state.key, true);
+                        DaggerfallUI.Instance?.PlayOneShot(SoundClips.ButtonClick);
+                    }
+                    index++;
+                }
+            }
+        }
+
+        #endregion
+
         private void OnGUI()
         {
             GUISkin prevSkin = GUI.skin;
@@ -3429,74 +3711,154 @@ namespace DaggerfallWorkshop.Game.Networking
 
             try
             {
-                if (isPartyRestingBlackout)
+                bool isAnyDaggerfallModalOpen = false;
+                if (DaggerfallUI.Instance != null && DaggerfallUI.Instance.UserInterfaceManager != null)
                 {
-                    GUI.depth = -2000;
-                    Color prevColor = GUI.color;
-                    GUI.color = Color.black;
-                    GUI.DrawTexture(new Rect(0, 0, Screen.width, Screen.height), Texture2D.whiteTexture);
-                    GUI.color = Color.white;
-                    if (blackoutStyle == null)
+                    var top = DaggerfallUI.Instance.UserInterfaceManager.TopWindow;
+                    if (top != null && !(top is DaggerfallHUD))
                     {
-                        blackoutStyle = new GUIStyle(GUI.skin.label);
-                        blackoutStyle.alignment = TextAnchor.MiddleCenter;
-                        blackoutStyle.fontSize = 22;
-                        blackoutStyle.normal.textColor = DarkFantasyPixelArtTheme.GoldHighlight;
+                        isAnyDaggerfallModalOpen = true;
                     }
-                    string actionText = partyRestIsLoiter ? "Loitering" : "Resting";
-                    GUI.Label(new Rect(0, Screen.height / 2 - 30, Screen.width, 60), $"{actionText} with the party... ({partyRestHours} hours)", blackoutStyle);
-                    GUI.color = prevColor;
+                    if (DaggerfallUI.Instance.DfCourtWindow != null && DaggerfallUI.Instance.UserInterfaceManager.ContainsWindow(DaggerfallUI.Instance.DfCourtWindow))
+                    {
+                        isAnyDaggerfallModalOpen = true;
+                    }
+                }
+                if (GameManager.Instance != null && GameManager.Instance.PlayerEntity != null && GameManager.Instance.PlayerEntity.Arrested)
+                {
+                    isAnyDaggerfallModalOpen = true;
                 }
 
-                if (showTtrpgSuite)
+                // 1. Fullscreen Prison Cell Background Overlay (Drawn first, BEHIND all windows & modals)
+                if (isLocalPlayerInPrison && !isAnyDaggerfallModalOpen)
                 {
-                    GUI.depth = -999;
+                    if (Event.current.type == EventType.Repaint)
+                    {
+                        Color prevCol = GUI.color;
+                        if (prisonCellTexture != null)
+                        {
+                            GUI.color = Color.white;
+                            GUI.DrawTexture(new Rect(0, 0, Screen.width, Screen.height), prisonCellTexture, ScaleMode.StretchToFill);
+                        }
+                        else
+                        {
+                            // Atmospheric semi-transparent overlay (prevents blocking windows or blinding the player)
+                            GUI.color = new Color(0.05f, 0.05f, 0.08f, 0.70f);
+                            GUI.DrawTexture(new Rect(0, 0, Screen.width, Screen.height), Texture2D.whiteTexture);
+                            GUI.color = new Color(0.85f, 0.75f, 0.5f, 0.9f);
+                            GUI.Label(new Rect(0, Screen.height - 35, Screen.width, 25), "✦ Celda del Calabozo Municipal ✦", DarkFantasyPixelArtTheme.SectionBannerStyle ?? GUI.skin.label);
+                        }
+                        GUI.color = prevCol;
+                    }
+
+                    // Floating reopen button if dilemma menu is minimized or closed while imprisoned
+                    var pState = GetWindowState("PrisonDilemma", "🗝", "Calabozo", prisonDilemmaRect);
+                    if (!showPrisonDilemmaWindow || pState.isMinimized)
+                    {
+                        float btnW = 320f;
+                        float btnH = 34f;
+                        Rect reOpenRect = new Rect((Screen.width - btnW) * 0.5f, Screen.height - btnH - 24f, btnW, btnH);
+                        if (GUI.Button(reOpenRect, $"🗝 Calabozo: Abrir Menú de Fuga ({prisonSentenceDays} d)", DarkFantasyPixelArtTheme.GoldButtonStyle ?? GUI.skin.button))
+                        {
+                            showPrisonDilemmaWindow = true;
+                            pState.isMinimized = false;
+                            DaggerfallUI.Instance?.PlayOneShot(SoundClips.ButtonClick);
+                        }
+                    }
+                }
+
+                // 2. Party Resting Blackout (Drawn BEHIND modals)
+                if (isPartyRestingBlackout && !isAnyDaggerfallModalOpen)
+                {
+                    if (Event.current.type == EventType.Repaint)
+                    {
+                        Color prevColor = GUI.color;
+                        GUI.color = new Color(0f, 0f, 0f, 0.85f);
+                        GUI.DrawTexture(new Rect(0, 0, Screen.width, Screen.height), Texture2D.whiteTexture);
+                        GUI.color = Color.white;
+                        if (blackoutStyle == null)
+                        {
+                            blackoutStyle = new GUIStyle(GUI.skin.label);
+                            blackoutStyle.alignment = TextAnchor.MiddleCenter;
+                            blackoutStyle.fontSize = 22;
+                            blackoutStyle.normal.textColor = DarkFantasyPixelArtTheme.GoldHighlight;
+                        }
+                        string actionText = partyRestIsLoiter ? "Loitering" : "Resting";
+                        GUI.Label(new Rect(0, Screen.height / 2 - 30, Screen.width, 60), $"{actionText} with the party... ({partyRestHours} hours)", blackoutStyle);
+                        GUI.color = prevColor;
+                    }
+                }
+
+                // 3. IMGUI Windows (Drawn on top of background)
+                var ttrpgState = GetWindowState("TtrpgSuite", "👑", "TTRPG Suite", ttrpgSuiteRect);
+                if (showTtrpgSuite && !ttrpgState.isMinimized)
+                {
                     ttrpgSuiteRect = GUI.Window(987653, ttrpgSuiteRect, DrawTtrpgMasterWindow, "✦ DFU TTRPG MASTER SUITE (Ctrl+F11) ✦");
                 }
 
-                if (showDebugGui)
+                var mpState = GetWindowState("Multiplayer", "🛠", "Multiplayer", windowRect);
+                if (showDebugGui && !mpState.isMinimized)
                 {
-                    GUI.depth = -999;
                     windowRect = GUI.Window(987654, windowRect, DrawNetworkWindow, "✦ DFU Native Multiplayer (Ctrl+F10) ✦");
                 }
 
-                if (showDmGui)
+                var dmState = GetWindowState("DmTool", "⚡", "DM Spawns", dmWindowRect);
+                if (showDmGui && !dmState.isMinimized)
                 {
-                    GUI.depth = -999;
                     dmWindowRect = GUI.Window(987655, dmWindowRect, DrawDmWindow, "✦ DM Tool (Spawns, Teleport & Weather) ✦");
                 }
 
-                if (showLootGui)
+                var lootState = GetWindowState("LootTool", "💰", "Loot Tool", lootWindowRect);
+                if (showLootGui && !lootState.isMinimized)
                 {
-                    GUI.depth = -999;
                     lootWindowRect = GUI.Window(987656, lootWindowRect, DrawLootWindow, "✦ DM Loot Tool (Ctrl+F12) ✦");
                 }
 
-                if (showQuestGui)
+                var questState = GetWindowState("QuestTool", "📜", "Quests", questWindowRect);
+                if (showQuestGui && !questState.isMinimized)
                 {
-                    GUI.depth = -999;
                     questWindowRect = GUI.Window(987657, questWindowRect, DrawQuestWindow, "✦ Quest Creator / Test Menu (Ctrl+F7) ✦");
                 }
 
-                if (showPlayerInteractionWindow && interactionTargetPuppet != null && interactionTargetPuppet.gameObject != null)
+                var interactState = GetWindowState("PlayerInteraction", "👤", "Interacción", playerInteractionWindowRect);
+                if (showPlayerInteractionWindow && !interactState.isMinimized && interactionTargetPuppet != null && interactionTargetPuppet.gameObject != null)
                 {
-                    GUI.depth = -1000;
                     playerInteractionWindowRect = GUI.Window(987658, playerInteractionWindowRect, DrawPlayerInteractionWindow, $"✦ Aventurero: {interactionTargetPuppet.playerName} ✦");
                 }
 
-                if (showTradeInvitePrompt)
+                var tradeInviteState = GetWindowState("TradeInvite", "✉", "Invitación", tradeInviteRect);
+                if (showTradeInvitePrompt && !tradeInviteState.isMinimized)
                 {
-                    GUI.depth = -1001;
                     tradeInviteRect = GUI.Window(987659, tradeInviteRect, DrawTradeInvitePromptWindow, "✦ Solicitud de Comercio ✦");
                 }
 
-                if (showTradeWindow)
+                var tradeState = GetWindowState("Trade", "🤝", "Comercio", tradeWindowRect);
+                if (showTradeWindow && !tradeState.isMinimized)
                 {
-                    GUI.depth = -1000;
                     tradeWindowRect = GUI.Window(987660, tradeWindowRect, DrawTradeWindow, $"✦ Comercio Bilateral — {activeTradePartnerName} ✦");
                 }
 
-                GUI.depth = -999;
+                var prisonState = GetWindowState("PrisonDilemma", "🗝", "Calabozo", prisonDilemmaRect);
+                if (showPrisonDilemmaWindow && !prisonState.isMinimized)
+                {
+                    prisonDilemmaRect = GUI.Window(987665, prisonDilemmaRect, DrawPrisonDilemmaWindow, "✦ Calabozo Municipal: Dilema del Condenado ✦");
+                }
+
+                var infectState = GetWindowState("Infection", "🐺", "Transmutación", infectionWindowRect);
+                if (showInfectionWindow && !infectState.isMinimized)
+                {
+                    infectionWindowRect = GUI.Window(987666, infectionWindowRect, DrawInfectionWindow, "✦ Transmutación en Progreso ✦");
+                }
+
+                var dmEscapeState = GetWindowState("DmEscapePrompt", "⚖", "Tirada DM", dmPendingEscapeRect);
+                if (dmPendingEscapePrompt && !dmEscapeState.isMinimized)
+                {
+                    dmPendingEscapeRect = GUI.Window(987670, dmPendingEscapeRect, DrawDmEscapePromptWindow, "⚖ El Dungeon Master Exige una Tirada ⚖");
+                }
+
+                // Dock in top-right for all minimized menus
+                DrawTopRightMinimizedDock();
+
                 DrawDialogueBubbles();
             }
             finally
@@ -3507,6 +3869,9 @@ namespace DaggerfallWorkshop.Game.Networking
 
         private void DrawTtrpgMasterWindow(int windowId)
         {
+            if (!DrawWindowHeaderControls("TtrpgSuite", "👑", "TTRPG Suite", ref showTtrpgSuite, ref ttrpgSuiteRect, new Rect(140, 20, 780, 620)))
+                return;
+
             DarkFantasyPixelArtTheme.DrawImGuiDivider();
 
             bool canUseDm = NetworkSession.IsServer || localLobbyIsDm;
@@ -3572,6 +3937,9 @@ namespace DaggerfallWorkshop.Game.Networking
                 case 5:
                     DrawPartyDmTabContent();
                     break;
+                case 6:
+                    DrawJusticeTabContent();
+                    break;
             }
 
             GUILayout.EndScrollView();
@@ -3591,6 +3959,9 @@ namespace DaggerfallWorkshop.Game.Networking
 
         private void DrawNetworkWindow(int windowId)
         {
+            if (!DrawWindowHeaderControls("Multiplayer", "🛠", "Multiplayer", ref showDebugGui, ref windowRect, new Rect(20, 20, 360, 450)))
+                return;
+
             DarkFantasyPixelArtTheme.DrawImGuiDivider();
             DrawNetworkWindowContent();
             GUILayout.Space(8);
@@ -3946,6 +4317,9 @@ namespace DaggerfallWorkshop.Game.Networking
 
         private void DrawDmWindow(int windowId)
         {
+            if (!DrawWindowHeaderControls("DmTool", "⚡", "DM Spawns", ref showDmGui, ref dmWindowRect, new Rect(390, 20, 400, 520)))
+                return;
+
             DarkFantasyPixelArtTheme.DrawImGuiDivider();
             dmScrollPosition = GUILayout.BeginScrollView(dmScrollPosition);
 
@@ -4445,6 +4819,26 @@ namespace DaggerfallWorkshop.Game.Networking
 
             int targetConnId = targetOptions[selectedDmSpellTargetIndex];
 
+            // Phase 19: DM Divine Resurrect & Party Status
+            bool isTargetDowned = false;
+            if (targetConnId == 0)
+            {
+                isTargetDowned = DFUPlayerLifecycleController.Instance != null && DFUPlayerLifecycleController.Instance.IsDowned;
+            }
+            else if (remotePlayerPuppets.TryGetValue(targetConnId, out NativePlayerPuppet p) && p != null)
+            {
+                isTargetDowned = p.IsDowned;
+            }
+
+            GUILayout.Space(2);
+            GUILayout.BeginHorizontal();
+            GUILayout.Label(isTargetDowned ? "Estado: <color=#FF4444><b>[INCONSCIENTE]</b></color>" : "Estado: <color=#70FF70><b>[CONSCIENTE]</b></color>", GUILayout.Width(170));
+            if (GUILayout.Button("✦ Revivir / Resucitar Divino ✦", isTargetDowned ? DarkFantasyPixelArtTheme.EmeraldButtonStyle : DarkFantasyPixelArtTheme.GoldButtonStyle, GUILayout.Height(24)))
+            {
+                DmDivineResurrectPlayer(targetConnId);
+            }
+            GUILayout.EndHorizontal();
+
             GUILayout.Space(4);
             GUILayout.Label("Quick Spells:");
             GUILayout.BeginHorizontal();
@@ -4503,6 +4897,9 @@ namespace DaggerfallWorkshop.Game.Networking
 
         private void DrawLootWindow(int windowId)
         {
+            if (!DrawWindowHeaderControls("LootTool", "💰", "Loot Tool", ref showLootGui, ref lootWindowRect, new Rect(400, 20, 420, 500)))
+                return;
+
             DarkFantasyPixelArtTheme.DrawImGuiDivider();
             dmLootScrollPosition = GUILayout.BeginScrollView(dmLootScrollPosition);
             DrawLootWindowContent();
@@ -4728,6 +5125,9 @@ namespace DaggerfallWorkshop.Game.Networking
 
         private void DrawQuestWindow(int windowId)
         {
+            if (!DrawWindowHeaderControls("QuestTool", "📜", "Quests", ref showQuestGui, ref questWindowRect, new Rect(400, 20, 450, 520)))
+                return;
+
             GUILayout.Space(4);
             DarkFantasyPixelArtTheme.DrawImGuiDivider();
             questScrollPos = GUILayout.BeginScrollView(questScrollPos);
@@ -6441,9 +6841,100 @@ namespace DaggerfallWorkshop.Game.Networking
         {
             LogNetwork($"[DFU Crime] Received crime event from client {conn.connectionId}: type={msg.crimeType} at {msg.playerPosition}");
             LastCrimeConnId = conn.connectionId;
+            RegisterCrimeConnection(conn.connectionId);
+            DeactivateAuthoritativeCivilian(msg.civilianPoolIndex, msg.mapID, msg.playerPosition);
             if (GameManager.Instance.PlayerEntity != null)
             {
-                GameManager.Instance.PlayerEntity.SpawnCityGuardsAtPosition(msg.playerPosition, true);
+                GameManager.Instance.PlayerEntity.SpawnCityGuardsAtPosition(msg.playerPosition, true, msg.isInside, msg.isInsideDungeon, msg.buildingKey);
+            }
+        }
+
+        public void SendGuardArrestPrompt(int connId)
+        {
+            if (connId == 0)
+                return;
+
+            if (!NetworkServer.active)
+                return;
+
+            if (pendingArrestPrompts.Contains(connId))
+                return;
+
+            pendingArrestPrompts.Add(connId);
+
+            MsgGuardArrestPrompt msg = new MsgGuardArrestPrompt();
+            foreach (var client in connectedClients)
+            {
+                if (client.connectionId == connId)
+                {
+                    client.Send(msg);
+                    LogNetwork($"[DFU Guards] Sent guard arrest prompt to client {connId}");
+                    break;
+                }
+            }
+        }
+
+        private void OnClientReceiveGuardArrestPrompt(MsgGuardArrestPrompt msg)
+        {
+            LogNetwork("[DFU Guards] Received guard arrest prompt from server.");
+            const int doYouSurrenderToGuardsTextID = 15;
+            DaggerfallMessageBox messageBox = new DaggerfallMessageBox(DaggerfallUI.UIManager);
+            messageBox.SetTextTokens(DaggerfallUnity.Instance.TextProvider.GetRSCTokens(doYouSurrenderToGuardsTextID));
+            messageBox.ParentPanel.BackgroundColor = Color.clear;
+            messageBox.AddButton(DaggerfallMessageBox.MessageBoxButtons.Yes);
+            messageBox.AddButton(DaggerfallMessageBox.MessageBoxButtons.No);
+            messageBox.OnButtonClick += (sender, button) =>
+            {
+                sender.CloseWindow();
+                bool surrendered = (button == DaggerfallMessageBox.MessageBoxButtons.Yes);
+                if (surrendered)
+                {
+                    if (GameManager.Instance.PlayerEntity != null)
+                        GameManager.Instance.PlayerEntity.SurrenderToCityGuards(true);
+                }
+                if (NetworkClient.active)
+                {
+                    NetworkClient.Send(new MsgPlayerSurrender { surrendered = surrendered });
+                }
+            };
+            messageBox.Show();
+        }
+
+        private void OnServerReceivePlayerSurrender(NetworkConnection conn, MsgPlayerSurrender msg)
+        {
+            LogNetwork($"[DFU Guards] Client {conn.connectionId} surrender response: {msg.surrendered}");
+            if (msg.surrendered)
+            {
+                pendingArrestPrompts.Remove(conn.connectionId);
+                ClearCrimeConnection(conn.connectionId);
+                if (remotePlayerPuppets.TryGetValue(conn.connectionId, out NativePlayerPuppet puppet) && puppet != null)
+                {
+                    ClearGuardHostilityTowards(puppet.transform);
+                }
+            }
+        }
+
+        public void ClearGuardHostilityTowards(Transform targetTransform)
+        {
+            if (targetTransform == null)
+                return;
+
+            DaggerfallEntityBehaviour targetBehaviour = targetTransform.GetComponent<DaggerfallEntityBehaviour>();
+            EnemySenses[] sensesList = FindObjectsOfType<EnemySenses>();
+            for (int i = 0; i < sensesList.Length; i++)
+            {
+                EnemySenses senses = sensesList[i];
+                if (senses != null)
+                {
+                    DaggerfallEntityBehaviour behaviour = senses.GetComponent<DaggerfallEntityBehaviour>();
+                    if (behaviour != null && behaviour.Entity is EnemyEntity enemyEntity && enemyEntity.MobileEnemy.ID == (int)MobileTypes.Knight_CityWatch)
+                    {
+                        if (senses.Target == targetBehaviour || Vector3.Distance(senses.transform.position, targetTransform.position) < 80f)
+                        {
+                            Destroy(senses.gameObject);
+                        }
+                    }
+                }
             }
         }
 
@@ -6995,14 +7486,19 @@ namespace DaggerfallWorkshop.Game.Networking
 
             interactionTargetPuppet = puppet;
             showPlayerInteractionWindow = true;
-            playerInteractionWindowRect.width = 380;
-            playerInteractionWindowRect.height = 270;
+            bool isDowned = puppet.IsDowned;
+            DaggerfallUnityItem initialPotion = isDowned ? FindHealingPotionInInventory() : null;
+            playerInteractionWindowRect.width = 440;
+            playerInteractionWindowRect.height = isDowned ? (initialPotion != null ? 380 : 330) : 280;
             playerInteractionWindowRect.x = (Screen.width - playerInteractionWindowRect.width) * 0.5f;
             playerInteractionWindowRect.y = (Screen.height - playerInteractionWindowRect.height) * 0.5f;
         }
 
         private void DrawPlayerInteractionWindow(int windowId)
         {
+            if (!DrawWindowHeaderControls("PlayerInteraction", "👤", "Interacción", ref showPlayerInteractionWindow, ref playerInteractionWindowRect, new Rect((Screen.width - 440) * 0.5f, (Screen.height - 340) * 0.5f, 440, 340)))
+                return;
+
             if (interactionTargetPuppet == null || interactionTargetPuppet.gameObject == null)
             {
                 showPlayerInteractionWindow = false;
@@ -7013,6 +7509,34 @@ namespace DaggerfallWorkshop.Game.Networking
             if (GameManager.Instance.PlayerObject != null)
                 dist = Vector3.Distance(GameManager.Instance.PlayerObject.transform.position, interactionTargetPuppet.transform.position);
 
+            float reqHeight = 280f;
+            if (interactionTargetPuppet.IsDowned)
+            {
+                DaggerfallUnityItem checkPotion = FindHealingPotionInInventory();
+                reqHeight = checkPotion != null ? 380f : 330f;
+            }
+            else
+            {
+                DaggerfallUnityItem healPotion = FindHealingPotionInInventory();
+                DaggerfallUnityItem staminaPotion = FindStaminaPotionInInventory();
+                DaggerfallUnityItem curePotion = FindCurePotionInInventory();
+                int medSkill = (GameManager.Instance.PlayerEntity != null) ? GameManager.Instance.PlayerEntity.Skills.GetLiveSkillValue(DFCareer.Skills.Medical) : 0;
+
+                int extraActions = 0;
+                if (healPotion != null) extraActions++;
+                if (staminaPotion != null) extraActions++;
+                if (curePotion != null) extraActions++;
+                if (medSkill >= 15) extraActions++;
+
+                reqHeight = 280f + (extraActions * 34f);
+            }
+
+            if (playerInteractionWindowRect.height < reqHeight || Mathf.Abs(playerInteractionWindowRect.height - reqHeight) > 60f)
+            {
+                playerInteractionWindowRect.height = reqHeight;
+                playerInteractionWindowRect.width = 440f;
+            }
+
             GUILayout.Space(4);
             DarkFantasyPixelArtTheme.DrawImGuiDivider();
             GUILayout.BeginVertical(GUI.skin.box);
@@ -7021,20 +7545,101 @@ namespace DaggerfallWorkshop.Game.Networking
             GUILayout.EndVertical();
             GUILayout.Space(8);
 
-            if (GUILayout.Button("Compartir Mapa y Descubrimientos", DarkFantasyPixelArtTheme.GoldButtonStyle, GUILayout.Height(34)))
+            if (interactionTargetPuppet.IsDowned)
             {
-                SendMapDiscoveriesToTarget(interactionTargetPuppet);
-            }
+                GUILayout.Label("<color=#FF4444><b>[¡JUGADOR INCONSCIENTE!]</b></color>", DarkFantasyPixelArtTheme.SectionBannerStyle ?? GUI.skin.label);
+                GUILayout.Label("<size=11>Este aliado se está desangrando. ¡Necesita reanimación urgente!</size>");
+                GUILayout.Space(6);
 
-            GUILayout.Space(4);
-            if (GUILayout.Button("Iniciar Comercio Bilateral (Trade)", DarkFantasyPixelArtTheme.EmeraldButtonStyle, GUILayout.Height(34)))
+                if (GUILayout.Button("✦ REANIMAR / PRIMEROS AUXILIOS ✦ (+15% HP)", DarkFantasyPixelArtTheme.EmeraldButtonStyle, GUILayout.Height(36)))
+                {
+                    ReviveTargetPuppet(interactionTargetPuppet, usePotion: false);
+                }
+
+                DaggerfallUnityItem potion = FindHealingPotionInInventory();
+                if (potion != null)
+                {
+                    GUILayout.Space(4);
+                    string potionLabel = !string.IsNullOrEmpty(potion.shortName) ? potion.shortName : "Poción de Curación";
+                    if (GUILayout.Button($"✦ ADMINISTRAR: {potionLabel} ✦ (+30% HP)", DarkFantasyPixelArtTheme.GoldButtonStyle, GUILayout.Height(36)))
+                    {
+                        ReviveTargetPuppet(interactionTargetPuppet, usePotion: true);
+                    }
+                }
+            }
+            else
             {
-                InitiateTradeInvite(interactionTargetPuppet);
+                DaggerfallUnityItem healPotion = FindHealingPotionInInventory();
+                DaggerfallUnityItem staminaPotion = FindStaminaPotionInInventory();
+                DaggerfallUnityItem curePotion = FindCurePotionInInventory();
+                int medSkill = (GameManager.Instance.PlayerEntity != null) ? GameManager.Instance.PlayerEntity.Skills.GetLiveSkillValue(DFCareer.Skills.Medical) : 0;
+
+                if (healPotion != null)
+                {
+                    string pLabel = !string.IsNullOrEmpty(healPotion.shortName) ? healPotion.shortName : "Poción de Curación";
+                    if (GUILayout.Button($"✦ Aplicar a Aliado: {pLabel} ✦ (+40 HP)", DarkFantasyPixelArtTheme.EmeraldButtonStyle, GUILayout.Height(30)))
+                    {
+                        if (GameManager.Instance.PlayerEntity != null && GameManager.Instance.PlayerEntity.Items != null)
+                            GameManager.Instance.PlayerEntity.Items.RemoveOne(healPotion);
+                        SendPartySupportAction(interactionTargetPuppet.connectionId, PartySupportActionType.HealingPotion, 40, $"Poción ({pLabel})");
+                    }
+                    GUILayout.Space(3);
+                }
+
+                if (staminaPotion != null)
+                {
+                    string pLabel = !string.IsNullOrEmpty(staminaPotion.shortName) ? staminaPotion.shortName : "Poción de Vigor";
+                    if (GUILayout.Button($"✦ Aplicar a Aliado: {pLabel} ✦ (+50 Fatiga)", DarkFantasyPixelArtTheme.GoldButtonStyle, GUILayout.Height(30)))
+                    {
+                        if (GameManager.Instance.PlayerEntity != null && GameManager.Instance.PlayerEntity.Items != null)
+                            GameManager.Instance.PlayerEntity.Items.RemoveOne(staminaPotion);
+                        SendPartySupportAction(interactionTargetPuppet.connectionId, PartySupportActionType.StaminaPotion, 50, $"Poción de Vigor ({pLabel})");
+                    }
+                    GUILayout.Space(3);
+                }
+
+                if (curePotion != null)
+                {
+                    string pLabel = !string.IsNullOrEmpty(curePotion.shortName) ? curePotion.shortName : "Antídoto";
+                    if (GUILayout.Button($"✦ Administrar Antídoto: {pLabel} ✦ (Cura Veneno)", DarkFantasyPixelArtTheme.EmeraldButtonStyle, GUILayout.Height(30)))
+                    {
+                        if (GameManager.Instance.PlayerEntity != null && GameManager.Instance.PlayerEntity.Items != null)
+                            GameManager.Instance.PlayerEntity.Items.RemoveOne(curePotion);
+                        SendPartySupportAction(interactionTargetPuppet.connectionId, PartySupportActionType.CurePoisonPotion, 0, $"Antídoto ({pLabel})");
+                    }
+                    GUILayout.Space(3);
+                }
+
+                if (medSkill >= 15)
+                {
+                    bool canUseMedic = (Time.realtimeSinceStartup - lastMedicalFirstAidTime >= 30f);
+                    string cdText = canUseMedic ? "" : $" (Espera {Mathf.CeilToInt(30f - (Time.realtimeSinceStartup - lastMedicalFirstAidTime))}s)";
+                    GUI.enabled = canUseMedic;
+                    if (GUILayout.Button($"✦ Primeros Auxilios (Médico: {medSkill}%){cdText} ✦ (+15 HP, +35 Fatiga)", DarkFantasyPixelArtTheme.EmeraldButtonStyle, GUILayout.Height(30)))
+                    {
+                        lastMedicalFirstAidTime = Time.realtimeSinceStartup;
+                        SendPartySupportAction(interactionTargetPuppet.connectionId, PartySupportActionType.MedicalFirstAid, 15, "Primeros Auxilios Médicos");
+                    }
+                    GUI.enabled = true;
+                    GUILayout.Space(3);
+                }
+
+                if (GUILayout.Button("Compartir Mapa y Descubrimientos", DarkFantasyPixelArtTheme.GoldButtonStyle, GUILayout.Height(30)))
+                {
+                    SendMapDiscoveriesToTarget(interactionTargetPuppet);
+                }
+
+                GUILayout.Space(3);
+                if (GUILayout.Button("Iniciar Comercio Bilateral (Trade)", DarkFantasyPixelArtTheme.EmeraldButtonStyle, GUILayout.Height(30)))
+                {
+                    InitiateTradeInvite(interactionTargetPuppet);
+                }
             }
 
             GUILayout.Space(8);
             DarkFantasyPixelArtTheme.DrawImGuiDivider();
-            if (GUILayout.Button("Cerrar", DarkFantasyPixelArtTheme.CrimsonButtonStyle, GUILayout.Height(26)))
+            GUILayout.Space(4);
+            if (GUILayout.Button("Cerrar", DarkFantasyPixelArtTheme.CrimsonButtonStyle, GUILayout.Height(28)))
             {
                 showPlayerInteractionWindow = false;
             }
@@ -7263,6 +7868,9 @@ namespace DaggerfallWorkshop.Game.Networking
 
         private void DrawTradeInvitePromptWindow(int windowId)
         {
+            if (!DrawWindowHeaderControls("TradeInvite", "✉", "Invitación", ref showTradeInvitePrompt, ref tradeInviteRect, new Rect((Screen.width - 340) * 0.5f, (Screen.height - 180) * 0.5f, 340, 180), () => RespondToTradeInvite(pendingTradeInviteSenderConnId, false)))
+                return;
+
             GUILayout.Space(4);
             DarkFantasyPixelArtTheme.DrawImGuiDivider();
             GUILayout.Label($"<b><color=#FFD96B>{pendingTradeInviteSenderName}</color></b> desea iniciar un intercambio comercial contigo.", GUILayout.ExpandWidth(true));
@@ -7307,6 +7915,9 @@ namespace DaggerfallWorkshop.Game.Networking
 
         private void DrawTradeWindow(int windowId)
         {
+            if (!DrawWindowHeaderControls("Trade", "🤝", "Comercio", ref showTradeWindow, ref tradeWindowRect, new Rect((Screen.width - 560) * 0.5f, (Screen.height - 400) * 0.5f, 560, 400), () => CancelTrade("Comercio cancelado por el usuario.")))
+                return;
+
             var playerEntity = GameManager.Instance.PlayerEntity;
             if (playerEntity == null)
             {
@@ -8138,17 +8749,36 @@ namespace DaggerfallWorkshop.Game.Networking
 
             if (msg.isResting)
             {
-                isPartyRestingBlackout = true;
+                isPartyResting = true;
+                isPartyRestingBlackout = false;
                 partyRestHours = msg.hours;
                 partyRestIsLoiter = msg.isLoiter;
                 string action = msg.isLoiter ? "Loitering" : "Resting";
                 DaggerfallUI.AddHUDText($"[Party] {action} with party ({msg.hours} hours)...");
+
+                IUserInterfaceManager uiMgr = DaggerfallUI.Instance.UserInterfaceManager;
+                if (!(uiMgr.TopWindow is DaggerfallRestWindow))
+                {
+                    DaggerfallRestWindow clientRestWin = new DaggerfallRestWindow(uiMgr);
+                    uiMgr.PushWindow(clientRestWin);
+                    if (msg.isLoiter)
+                        clientRestWin.StartAuthoritativeLoiter(msg.hours);
+                    else
+                        clientRestWin.StartAuthoritativeRest(msg.hours);
+                }
             }
             else
             {
+                isPartyResting = false;
                 isPartyRestingBlackout = false;
                 if (!partyRestIsLoiter && !msg.isLoiter)
                     RecoverClientVitals(partyRestHours);
+
+                IUserInterfaceManager uiMgr = DaggerfallUI.Instance.UserInterfaceManager;
+                if (uiMgr.TopWindow is DaggerfallRestWindow restWin)
+                {
+                    restWin.CloseWindow();
+                }
 
                 // Show identical Daggerfall parchment message box to client
                 if (msg.wasInterrupted)
@@ -8575,10 +9205,15 @@ namespace DaggerfallWorkshop.Game.Networking
                 return;
 
             DaggerfallLocation dfLoc = GameManager.Instance.StreamingWorld.CurrentPlayerLocationObject;
-            if (dfLoc == null)
-                return;
-
-            PopulationManager popMgr = dfLoc.GetComponent<PopulationManager>();
+            PopulationManager popMgr = dfLoc != null ? dfLoc.GetComponent<PopulationManager>() : null;
+            if (popMgr == null)
+            {
+                popMgr = FindObjectOfType<PopulationManager>();
+                if (popMgr != null)
+                {
+                    dfLoc = popMgr.GetComponent<DaggerfallLocation>();
+                }
+            }
             if (popMgr == null || popMgr.PopulationPool == null)
                 return;
 
@@ -8626,6 +9261,83 @@ namespace DaggerfallWorkshop.Game.Networking
         }
 
         /// <summary>
+        /// Authoritatively deactivates an NPC in the host's PopulationManager pool so it doesn't revive on clients.
+        /// </summary>
+        public void DeactivateAuthoritativeCivilian(int poolIndex, int mapID, Vector3 crimePos = default)
+        {
+            if (GameManager.Instance == null || GameManager.Instance.StreamingWorld == null)
+                return;
+
+            DaggerfallLocation dfLoc = GameManager.Instance.StreamingWorld.CurrentPlayerLocationObject;
+            PopulationManager popMgr = null;
+            if (dfLoc != null && (mapID == 0 || dfLoc.Summary.MapID == mapID))
+            {
+                popMgr = dfLoc.GetComponent<PopulationManager>();
+            }
+
+            if (popMgr == null)
+            {
+                PopulationManager[] managers = FindObjectsOfType<PopulationManager>();
+                for (int i = 0; i < managers.Length; i++)
+                {
+                    DaggerfallLocation loc = managers[i].GetComponent<DaggerfallLocation>();
+                    if (loc != null && (mapID == 0 || loc.Summary.MapID == mapID))
+                    {
+                        popMgr = managers[i];
+                        break;
+                    }
+                }
+                if (popMgr == null && managers.Length > 0)
+                {
+                    popMgr = managers[0];
+                }
+            }
+
+            if (popMgr == null || popMgr.PopulationPool == null)
+                return;
+
+            // Proximity fallback if poolIndex was not resolved on client
+            if (poolIndex < 0 && crimePos != default)
+            {
+                float bestDist = 12.0f;
+                for (int i = 0; i < popMgr.PopulationPool.Count; i++)
+                {
+                    var item = popMgr.PopulationPool[i];
+                    if (item.active && item.npc != null)
+                    {
+                        float d = Vector3.Distance(item.npc.transform.position, crimePos);
+                        if (d < bestDist)
+                        {
+                            bestDist = d;
+                            poolIndex = i;
+                        }
+                    }
+                }
+            }
+
+            if (poolIndex >= 0 && poolIndex < popMgr.PopulationPool.Count)
+            {
+                var poolItem = popMgr.PopulationPool[poolIndex];
+                if (poolItem.npc != null)
+                {
+                    if (poolItem.npc.Motor != null)
+                        poolItem.npc.Motor.gameObject.SetActive(false);
+                    poolItem.npc.gameObject.SetActive(false);
+                }
+                poolItem.active = false;
+                poolItem.scheduleEnable = false;
+                poolItem.scheduleRecycle = false;
+                poolItem.isDead = true;
+                popMgr.PopulationPool[poolIndex] = poolItem;
+                LogNetwork($"[DFU Population] Authoritatively deactivated civilian poolIndex={poolIndex} mapID={mapID}");
+
+                // Force an immediate population sync broadcast so clients don't wait for timer
+                populationSyncTimer = PopulationSyncInterval + 1f;
+                SyncTownPopulation(0f);
+            }
+        }
+
+        /// <summary>
         /// Client receives authoritative civilian state from Server and updates local PopulationManager pool.
         /// </summary>
         private void OnClientReceivePopulationSync(MsgPopulationSync msg)
@@ -8637,10 +9349,28 @@ namespace DaggerfallWorkshop.Game.Networking
                 return;
 
             DaggerfallLocation dfLoc = GameManager.Instance.StreamingWorld.CurrentPlayerLocationObject;
-            if (dfLoc == null || dfLoc.Summary.MapID != msg.mapID)
-                return;
-
-            PopulationManager popMgr = dfLoc.GetComponent<PopulationManager>();
+            PopulationManager popMgr = null;
+            if (dfLoc != null && dfLoc.Summary.MapID == msg.mapID)
+            {
+                popMgr = dfLoc.GetComponent<PopulationManager>();
+            }
+            if (popMgr == null)
+            {
+                PopulationManager[] managers = FindObjectsOfType<PopulationManager>();
+                for (int m = 0; m < managers.Length; m++)
+                {
+                    DaggerfallLocation loc = managers[m].GetComponent<DaggerfallLocation>();
+                    if (loc != null && (msg.mapID == 0 || loc.Summary.MapID == msg.mapID))
+                    {
+                        popMgr = managers[m];
+                        break;
+                    }
+                }
+                if (popMgr == null && managers.Length > 0)
+                {
+                    popMgr = managers[0];
+                }
+            }
             if (popMgr == null || msg.civilians == null)
                 return;
 
@@ -8662,6 +9392,22 @@ namespace DaggerfallWorkshop.Game.Networking
                 var poolItem = popMgr.PopulationPool[civ.poolIndex];
                 if (poolItem.npc == null)
                     continue;
+
+                poolItem.npc.PopulationPoolIndex = civ.poolIndex;
+
+                // Client-side dead guard: if this civilian was killed locally, never revive it!
+                if (clientLocallyKilledCivilians.Contains(civ.poolIndex))
+                {
+                    if (poolItem.npc.gameObject.activeSelf)
+                    {
+                        if (poolItem.npc.Motor != null)
+                            poolItem.npc.Motor.gameObject.SetActive(false);
+                        poolItem.npc.gameObject.SetActive(false);
+                        poolItem.active = false;
+                        popMgr.PopulationPool[civ.poolIndex] = poolItem;
+                    }
+                    continue;
+                }
 
                 if (civ.active)
                 {
@@ -8872,10 +9618,17 @@ namespace DaggerfallWorkshop.Game.Networking
                 {
                     puppet.TriggerCastAnimation();
 
-                    if (GameManager.Instance.PlayerEffectManager != null && puppet.EntityBehaviour != null)
+                    try
                     {
-                        int soundId = GameManager.Instance.PlayerEffectManager.GetCastSoundID(msg.elementType);
-                        GameManager.Instance.PlayerEffectManager.PlayCastSound(puppet.EntityBehaviour, soundId);
+                        if (GameManager.Instance.PlayerEffectManager != null && puppet.EntityBehaviour != null)
+                        {
+                            int soundId = GameManager.Instance.PlayerEffectManager.GetCastSoundID(msg.elementType);
+                            GameManager.Instance.PlayerEffectManager.PlayCastSound(puppet.EntityBehaviour, soundId);
+                        }
+                    }
+                    catch (Exception soundEx)
+                    {
+                        LogNetwork($"[DFU Magic] Non-fatal sound exception: {soundEx.Message}");
                     }
                 }
 
@@ -8883,23 +9636,30 @@ namespace DaggerfallWorkshop.Game.Networking
                 {
                     if (GameManager.Instance.PlayerEffectManager != null)
                     {
-                        DaggerfallMissile missile = GameManager.Instance.PlayerEffectManager.InstantiateSpellMissile(msg.elementType);
+                        ElementTypes elemType = msg.elementType != ElementTypes.None ? msg.elementType : ElementTypes.Magic;
+                        DaggerfallMissile missile = GameManager.Instance.PlayerEffectManager.InstantiateSpellMissile(elemType);
                         if (missile != null)
                         {
                             missile.TargetType = msg.targetType;
-                            missile.ElementType = msg.elementType;
-
-                            Vector3 spawnPos = msg.origin + msg.direction * 0.6f;
-                            missile.CustomAimPosition = spawnPos;
-                            missile.CustomAimDirection = msg.direction;
-                            missile.transform.position = spawnPos;
+                            missile.ElementType = elemType;
                             missile.Payload = null; // Visual only on remote peers
                             missile.Caster = puppet != null ? puppet.EntityBehaviour : null;
 
+                            Vector3 spawnDir = msg.direction != Vector3.zero ? msg.direction.normalized : Vector3.forward;
+                            Vector3 spawnPos = msg.origin + spawnDir * 1.2f;
+                            missile.CustomAimPosition = spawnPos;
+                            missile.CustomAimDirection = spawnDir;
+                            missile.transform.position = spawnPos;
+
+                            // Ensure billboard sprite animations are explicitly created immediately
+                            missile.UseSpellBillboardAnims(0, false);
+
+                            // Do NOT set isTrigger = true or isKinematic = true during flight! That stops the missile at frame 0.
+                            // Ignore collisions with players/puppets so it flies cleanly without physical push
                             Collider col = missile.GetComponent<Collider>();
                             if (col != null)
                             {
-                                col.isTrigger = true;
+                                col.isTrigger = false;
                                 if (puppet != null)
                                 {
                                     foreach (var c in puppet.GetComponentsInChildren<Collider>())
@@ -8910,12 +9670,14 @@ namespace DaggerfallWorkshop.Game.Networking
                                     foreach (var c in GameManager.Instance.PlayerObject.GetComponentsInChildren<Collider>())
                                         if (c != null) Physics.IgnoreCollision(col, c, true);
                                 }
-                            }
-
-                            Rigidbody rb = missile.GetComponent<Rigidbody>();
-                            if (rb != null)
-                            {
-                                rb.isKinematic = true;
+                                foreach (var puppetKvp in remotePlayerPuppets.Values)
+                                {
+                                    if (puppetKvp != null)
+                                    {
+                                        foreach (var c in puppetKvp.GetComponentsInChildren<Collider>())
+                                            if (c != null) Physics.IgnoreCollision(col, c, true);
+                                    }
+                                }
                             }
                         }
                     }
@@ -8923,7 +9685,7 @@ namespace DaggerfallWorkshop.Game.Networking
             }
             catch (Exception ex)
             {
-                LogNetwork($"[DFU Magic] Error in PlayRemoteSpellCastVisual: {ex.Message}");
+                LogNetwork($"[DFU Magic] Error in PlayRemoteSpellCastVisual: {ex}");
             }
         }
 
@@ -9039,9 +9801,10 @@ namespace DaggerfallWorkshop.Game.Networking
                     DaggerfallMissile arrow = Instantiate(GameManager.Instance.WeaponManager.ArrowMissilePrefab);
                     if (arrow != null)
                     {
-                        Vector3 spawnPos = msg.origin + msg.direction * 0.6f;
+                        Vector3 spawnDir = msg.direction != Vector3.zero ? msg.direction.normalized : Vector3.forward;
+                        Vector3 spawnPos = msg.origin + spawnDir * 1.2f;
                         arrow.CustomAimPosition = spawnPos;
-                        arrow.CustomAimDirection = msg.direction;
+                        arrow.CustomAimDirection = spawnDir;
                         arrow.transform.position = spawnPos;
                         arrow.TargetType = TargetTypes.SingleTargetAtRange;
                         arrow.ElementType = ElementTypes.None;
@@ -9053,7 +9816,7 @@ namespace DaggerfallWorkshop.Game.Networking
                         Collider col = arrow.GetComponent<Collider>();
                         if (col != null)
                         {
-                            col.isTrigger = true;
+                            col.isTrigger = false;
                             if (puppet != null)
                             {
                                 foreach (var c in puppet.GetComponentsInChildren<Collider>())
@@ -9064,12 +9827,14 @@ namespace DaggerfallWorkshop.Game.Networking
                                 foreach (var c in GameManager.Instance.PlayerObject.GetComponentsInChildren<Collider>())
                                     if (c != null) Physics.IgnoreCollision(col, c, true);
                             }
-                        }
-
-                        Rigidbody rb = arrow.GetComponent<Rigidbody>();
-                        if (rb != null)
-                        {
-                            rb.isKinematic = true;
+                            foreach (var puppetKvp in remotePlayerPuppets.Values)
+                            {
+                                if (puppetKvp != null)
+                                {
+                                    foreach (var c in puppetKvp.GetComponentsInChildren<Collider>())
+                                        if (c != null) Physics.IgnoreCollision(col, c, true);
+                                }
+                            }
                         }
                     }
                 }
@@ -9308,6 +10073,299 @@ namespace DaggerfallWorkshop.Game.Networking
 
         #endregion
 
+        #region Phase 20: Cooperative Party Restoration, Shared Buffs & Non-Magical First Aid
+
+        private float lastMedicalFirstAidTime = -60f;
+
+        /// <summary>
+        /// Finds an allied party puppet under the player's crosshair within maxDistance and minDot alignment.
+        /// </summary>
+        public NativePlayerPuppet GetPartyPuppetInCrosshair(float maxDistance = 2.0f, float minDot = 0.40f)
+        {
+            if (GameManager.Instance == null || GameManager.Instance.MainCamera == null)
+                return null;
+
+            Vector3 camPos = GameManager.Instance.MainCamera.transform.position;
+            Vector3 camForward = GameManager.Instance.MainCamera.transform.forward;
+            Vector3 playerPos = GameManager.Instance.PlayerObject != null ? GameManager.Instance.PlayerObject.transform.position : camPos;
+
+            NativePlayerPuppet bestPuppet = null;
+            float bestScore = float.MinValue;
+
+            foreach (var kvp in remotePlayerPuppets)
+            {
+                NativePlayerPuppet puppet = kvp.Value;
+                if (puppet == null || puppet.gameObject == null || !puppet.gameObject.activeInHierarchy)
+                    continue;
+
+                // Enforce strict proximity check (e.g. max 2 meters)
+                float dist = Vector3.Distance(playerPos, puppet.transform.position);
+                if (dist > maxDistance)
+                    continue;
+
+                Vector3 puppetTarget = puppet.transform.position + (puppet.IsDowned ? Vector3.up * 0.25f : Vector3.up * 0.9f);
+
+                Vector3 toPuppet = (puppetTarget - camPos).normalized;
+                float dot = Vector3.Dot(camForward, toPuppet);
+                if (dot < minDot)
+                    continue;
+
+                float score = (maxDistance - dist) + (dot * 5.0f);
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    bestPuppet = puppet;
+                }
+            }
+
+            return bestPuppet;
+        }
+
+        /// <summary>
+        /// Smart-Support Spell Adapter: Re-routes CasterOnly and AoE beneficial spells to allied party members.
+        /// Returns true if the spell was authoritatively intercepted and handled, suppressing default self-only execution.
+        /// </summary>
+        public bool TryHandlePartySupportSpell(EntityEffectBundle spell)
+        {
+            if (spell == null || !NetworkSession.IsActive)
+                return false;
+
+            bool isHarmful = IsHarmfulBundle(spell.Settings);
+
+            // 1. AoE Spells: AreaAroundCaster
+            if (spell.Settings.TargetType == TargetTypes.AreaAroundCaster)
+            {
+                if (!isHarmful)
+                {
+                    ApplyAoESupportToParty(spell, 15f);
+                    return false; // Return false so caster also executes AssignBundle(spell) locally!
+                }
+                else if (isHarmful && isPvpAllowed)
+                {
+                    ApplyAoEHarmfulToParty(spell, 15f);
+                    return false;
+                }
+            }
+
+            // 2. Targeted Support / Beneficial Spells (CasterOnly, ByTouch, or SingleTargetAtRange)
+            if (!isHarmful || isPvpAllowed)
+            {
+                NativePlayerPuppet targetPuppet = GetPartyPuppetInCrosshair(2.0f, 0.40f);
+                if (targetPuppet != null)
+                {
+                    SendSpellPayloadToPlayer(targetPuppet.connectionId, spell);
+                    string myName = GameManager.Instance.PlayerEntity != null ? GameManager.Instance.PlayerEntity.Name : "Player";
+                    DaggerfallUI.AddHUDText($"[Soporte] ¡Has lanzado '{spell.Settings.Name}' sobre {targetPuppet.playerName}!");
+                    if (DMChatController.Instance != null)
+                    {
+                        DMChatController.Instance.AddLocalSystemMessage($"[Party] {myName} lanzó '{spell.Settings.Name}' sobre {targetPuppet.playerName}.");
+                    }
+                    return true; // Intercepted and routed!
+                }
+            }
+
+            return false;
+        }
+
+        public void ApplyAoESupportToParty(EntityEffectBundle spell, float radius)
+        {
+            if (spell == null || GameManager.Instance.PlayerObject == null)
+                return;
+
+            Vector3 casterPos = GameManager.Instance.PlayerObject.transform.position;
+            int buffedCount = 0;
+
+            foreach (var kvp in remotePlayerPuppets)
+            {
+                NativePlayerPuppet puppet = kvp.Value;
+                if (puppet == null || puppet.gameObject == null || !puppet.gameObject.activeInHierarchy)
+                    continue;
+
+                float dist = Vector3.Distance(casterPos, puppet.transform.position);
+                if (dist <= radius)
+                {
+                    SendSpellPayloadToPlayer(puppet.connectionId, spell);
+                    buffedCount++;
+                }
+            }
+
+            if (buffedCount > 0)
+            {
+                DaggerfallUI.AddHUDText($"[Aura de Grupo] ¡Imbuiste a {buffedCount} aliados con {spell.Settings.Name}!");
+                if (DMChatController.Instance != null)
+                {
+                    string myName = GameManager.Instance.PlayerEntity != null ? GameManager.Instance.PlayerEntity.Name : "Player";
+                    DMChatController.Instance.AddLocalSystemMessage($"[Party] {myName} activó un aura de grupo: '{spell.Settings.Name}' ({buffedCount} aliados afectados).");
+                }
+            }
+        }
+
+        public void ApplyAoEHarmfulToParty(EntityEffectBundle spell, float radius)
+        {
+            if (spell == null || GameManager.Instance.PlayerObject == null || !isPvpAllowed)
+                return;
+
+            Vector3 casterPos = GameManager.Instance.PlayerObject.transform.position;
+            foreach (var kvp in remotePlayerPuppets)
+            {
+                NativePlayerPuppet puppet = kvp.Value;
+                if (puppet == null || puppet.gameObject == null || !puppet.gameObject.activeInHierarchy)
+                    continue;
+
+                float dist = Vector3.Distance(casterPos, puppet.transform.position);
+                if (dist <= radius)
+                {
+                    SendSpellPayloadToPlayer(puppet.connectionId, spell);
+                }
+            }
+        }
+
+        public DaggerfallUnityItem FindStaminaPotionInInventory()
+        {
+            if (GameManager.Instance == null || GameManager.Instance.PlayerEntity == null)
+                return null;
+
+            var items = GameManager.Instance.PlayerEntity.Items;
+            for (int i = 0; i < items.Count; i++)
+            {
+                DaggerfallUnityItem item = items.GetItem(i);
+                if (item != null && (item.IsPotion || (!string.IsNullOrEmpty(item.shortName) && (item.shortName.IndexOf("stamina", StringComparison.OrdinalIgnoreCase) >= 0 || item.shortName.IndexOf("fatigue", StringComparison.OrdinalIgnoreCase) >= 0 || item.shortName.IndexOf("vigor", StringComparison.OrdinalIgnoreCase) >= 0 || item.shortName.IndexOf("resistencia", StringComparison.OrdinalIgnoreCase) >= 0))))
+                {
+                    return item;
+                }
+            }
+            return null;
+        }
+
+        public DaggerfallUnityItem FindCurePotionInInventory()
+        {
+            if (GameManager.Instance == null || GameManager.Instance.PlayerEntity == null)
+                return null;
+
+            var items = GameManager.Instance.PlayerEntity.Items;
+            for (int i = 0; i < items.Count; i++)
+            {
+                DaggerfallUnityItem item = items.GetItem(i);
+                if (item != null && (item.IsPotion || (!string.IsNullOrEmpty(item.shortName) && (item.shortName.IndexOf("cure", StringComparison.OrdinalIgnoreCase) >= 0 || item.shortName.IndexOf("antidote", StringComparison.OrdinalIgnoreCase) >= 0 || item.shortName.IndexOf("purif", StringComparison.OrdinalIgnoreCase) >= 0 || item.shortName.IndexOf("veneno", StringComparison.OrdinalIgnoreCase) >= 0))))
+                {
+                    return item;
+                }
+            }
+            return null;
+        }
+
+        public void SendPartySupportAction(int targetConnId, PartySupportActionType actionType, int amount, string desc)
+        {
+            string myName = GameManager.Instance.PlayerEntity != null ? GameManager.Instance.PlayerEntity.Name : "Aliado";
+            string targetName = "Aliado";
+            if (remotePlayerPuppets.TryGetValue(targetConnId, out NativePlayerPuppet p) && p != null)
+                targetName = p.playerName;
+
+            MsgPartySupportAction msg = new MsgPartySupportAction
+            {
+                senderConnectionId = NetworkSession.IsHost ? 0 : localConnectionId,
+                targetConnectionId = targetConnId,
+                senderName = myName,
+                targetName = targetName,
+                actionType = actionType,
+                amount = amount,
+                actionDescription = desc
+            };
+
+            if (NetworkServer.active)
+            {
+                if (targetConnId == 0)
+                {
+                    ApplyReceivedPartySupportAction(msg);
+                }
+                else if (NetworkServer.connections.TryGetValue(targetConnId, out NetworkConnectionToClient conn) && conn != null && conn.isReady)
+                {
+                    conn.Send(msg);
+                }
+            }
+            else if (NetworkClient.isConnected)
+            {
+                NetworkClient.Send(msg);
+            }
+
+            DaggerfallUI.AddHUDText($"[Soporte] Aplicaste {desc} a {targetName}.");
+            if (DMChatController.Instance != null)
+            {
+                DMChatController.Instance.AddLocalSystemMessage($"[Party] {myName} aplicó {desc} a {targetName}.");
+            }
+        }
+
+        private void OnServerReceivePartySupportAction(NetworkConnection conn, MsgPartySupportAction msg)
+        {
+            try
+            {
+                msg.senderConnectionId = conn.connectionId;
+                if (msg.targetConnectionId == 0)
+                {
+                    ApplyReceivedPartySupportAction(msg);
+                }
+                else if (NetworkServer.connections.TryGetValue(msg.targetConnectionId, out NetworkConnectionToClient targetConn) && targetConn != null && targetConn.isReady)
+                {
+                    targetConn.Send(msg);
+                }
+            }
+            catch (Exception ex)
+            {
+                LogNetwork($"[DFU Support] Error in OnServerReceivePartySupportAction: {ex.Message}");
+            }
+        }
+
+        private void OnClientReceivePartySupportAction(MsgPartySupportAction msg)
+        {
+            try
+            {
+                int myId = NetworkSession.IsHost ? 0 : localConnectionId;
+                if (msg.targetConnectionId != myId)
+                    return;
+
+                ApplyReceivedPartySupportAction(msg);
+            }
+            catch (Exception ex)
+            {
+                LogNetwork($"[DFU Support] Error in OnClientReceivePartySupportAction: {ex.Message}");
+            }
+        }
+
+        private void ApplyReceivedPartySupportAction(MsgPartySupportAction msg)
+        {
+            if (GameManager.Instance == null || GameManager.Instance.PlayerEntity == null)
+                return;
+
+            PlayerEntity player = GameManager.Instance.PlayerEntity;
+            switch (msg.actionType)
+            {
+                case PartySupportActionType.HealingPotion:
+                    player.IncreaseHealth(msg.amount > 0 ? msg.amount : 40);
+                    DaggerfallUI.AddHUDText($"[Soporte] ¡{msg.senderName} te administró una poción de curación! (+{msg.amount} HP)");
+                    break;
+                case PartySupportActionType.StaminaPotion:
+                    player.IncreaseFatigue(msg.amount > 0 ? msg.amount : 50, true);
+                    DaggerfallUI.AddHUDText($"[Soporte] ¡{msg.senderName} te administró una poción de vigor! (+{msg.amount} Fatiga)");
+                    break;
+                case PartySupportActionType.CurePoisonPotion:
+                    if (GameManager.Instance.PlayerEffectManager != null)
+                    {
+                        GameManager.Instance.PlayerEffectManager.CureAllPoisons();
+                    }
+                    DaggerfallUI.AddHUDText($"[Soporte] ¡{msg.senderName} te administró un antídoto contra el veneno!");
+                    break;
+                case PartySupportActionType.MedicalFirstAid:
+                    player.IncreaseHealth(msg.amount > 0 ? msg.amount : 15);
+                    player.IncreaseFatigue(35, true);
+                    DaggerfallUI.AddHUDText($"[Médico] ¡{msg.senderName} te aplicó primeros auxilios! (+{msg.amount} HP, +35 Fatiga)");
+                    break;
+            }
+
+            DaggerfallUI.Instance?.PlayOneShot(SoundClips.MakePotion);
+        }
+
+        #endregion
+
         #region Pre-Game Multiplayer Lobby & Mod Compatibility Verification
 
         public readonly Dictionary<int, LobbyPlayerDTO> serverLobbyPlayers = new Dictionary<int, LobbyPlayerDTO>();
@@ -9319,6 +10377,11 @@ namespace DaggerfallWorkshop.Game.Networking
         public int localLobbySelectionMode = 0; // 0 = None, 1 = New Character, 2 = Saved Character
         public int localLobbySaveKey = -1;
         public string localLobbyCharacterName = "";
+        public string localLobbyPlayerName
+        {
+            get => PlayerPrefs.GetString("DFU_LastPlayerName", "");
+            set => PlayerPrefs.SetString("DFU_LastPlayerName", value ?? "");
+        }
         public string localLobbyRaceName = "";
         public string localLobbyClassName = "";
         public int localLobbyLevel = 1;
@@ -9348,6 +10411,7 @@ namespace DaggerfallWorkshop.Game.Networking
         public void InitializeServerLobbyHost()
         {
             serverLobbyPlayers.Clear();
+            pendingArrestPrompts.Clear();
             string[] hostMods = GetLocalActiveModList();
 
             string pName = PlayerPrefs.GetString("DFU_LastPlayerName", "Host / DM");
@@ -9425,6 +10489,7 @@ namespace DaggerfallWorkshop.Game.Networking
                     activeModsJson = string.Join("|", localMods)
                 };
                 NetworkClient.Send(updateMsg);
+                DFUModSyncController.Instance?.SendClientManifestReport();
             }
         }
 
@@ -9556,7 +10621,7 @@ namespace DaggerfallWorkshop.Game.Networking
 
             foreach (var p in currentLobbyRoster.players)
             {
-                if (!p.isReady || p.selectionMode == 0)
+                if (!p.isReady || p.selectionMode == 0 || !p.modsCompatible)
                     return false;
             }
             return true;
@@ -9566,6 +10631,8 @@ namespace DaggerfallWorkshop.Game.Networking
         {
             if (!NetworkServer.active)
                 return;
+
+            DFUModSyncController.Instance?.BroadcastHostModSettings();
 
             int launchMode = localLobbySelectionMode != 0 ? localLobbySelectionMode : 2;
             NetworkServer.SendToAll(new MsgLobbyLaunchSession
@@ -9635,6 +10702,1175 @@ namespace DaggerfallWorkshop.Game.Networking
             }
         }
 
+        #region Phase 19: Downed State & Cooperative Revive Handlers
+
+        private void OnServerReceivePlayerDowned(NetworkConnection conn, MsgPlayerDowned msg)
+        {
+            LogNetwork($"[DFU Lifecycle] Server received MsgPlayerDowned from '{msg.playerName}' (conn {msg.connectionId})");
+            NetworkServer.SendToAll(msg);
+        }
+
+        private void OnClientReceivePlayerDowned(MsgPlayerDowned msg)
+        {
+            int myConnId = NetworkSession.IsHost ? 0 : localConnectionId;
+            if (msg.connectionId == myConnId)
+                return;
+
+            if (remotePlayerPuppets.TryGetValue(msg.connectionId, out NativePlayerPuppet puppet) && puppet != null)
+            {
+                puppet.SetDowned(true);
+            }
+
+            if (DMChatController.Instance != null)
+            {
+                DMChatController.Instance.AddLocalSystemMessage($"[Party] ¡{msg.playerName} ha caído inconsciente y necesita reanimación!");
+            }
+            DaggerfallUI.AddHUDText($"[Party] ¡{msg.playerName} está inconsciente!");
+        }
+
+        private void OnServerReceivePlayerRevive(NetworkConnection conn, MsgPlayerRevive msg)
+        {
+            LogNetwork($"[DFU Lifecycle] Server received MsgPlayerRevive: {msg.revivedPlayerName} revived by {msg.healerPlayerName} (+{msg.restoredHealth} HP)");
+            NetworkServer.SendToAll(msg);
+        }
+
+        private void OnClientReceivePlayerRevive(MsgPlayerRevive msg)
+        {
+            int myConnId = NetworkSession.IsHost ? 0 : localConnectionId;
+            if (msg.targetConnectionId == myConnId)
+            {
+                if (DFUPlayerLifecycleController.Instance != null)
+                {
+                    DFUPlayerLifecycleController.Instance.ReviveLocalPlayer(msg.healerPlayerName, msg.restoredHealth);
+                }
+            }
+            else
+            {
+                if (remotePlayerPuppets.TryGetValue(msg.targetConnectionId, out NativePlayerPuppet puppet) && puppet != null)
+                {
+                    puppet.SetDowned(false);
+                }
+            }
+
+            if (DMChatController.Instance != null)
+            {
+                DMChatController.Instance.AddLocalSystemMessage($"[Party] ¡{msg.revivedPlayerName} ha sido reanimado por {msg.healerPlayerName}! (+{msg.restoredHealth} HP)");
+            }
+        }
+
+        private void OnServerReceivePlayerPermaDeath(NetworkConnection conn, MsgPlayerPermaDeath msg)
+        {
+            LogNetwork($"[DFU Lifecycle] Server received MsgPlayerPermaDeath for '{msg.playerName}' (conn {msg.connectionId})");
+            NetworkServer.SendToAll(msg);
+
+            if (DFUPlayerLifecycleController.Instance != null)
+            {
+                DFUPlayerLifecycleController.Instance.SpawnPermanentCorpseMarker(msg.position, msg.yaw, msg.corpseTexture);
+            }
+        }
+
+        private void OnClientReceivePlayerPermaDeath(MsgPlayerPermaDeath msg)
+        {
+            int myConnId = NetworkSession.IsHost ? 0 : localConnectionId;
+            if (msg.connectionId != myConnId)
+            {
+                if (DFUPlayerLifecycleController.Instance != null)
+                {
+                    DFUPlayerLifecycleController.Instance.SpawnPermanentCorpseMarker(msg.position, msg.yaw, msg.corpseTexture);
+                }
+
+                DespawnRemotePlayerPuppet(msg.connectionId);
+
+                if (DMChatController.Instance != null)
+                {
+                    DMChatController.Instance.AddLocalSystemMessage($"[Party] ¡{msg.playerName} ha muerto desangrado y ahora es un espectador!");
+                }
+            }
+        }
+
+        public void ReviveTargetPuppet(NativePlayerPuppet target, bool usePotion)
+        {
+            if (target == null)
+                return;
+
+            int restoredHp = 20;
+            string healerName = GameManager.Instance.PlayerEntity != null ? GameManager.Instance.PlayerEntity.Name : "Aliado";
+
+            if (usePotion)
+            {
+                DaggerfallUnityItem potion = FindHealingPotionInInventory();
+                if (potion != null)
+                {
+                    if (GameManager.Instance.PlayerEntity != null && GameManager.Instance.PlayerEntity.Items != null)
+                    {
+                        GameManager.Instance.PlayerEntity.Items.RemoveOne(potion);
+                    }
+                    restoredHp = 40;
+                }
+            }
+
+            MsgPlayerRevive msg = new MsgPlayerRevive
+            {
+                targetConnectionId = target.connectionId,
+                revivedPlayerName = target.playerName,
+                healerPlayerName = healerName,
+                restoredHealth = restoredHp
+            };
+
+            if (NetworkServer.active)
+                NetworkServer.SendToAll(msg);
+            else if (NetworkClient.active)
+                NetworkClient.Send(msg);
+
+            showPlayerInteractionWindow = false;
+            DaggerfallUI.AddHUDText($"Has reanimado a {target.playerName} (+{restoredHp} HP)");
+        }
+
+        public DaggerfallUnityItem FindHealingPotionInInventory()
+        {
+            if (GameManager.Instance == null || GameManager.Instance.PlayerEntity == null)
+                return null;
+
+            var items = GameManager.Instance.PlayerEntity.Items;
+            for (int i = 0; i < items.Count; i++)
+            {
+                DaggerfallUnityItem item = items.GetItem(i);
+                if (item != null && (item.IsPotion || (!string.IsNullOrEmpty(item.shortName) && (item.shortName.IndexOf("heal", StringComparison.OrdinalIgnoreCase) >= 0 || item.shortName.IndexOf("salud", StringComparison.OrdinalIgnoreCase) >= 0 || item.shortName.IndexOf("cura", StringComparison.OrdinalIgnoreCase) >= 0))))
+                {
+                    return item;
+                }
+            }
+            return null;
+        }
+
+        public void DmDivineResurrectPlayer(int targetConnId)
+        {
+            string pName = "Player";
+            if (targetConnId == 0)
+            {
+                pName = GameManager.Instance.PlayerEntity != null ? GameManager.Instance.PlayerEntity.Name : "Host";
+            }
+            else if (connectedPlayerProfiles.TryGetValue(targetConnId, out MsgPlayerProfile profile))
+            {
+                pName = profile.playerName;
+            }
+
+            MsgPlayerRevive msg = new MsgPlayerRevive
+            {
+                targetConnectionId = targetConnId,
+                revivedPlayerName = pName,
+                healerPlayerName = "Dungeon Master",
+                restoredHealth = 9999
+            };
+
+            if (NetworkServer.active)
+                NetworkServer.SendToAll(msg);
+            else if (NetworkClient.active)
+                NetworkClient.Send(msg);
+
+            DaggerfallUI.AddHUDText($"[DM] ¡{pName} ha sido resucitado divinamente!");
+        }
+
         #endregion
+
+        #endregion
+
+        #region Phase 21: Party Justice, World Stasis & Narrative Prison Escapes
+
+        public int selectedJusticePlayerConnId = 0;
+        private readonly HashSet<int> playersInJusticeStasis = new HashSet<int>();
+
+        public bool IsPlayerInJusticeStasis(int connId)
+        {
+            return playersInJusticeStasis.Contains(connId);
+        }
+
+        public void SetPlayerJusticeStasis(int connId, bool active, string reason = "")
+        {
+            if (active)
+            {
+                playersInJusticeStasis.Add(connId);
+                if (reason == "Prisión")
+                {
+                    SetPuppetPrisonVisibility(connId, false);
+                }
+            }
+            else
+            {
+                playersInJusticeStasis.Remove(connId);
+                SetPuppetPrisonVisibility(connId, true);
+            }
+
+            if (NetworkServer.active)
+            {
+                NetworkServer.SendToAll(new MsgJusticeStasisSync
+                {
+                    targetConnectionId = connId,
+                    isStasisActive = active,
+                    reason = reason
+                });
+            }
+        }
+
+        public void SetPuppetPrisonVisibility(int connId, bool visible)
+        {
+            if (remotePlayerPuppets.TryGetValue(connId, out NativePlayerPuppet puppet) && puppet != null)
+            {
+                puppet.gameObject.SetActive(visible);
+            }
+        }
+
+        public void HaltAndStandDownGuards(int targetConnId)
+        {
+            Vector3 targetPos = Vector3.zero;
+            Transform targetTransform = null;
+
+            if (targetConnId == 0)
+            {
+                if (GameManager.Instance.PlayerObject != null)
+                {
+                    targetTransform = GameManager.Instance.PlayerObject.transform;
+                    targetPos = targetTransform.position;
+                }
+            }
+            else if (remotePlayerPuppets.TryGetValue(targetConnId, out NativePlayerPuppet puppet) && puppet != null)
+            {
+                targetTransform = puppet.transform;
+                targetPos = targetTransform.position;
+            }
+
+            DaggerfallEntityBehaviour[] behaviours = FindObjectsOfType<DaggerfallEntityBehaviour>();
+            int haltedCount = 0;
+            foreach (var b in behaviours)
+            {
+                if (b != null && b.Entity is EnemyEntity enemy && enemy.MobileEnemy.ID == (int)MobileTypes.Knight_CityWatch)
+                {
+                    EnemyMotor motor = b.GetComponent<EnemyMotor>();
+                    EnemySenses senses = b.GetComponent<EnemySenses>();
+
+                    float dist = targetPos != Vector3.zero ? Vector3.Distance(b.transform.position, targetPos) : 0f;
+                    if (dist < 90f || (senses != null && senses.Target != null && targetTransform != null && senses.Target.transform == targetTransform))
+                    {
+                        if (motor != null)
+                        {
+                            motor.IsHostile = false;
+                            motor.GiveUpTimer = 999;
+                        }
+                        if (senses != null)
+                        {
+                            senses.Target = null;
+                        }
+                        haltedCount++;
+                    }
+                }
+            }
+
+            LogNetwork($"[DFU Justice] HaltAndStandDownGuards pacified {haltedCount} city watch guards near conn {targetConnId}.");
+        }
+
+        public void SendTriggerJusticeEvent(int targetConnId, JusticeEventType eventType, int extraInt = 0, string extraString = "")
+        {
+            int myConn = NetworkSession.IsHost ? 0 : localConnectionId;
+            if (targetConnId == myConn)
+            {
+                ExecuteJusticeEventLocally(eventType, extraInt, extraString);
+                return;
+            }
+
+            MsgTriggerJusticeEvent msg = new MsgTriggerJusticeEvent
+            {
+                targetConnectionId = targetConnId,
+                eventType = eventType,
+                extraIntParam = extraInt,
+                extraStringParam = extraString
+            };
+
+            if (NetworkServer.active)
+            {
+                foreach (var client in connectedClients)
+                {
+                    if (client.connectionId == targetConnId)
+                    {
+                        client.Send(msg);
+                        break;
+                    }
+                }
+            }
+            else if (NetworkClient.active)
+            {
+                NetworkClient.Send(msg);
+            }
+        }
+
+        public void ExecuteJusticeEventLocally(JusticeEventType eventType, int extraInt, string extraString)
+        {
+            LogNetwork($"[DFU Justice] Executing justice event {eventType} locally (param: {extraInt}, '{extraString}')");
+            int myConn = NetworkSession.IsHost ? 0 : localConnectionId;
+
+            switch (eventType)
+            {
+                case JusticeEventType.ArrestAndTrial:
+                    isLocalPlayerInPrison = false;
+                    showPrisonDilemmaWindow = false;
+                    var prisonStateReset = GetWindowState("PrisonDilemma", "🗝", "Calabozo", prisonDilemmaRect);
+                    prisonStateReset.isMinimized = false;
+                    if (DaggerfallUI.Instance != null && DaggerfallUI.Instance.FadeBehaviour != null)
+                    {
+                        DaggerfallUI.Instance.FadeBehaviour.ClearFade();
+                    }
+
+                    if (GameManager.Instance.PlayerEntity != null)
+                    {
+                        if (GameManager.Instance.PlayerEntity.CurrentHealth <= 0)
+                        {
+                            GameManager.Instance.PlayerEntity.SetHealth(1, restoreMode: true);
+                        }
+                        if (GameManager.Instance.PlayerEntity.CrimeCommitted == PlayerEntity.Crimes.None)
+                        {
+                            GameManager.Instance.PlayerEntity.CrimeCommitted = PlayerEntity.Crimes.Assault;
+                        }
+                        EnemyAttack.IsSurrenderDialogueActive = true;
+                        HaltAndStandDownGuards(myConn);
+                        SetPlayerJusticeStasis(myConn, true, "Arresto y Juicio");
+                        GameManager.Instance.PlayerEntity.SurrenderToCityGuards(true);
+                    }
+                    if (DMChatController.Instance != null)
+                    {
+                        string pName = GameManager.Instance.PlayerEntity != null ? GameManager.Instance.PlayerEntity.Name : "Jugador";
+                        DMChatController.Instance.AddLocalSystemMessage($"[Justicia] ¡{pName} ha sido arrestado y está compareciendo ante el tribunal!");
+                    }
+                    break;
+
+                case JusticeEventType.PrisonDilemma:
+                    OpenPrisonDilemmaWindow(extraInt > 0 ? extraInt : 10);
+                    break;
+
+                case JusticeEventType.InfectionProgress:
+                    showInfectionWindow = true;
+                    if (DMChatController.Instance != null)
+                    {
+                        DMChatController.Instance.AddLocalSystemMessage("[Maldición] Sientes una transmutación oscura en tu sangre... (Ver ventana de transmutación)");
+                    }
+                    break;
+
+                case JusticeEventType.DaedricSummonCutscene:
+                    SetPlayerJusticeStasis(myConn, true, "Cinemática Daédrica");
+                    DaggerfallUI.AddHUDText("[Daedra] ¡Una entidad suprema se manifiesta! Stasis de combate activado.");
+                    StartCoroutine(EndDaedricStasisAfterDelay(15f, myConn));
+                    break;
+
+                case JusticeEventType.DungeonTeleportTrap:
+                    if (GameManager.Instance.PlayerObject != null)
+                    {
+                        CharacterController cc = GameManager.Instance.PlayerObject.GetComponent<CharacterController>();
+                        Vector3 offset = GameManager.Instance.PlayerObject.transform.forward * 20f + Vector3.up * 0.5f;
+                        if (cc != null)
+                            cc.Move(offset);
+                        else
+                            GameManager.Instance.PlayerObject.transform.position += offset;
+                        DaggerfallUI.AddHUDText("Un mecanismo arcano se ha activado bajo tus pies...");
+                    }
+                    break;
+
+                case JusticeEventType.CommunalRestVote:
+                    InitiatePartyVote(PartyVoteType.Rest, VoteConsensusPolicy.Unanimous, "Descanso Colectivo", "La party vota para descansar y recuperar vitalidad.", 8, 0, false, false, "");
+                    break;
+
+                case JusticeEventType.GuardStandDown:
+                    HaltAndStandDownGuards(myConn);
+                    DaggerfallUI.AddHUDText("[Guardia] ¡Los guardias municipales envainan sus armas!");
+                    break;
+            }
+        }
+
+        private System.Collections.IEnumerator EndDaedricStasisAfterDelay(float delay, int connId)
+        {
+            yield return new WaitForSeconds(delay);
+            SetPlayerJusticeStasis(connId, false);
+            DaggerfallUI.AddHUDText("[Daedra] La presencia se desvanece. Se reanuda el flujo normal del mundo.");
+        }
+
+        private void OnServerReceiveTriggerJusticeEvent(NetworkConnection conn, MsgTriggerJusticeEvent msg)
+        {
+            LogNetwork($"[DFU Justice] Server received MsgTriggerJusticeEvent {msg.eventType} for target {msg.targetConnectionId}");
+            if (msg.targetConnectionId == 0)
+            {
+                ExecuteJusticeEventLocally(msg.eventType, msg.extraIntParam, msg.extraStringParam);
+            }
+            else
+            {
+                foreach (var client in connectedClients)
+                {
+                    if (client.connectionId == msg.targetConnectionId)
+                    {
+                        client.Send(msg);
+                        break;
+                    }
+                }
+            }
+        }
+
+        private void OnClientReceiveTriggerJusticeEvent(MsgTriggerJusticeEvent msg)
+        {
+            int myConn = NetworkSession.IsHost ? 0 : localConnectionId;
+            if (msg.targetConnectionId == myConn || msg.targetConnectionId == -1)
+            {
+                ExecuteJusticeEventLocally(msg.eventType, msg.extraIntParam, msg.extraStringParam);
+            }
+        }
+
+        private void OnClientReceiveJusticeStasisSync(MsgJusticeStasisSync msg)
+        {
+            if (msg.isStasisActive)
+            {
+                playersInJusticeStasis.Add(msg.targetConnectionId);
+                if (msg.reason == "Prisión")
+                {
+                    SetPuppetPrisonVisibility(msg.targetConnectionId, false);
+                }
+            }
+            else
+            {
+                playersInJusticeStasis.Remove(msg.targetConnectionId);
+                SetPuppetPrisonVisibility(msg.targetConnectionId, true);
+            }
+        }
+
+        // Prison Dilemma State
+        public bool showPrisonDilemmaWindow = false;
+        public bool isLocalPlayerInPrison = false;
+        public Texture2D prisonCellTexture = null;
+        private Rect prisonDilemmaRect = new Rect((Screen.width - 660) * 0.5f, 150f, 660, 520);
+        private Vector2 prisonDilemmaScroll = Vector2.zero;
+        public int prisonSentenceDays = 10;
+        public int prisonSelectedDilemmaOption = 0; // 0: Communal Wait, 1: Solo CYOA Inmate, 2: 3-step Party Jailbreak
+        public int prisonSoloEscapeStep = 0; // 0: Salir de la Celda, 1: Guardia del Calabozo, 2: Fuga de la Fortaleza
+        public int prisonJailbreakStep = 0;  // 0: Infiltración, 1: Extracción, 2: Fuga Coordinada
+        public int prisonDmDc = 13;
+        public string prisonRollFeedback = "";
+
+        // Interactive DM Challenge Prompt State
+        public bool dmPendingEscapePrompt = false;
+        private Rect dmPendingEscapeRect = new Rect((Screen.width - 500) * 0.5f, (Screen.height - 300) * 0.5f, 500, 300);
+        public int dmPendingEscapeRollerConnId = 0;
+        public string dmPendingEscapeRollerName = "";
+        public int dmPendingEscapeMode = 0; // 0: Solo, 1: Grupal
+        public int dmPendingEscapeStep = 0;
+        public string dmPendingEscapeTactic = "";
+        public int dmPendingEscapeDC = 13;
+
+        // Active Escape Tracking for Dice Roll Evaluation
+        public int activeEscapeChallengeId = 0;
+        public int activeEscapeTargetConnId = 0;
+        public int activeEscapeMode = 0;
+        public int activeEscapeStep = 0;
+        public int activeEscapeDC = 13;
+
+        public Vector3 prisonSavedPosition = Vector3.zero;
+
+        private static readonly string[] SoloStepTitles = new string[]
+        {
+            "Paso 1: Salir de la Celda (Infiltración Inicial)",
+            "Paso 2: La Guardia del Calabozo (Evasión y Sigilo)",
+            "Paso 3: La Fuga de la Fortaleza (Escape Definitivo)"
+        };
+
+        private static readonly string[][] SoloStepTactics = new string[][]
+        {
+            new string[]
+            {
+                "Forzar los barrotes con una ganzúa improvisada de hueso o alambre.",
+                "Robarle las llaves del cinto al carcelero mientras dormita tras la ronda.",
+                "Desencajar la losa floja bajo la paja del camastro para reptar al subsuelo."
+            },
+            new string[]
+            {
+                "Moverse pegado a las sombras esquivando las antorchas de la patrulla.",
+                "Lanzar un plato de peltre al final del pasillo para desviar a los guardias.",
+                "Noquear al centinela solitario por la espalda antes de que dé la alarma."
+            },
+            new string[]
+            {
+                "Descolgarse con sábanas atadas desde las almenas de la muralla hacia el foso.",
+                "Arrastrarse por el conducto de desagüe hacia las aguas negras exteriores.",
+                "Disfrazarse con la capa de un guardia y salir con aplomo por el portón de servicio."
+            }
+        };
+
+        private static readonly string[] GroupStepTitles = new string[]
+        {
+            "Paso 1: Infiltración y Vigilancia Exterior",
+            "Paso 2: Asalto y Extracción en las Celdas",
+            "Paso 3: Huida Coordinada y Despiste"
+        };
+
+        private static readonly string[][] GroupStepTactics = new string[][]
+        {
+            new string[]
+            {
+                "Sobornar al guardia de guardia o falsificar una orden de traslado de reos.",
+                "Crear un alboroto o fuego fingido en la plaza exterior para dispersar centinelas.",
+                "Descender sigilosamente por el lucernario del tejado mediante cuerdas y garfios."
+            },
+            new string[]
+            {
+                "Forzar la cerradura maestra del calabozo y liberar los grilletes del prisionero.",
+                "Neutralizar a los carceleros con veneno somnífero o magia de parálisis.",
+                "Romper los goznes de la verja con una palanca y entregarle armas al preso."
+            },
+            new string[]
+            {
+                "Huida a caballo a galope tendido por la puerta norte antes de cerrar el rastrillo.",
+                "Descenso y fuga por el laberinto de cloacas guiados por marcas del gremio.",
+                "Camuflar al prisionero dentro de un carro de barriles mercante y salir sin sospechas."
+            }
+        };
+
+        public void OpenPrisonDilemmaWindow(int days)
+        {
+            prisonSentenceDays = Mathf.Max(1, days);
+            showPrisonDilemmaWindow = true;
+            isLocalPlayerInPrison = true;
+            var pState = GetWindowState("PrisonDilemma", "🗝", "Calabozo", prisonDilemmaRect);
+            pState.isMinimized = false;
+            prisonSelectedDilemmaOption = 0;
+            prisonSoloEscapeStep = 0;
+            prisonJailbreakStep = 0;
+            prisonRollFeedback = "";
+
+            float w = Mathf.Min(660f, Screen.width - 40f);
+            float h = Mathf.Min(520f, Screen.height - 60f);
+            float x = (Screen.width - w) * 0.5f;
+            float y = (Screen.height >= 768f) ? Mathf.Clamp((Screen.height - h) * 0.5f, 40f, Screen.height - h) : Mathf.Max(20f, (Screen.height - h) * 0.5f);
+            prisonDilemmaRect = new Rect(x, y, w, h);
+            int myConn = NetworkSession.IsHost ? 0 : localConnectionId;
+
+            if (GameManager.Instance.PlayerObject != null)
+            {
+                prisonSavedPosition = GameManager.Instance.PlayerObject.transform.position;
+            }
+            if (GameManager.Instance.PlayerMotor != null)
+            {
+                GameManager.Instance.PlayerMotor.FreezeMotor = 9999f;
+            }
+
+            SetPlayerJusticeStasis(myConn, true, "Prisión");
+            DaggerfallUI.AddHUDText($"[Calabozo] Has sido recluido por una condena de {prisonSentenceDays} días.");
+        }
+
+        public void ClosePrisonDilemma(bool escapeSuccess, string feedback = "")
+        {
+            isLocalPlayerInPrison = false;
+            showPrisonDilemmaWindow = false;
+            int myConn = NetworkSession.IsHost ? 0 : localConnectionId;
+
+            if (GameManager.Instance.PlayerMotor != null)
+            {
+                GameManager.Instance.PlayerMotor.FreezeMotor = 0f;
+                GameManager.Instance.PlayerMotor.CancelMovement = true;
+            }
+
+            if (prisonSavedPosition != Vector3.zero && GameManager.Instance.PlayerObject != null)
+            {
+                CharacterController cc = GameManager.Instance.PlayerObject.GetComponent<CharacterController>();
+                if (cc != null)
+                {
+                    cc.enabled = false;
+                    GameManager.Instance.PlayerObject.transform.position = prisonSavedPosition;
+                    cc.enabled = true;
+                }
+                else
+                {
+                    GameManager.Instance.PlayerObject.transform.position = prisonSavedPosition;
+                }
+            }
+
+            SetPlayerJusticeStasis(myConn, false);
+            showPrisonDilemmaWindow = false;
+
+            if (GameManager.Instance.PlayerEntity != null)
+            {
+                GameManager.Instance.PlayerEntity.InPrison = false;
+                GameManager.Instance.PlayerEntity.CrimeCommitted = PlayerEntity.Crimes.None;
+                GameManager.Instance.PlayerEntity.FillVitalSigns();
+            }
+
+            if (!string.IsNullOrEmpty(feedback))
+            {
+                DaggerfallUI.AddHUDText(feedback);
+            }
+        }
+
+        // Transmutation / Infection Placeholder State
+        public bool showInfectionWindow = false;
+        private Rect infectionWindowRect = new Rect((Screen.width - 500) * 0.5f, (Screen.height - 320) * 0.5f, 500, 320);
+
+        private void DrawJusticeTabContent()
+        {
+            GUILayout.Space(4);
+            GUILayout.Label("⚖ EVENTOS, JUSTICIA & STASIS DEL MUNDO (FASE 21) ⚖", DarkFantasyPixelArtTheme.SectionBannerStyle, GUILayout.ExpandWidth(true));
+            GUILayout.Space(4);
+
+            GUILayout.Label("<color=#A09080>Prueba y asigna escenarios narrativos, stasis y dilemas a cualquier miembro de la party.</color>");
+            GUILayout.Space(6);
+
+            // Party Target Selector
+            GUILayout.Label("✦ <b>Seleccionar Miembro de la Party Objetivo:</b>");
+            GUILayout.BeginHorizontal();
+
+            // Host
+            string hostName = GameManager.Instance.PlayerEntity != null ? GameManager.Instance.PlayerEntity.Name : "Host";
+            bool isHostSelected = (selectedJusticePlayerConnId == 0);
+            if (GUILayout.Button(isHostSelected ? $"[X] Host ({hostName})" : $"[ ] Host ({hostName})", isHostSelected ? DarkFantasyPixelArtTheme.EmeraldButtonStyle : DarkFantasyPixelArtTheme.GoldButtonStyle, GUILayout.Height(26)))
+            {
+                selectedJusticePlayerConnId = 0;
+            }
+
+            // Remote clients
+            foreach (var kvp in remotePlayerPuppets)
+            {
+                int cId = kvp.Key;
+                NativePlayerPuppet puppet = kvp.Value;
+                if (puppet != null)
+                {
+                    bool isSelected = (selectedJusticePlayerConnId == cId);
+                    if (GUILayout.Button(isSelected ? $"[X] {puppet.playerName} (ID {cId})" : $"[ ] {puppet.playerName} (ID {cId})", isSelected ? DarkFantasyPixelArtTheme.EmeraldButtonStyle : DarkFantasyPixelArtTheme.GoldButtonStyle, GUILayout.Height(26)))
+                    {
+                        selectedJusticePlayerConnId = cId;
+                    }
+                }
+            }
+            GUILayout.EndHorizontal();
+            GUILayout.Space(6);
+
+            // Target Player Status Card
+            GUILayout.BeginVertical(GUI.skin.box);
+            string targetDisplayName = (selectedJusticePlayerConnId == 0) ? hostName : (remotePlayerPuppets.TryGetValue(selectedJusticePlayerConnId, out NativePlayerPuppet p) && p != null ? p.playerName : $"Cliente {selectedJusticePlayerConnId}");
+            bool isInStasis = IsPlayerInJusticeStasis(selectedJusticePlayerConnId);
+            string stasisBadge = isInStasis ? "<color=#FF4444>[EN STASIS / INVULNERABLE]</color>" : "<color=#44FF44>[ACTIVO / NORMAL]</color>";
+
+            GUILayout.Label($"<b>Objetivo:</b> <color=#F0D890>{targetDisplayName}</color> (ConnId: {selectedJusticePlayerConnId}) — <b>Estado:</b> {stasisBadge}");
+            if (selectedJusticePlayerConnId == 0 && GameManager.Instance.PlayerEntity != null)
+            {
+                GUILayout.Label($"<b>HP:</b> {GameManager.Instance.PlayerEntity.CurrentHealth}/{GameManager.Instance.PlayerEntity.MaxHealth} | <b>Crimen Actual:</b> {GameManager.Instance.PlayerEntity.CrimeCommitted}");
+            }
+            GUILayout.EndVertical();
+            GUILayout.Space(8);
+
+            // Case Buttons
+            DarkFantasyPixelArtTheme.DrawImGuiDivider();
+            GUILayout.Space(4);
+
+            // Caso 1
+            GUILayout.Label("✦ <b>Caso 1: Arresto, Stand-Down & Juicio Municipal</b>");
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("⚖ Disparar Arresto & Juicio", DarkFantasyPixelArtTheme.GoldButtonStyle, GUILayout.Height(28)))
+            {
+                SendTriggerJusticeEvent(selectedJusticePlayerConnId, JusticeEventType.ArrestAndTrial);
+            }
+            if (GUILayout.Button("🛡 Stand-Down Guardias (Zona)", DarkFantasyPixelArtTheme.CrimsonButtonStyle, GUILayout.Width(200), GUILayout.Height(28)))
+            {
+                HaltAndStandDownGuards(selectedJusticePlayerConnId);
+                DaggerfallUI.AddHUDText("[Guardia] Stand-Down forzado en la zona.");
+            }
+            GUILayout.EndHorizontal();
+            GUILayout.Label("<color=#706050>Congela el ataque de guardias, otorga inmunidad por stasis y abre el juicio para el acusado.</color>");
+            GUILayout.Space(6);
+
+            // Caso 2
+            GUILayout.Label("✦ <b>Caso 2: Encarcelamiento & Dilema de Fuga (3 Opciones)</b>");
+            GUILayout.BeginHorizontal();
+            GUILayout.Label($"Dificultad DM (DC): {prisonDmDc}", GUILayout.Width(130));
+            prisonDmDc = (int)GUILayout.HorizontalSlider(prisonDmDc, 8, 20, GUILayout.Width(140));
+            if (GUILayout.Button("🗝 Disparar Menú de Prisión", DarkFantasyPixelArtTheme.GoldButtonStyle, GUILayout.Height(28)))
+            {
+                SendTriggerJusticeEvent(selectedJusticePlayerConnId, JusticeEventType.PrisonDilemma, 10);
+            }
+            GUILayout.EndHorizontal();
+            GUILayout.Label("<color=#706050>Abre el dilema interactivo: 1) Espera colectiva con voto, 2) Fuga solitaria D20, 3) Fuga grupal en 3 fases.</color>");
+            GUILayout.Space(6);
+
+            // Caso 3
+            GUILayout.Label("✦ <b>Caso 3: Transformación Licántropo / Vampiro (Sin Time Skip)</b>");
+            if (GUILayout.Button("🐺 Disparar Transformación (Loop Video Placeholder)", DarkFantasyPixelArtTheme.GoldButtonStyle, GUILayout.Height(28)))
+            {
+                SendTriggerJusticeEvent(selectedJusticePlayerConnId, JusticeEventType.InfectionProgress);
+            }
+            GUILayout.Label("<color=#706050>Suprime los 14 días automáticos y activa la pantalla de transmutación sin desincronizar el reloj del mundo.</color>");
+            GUILayout.Space(6);
+
+            // Caso 4
+            GUILayout.Label("✦ <b>Caso 4: Invocación Daédrica Compartida (Stasis de Daño)</b>");
+            if (GUILayout.Button("👁 Disparar Invocación Daédrica Compartida", DarkFantasyPixelArtTheme.GoldButtonStyle, GUILayout.Height(28)))
+            {
+                SendTriggerJusticeEvent(selectedJusticePlayerConnId, JusticeEventType.DaedricSummonCutscene);
+            }
+            GUILayout.Label("<color=#706050>Sincroniza la cinemática daédrica en toda la party e impone stasis total de daño.</color>");
+            GUILayout.Space(6);
+
+            // Caso 5
+            GUILayout.Label("✦ <b>Caso 5: Trampa de Mazmorra (Teletransporte Silencioso)</b>");
+            if (GUILayout.Button("🌀 Disparar Teletransporte Silencioso", DarkFantasyPixelArtTheme.GoldButtonStyle, GUILayout.Height(28)))
+            {
+                SendTriggerJusticeEvent(selectedJusticePlayerConnId, JusticeEventType.DungeonTeleportTrap);
+            }
+            GUILayout.Label("<color=#706050>Mueve al jugador sin alertas de chat ni spoilers (aislamiento narrativo).</color>");
+            GUILayout.Space(6);
+
+            // Caso 6
+            GUILayout.Label("✦ <b>Caso 6: Avance Temporal / Descanso por Gremio</b>");
+            if (GUILayout.Button("⏳ Iniciar Votación de Descanso Colectivo", DarkFantasyPixelArtTheme.GoldButtonStyle, GUILayout.Height(28)))
+            {
+                SendTriggerJusticeEvent(selectedJusticePlayerConnId, JusticeEventType.CommunalRestVote);
+            }
+            GUILayout.Label("<color=#706050>Modal de votación sincronizado para pasar el tiempo todos juntos sin desincronización.</color>");
+            GUILayout.Space(4);
+        }
+
+        public void InitiateEscapeCheck(int escapeMode, int step, string tactic)
+        {
+            showPrisonDilemmaWindow = true;
+            if (prisonDilemmaRect.y < 20f || prisonDilemmaRect.height < 500f)
+            {
+                float w = Mathf.Min(660f, Screen.width - 40f);
+                float h = Mathf.Min(520f, Screen.height - 60f);
+                prisonDilemmaRect = new Rect((Screen.width - w) * 0.5f, Mathf.Clamp((Screen.height - h) * 0.5f, 30f, Screen.height - h), w, h);
+            }
+            string stepTitle = (escapeMode == 0) ? SoloStepTitles[step] : GroupStepTitles[step];
+
+            if (NetworkSession.IsHost || NetworkSession.IsSinglePlayer)
+            {
+                dmPendingEscapePrompt = true;
+                dmPendingEscapeRollerConnId = 0;
+                dmPendingEscapeRollerName = (GameManager.Instance.PlayerEntity != null) ? GameManager.Instance.PlayerEntity.Name : "Host";
+                dmPendingEscapeMode = escapeMode;
+                dmPendingEscapeStep = step;
+                dmPendingEscapeTactic = tactic;
+                dmPendingEscapeDC = 13;
+                DaggerfallUI.Instance?.PlayOneShot(SoundClips.ParchmentScratching);
+            }
+            else
+            {
+                NetworkClient.Send(new MsgRequestEscapeChallenge
+                {
+                    rollerConnectionId = localConnectionId,
+                    rollerName = (GameManager.Instance.PlayerEntity != null) ? GameManager.Instance.PlayerEntity.Name : $"Cliente {localConnectionId}",
+                    escapeMode = escapeMode,
+                    stepIndex = step,
+                    stepTitle = stepTitle,
+                    tacticDescription = tactic
+                });
+                DaggerfallUI.AddHUDText("[Fuga] Petición enviada al Dungeon Master para fijar la dificultad (DC)...");
+            }
+        }
+
+        private void OnServerReceiveRequestEscapeChallenge(NetworkConnection conn, MsgRequestEscapeChallenge msg)
+        {
+            dmPendingEscapePrompt = true;
+            dmPendingEscapeRollerConnId = msg.rollerConnectionId;
+            dmPendingEscapeRollerName = msg.rollerName;
+            dmPendingEscapeMode = msg.escapeMode;
+            dmPendingEscapeStep = msg.stepIndex;
+            dmPendingEscapeTactic = msg.tacticDescription;
+            dmPendingEscapeDC = 13;
+            DaggerfallUI.Instance?.PlayOneShot(SoundClips.ParchmentScratching);
+            DaggerfallUI.AddHUDText($"[DM] ¡{msg.rollerName} solicita intento de fuga! Define la Dificultad (DC).");
+        }
+
+        public void ConfirmAndSendEscapeChallenge(int rollerConnId, int escapeMode, int step, string tactic, int dc)
+        {
+            activeEscapeChallengeId = UnityEngine.Random.Range(200000, 999999);
+            activeEscapeTargetConnId = rollerConnId;
+            activeEscapeMode = escapeMode;
+            activeEscapeStep = step;
+            activeEscapeDC = dc;
+
+            string title = $"{(escapeMode == 0 ? "Fuga Solitaria" : "Fuga Grupal")} (Paso {step + 1}): {tactic}";
+            DMDiceTrayController.Instance?.IssueDMChallenge(title, dc, true, activeEscapeChallengeId);
+
+            if (rollerConnId == 0)
+            {
+                showPrisonDilemmaWindow = true;
+                if (prisonDilemmaRect.y < 265f)
+                    prisonDilemmaRect.y = Mathf.Clamp(Screen.height - 470f, 265f, Screen.height - 100f);
+                DMDiceTrayController.Instance?.SetActiveChallengeDirect(activeEscapeChallengeId, title, dc, true);
+                DMDiceTrayController.Instance?.OpenTray();
+            }
+            else
+            {
+                NetworkConnection targetConn = null;
+                if (NetworkServer.connections != null && NetworkServer.connections.TryGetValue(rollerConnId, out var conn))
+                    targetConn = conn;
+                if (targetConn != null)
+                {
+                    targetConn.Send(new MsgStartEscapeRollChallenge
+                    {
+                        challengeId = activeEscapeChallengeId,
+                        rollerConnectionId = rollerConnId,
+                        escapeMode = escapeMode,
+                        stepIndex = step,
+                        title = title,
+                        targetDC = dc
+                    });
+                }
+            }
+        }
+
+        private void OnClientReceiveStartEscapeRollChallenge(MsgStartEscapeRollChallenge msg)
+        {
+            showPrisonDilemmaWindow = true;
+            activeEscapeChallengeId = msg.challengeId;
+            activeEscapeTargetConnId = localConnectionId;
+            activeEscapeMode = msg.escapeMode;
+            activeEscapeStep = msg.stepIndex;
+            activeEscapeDC = msg.targetDC;
+
+            if (prisonDilemmaRect.y < 265f)
+                prisonDilemmaRect.y = Mathf.Clamp(Screen.height - 470f, 265f, Screen.height - 100f);
+
+            DMDiceTrayController.Instance?.SetActiveChallengeDirect(msg.challengeId, msg.title, msg.targetDC, true);
+            DMDiceTrayController.Instance?.OpenTray();
+            DaggerfallUI.AddHUDText($"[Desafío DM] ¡El Dungeon Master ha fijado una DC {msg.targetDC}! ¡Lanza el D20!");
+        }
+
+        private void HandleDiceRollCompleted(MsgDiceResultBroadcast msg)
+        {
+            // Only the authoritative host or singleplayer instance processes state progression
+            bool isAuthoritative = NetworkServer.active || NetworkSession.IsSinglePlayer;
+            if (!isAuthoritative)
+            {
+                // Pure client: clear active challenge indicator locally when roll broadcast arrives
+                if (activeEscapeChallengeId != 0 && (msg.challengeId == activeEscapeChallengeId || msg.rollerConnectionId == localConnectionId))
+                {
+                    activeEscapeChallengeId = 0;
+                }
+                return;
+            }
+
+            if (activeEscapeChallengeId == 0)
+                return;
+
+            // Match if challenge ID matches, or if roller matches the target prisoner
+            bool matchesChallenge = (msg.challengeId != 0 && msg.challengeId == activeEscapeChallengeId) ||
+                                    (msg.rollerConnectionId == activeEscapeTargetConnId) ||
+                                    (activeEscapeTargetConnId == 0 && msg.rollerConnectionId == 0);
+
+            if (!matchesChallenge)
+                return;
+
+            int challengeId = activeEscapeChallengeId;
+            int targetConn = activeEscapeTargetConnId;
+            int mode = activeEscapeMode;
+            int step = activeEscapeStep;
+            int dc = (activeEscapeDC > 0) ? activeEscapeDC : msg.targetDC;
+            int roll = msg.rollResult;
+            bool passed = (roll == 20) || (roll != 1 && roll >= dc);
+
+            // Reset active escape challenge on server so subsequent rolls aren't duplicate triggers
+            activeEscapeChallengeId = 0;
+
+            if (passed)
+            {
+                if (step < 2)
+                {
+                    int nextStep = step + 1;
+                    string feedback = $"<color=#44FF44>¡Éxito! Sacaste {roll} (DC {dc}). ¡Superaste el Paso {step + 1}! Avanzan al Paso {nextStep + 1}.</color>";
+                    
+                    if (mode == 0) prisonSoloEscapeStep = nextStep;
+                    else prisonJailbreakStep = nextStep;
+                    prisonRollFeedback = feedback;
+                    showPrisonDilemmaWindow = true;
+
+                    if (NetworkServer.active)
+                    {
+                        NetworkServer.SendToAll(new MsgEscapeRollResolution
+                        {
+                            challengeId = challengeId,
+                            targetConnectionId = targetConn,
+                            escapeMode = mode,
+                            rollResult = roll,
+                            targetDC = dc,
+                            passed = true,
+                            newSentenceDays = prisonSentenceDays,
+                            newStepIndex = nextStep,
+                            feedback = feedback
+                        });
+                    }
+                }
+                else
+                {
+                    string victoryMsg = $"<color=#44FF44>¡Victoria Total! Sacaste {roll} (DC {dc}). ¡Fuga completada con éxito! Libres del calabozo.</color>";
+                    
+                    if (targetConn == 0 || mode == 1)
+                    {
+                        ClosePrisonDilemma(true, victoryMsg);
+                    }
+
+                    if (NetworkServer.active)
+                    {
+                        NetworkServer.SendToAll(new MsgEscapeRollResolution
+                        {
+                            challengeId = challengeId,
+                            targetConnectionId = targetConn,
+                            escapeMode = mode,
+                            rollResult = roll,
+                            targetDC = dc,
+                            passed = true,
+                            newSentenceDays = prisonSentenceDays,
+                            newStepIndex = 3,
+                            feedback = victoryMsg
+                        });
+                    }
+                }
+            }
+            else
+            {
+                prisonSentenceDays *= 2;
+                string failMsg = $"<color=#FF4444>¡Fallo! Sacaste {roll} (DC {dc}). ¡Los guardias dieron la alarma! Vuelves al Paso 1 y la condena se duplica a {prisonSentenceDays} días.</color>";
+
+                if (mode == 0) prisonSoloEscapeStep = 0;
+                else prisonJailbreakStep = 0;
+                prisonRollFeedback = failMsg;
+                showPrisonDilemmaWindow = true;
+
+                if (mode == 1)
+                {
+                    DaggerfallUI.AddHUDText($"[Alarma] ¡Intento de fuga de party frustrado! Condena duplicada a {prisonSentenceDays} días.");
+                }
+
+                if (NetworkServer.active)
+                {
+                    NetworkServer.SendToAll(new MsgEscapeRollResolution
+                    {
+                        challengeId = challengeId,
+                        targetConnectionId = targetConn,
+                        escapeMode = mode,
+                        rollResult = roll,
+                        targetDC = dc,
+                        passed = false,
+                        newSentenceDays = prisonSentenceDays,
+                        newStepIndex = 0,
+                        feedback = failMsg
+                    });
+                }
+            }
+        }
+
+        private void OnClientReceiveEscapeRollResolution(MsgEscapeRollResolution msg)
+        {
+            if (msg.targetConnectionId == localConnectionId || msg.escapeMode == 1)
+            {
+                prisonSentenceDays = msg.newSentenceDays;
+                if (msg.escapeMode == 0) prisonSoloEscapeStep = msg.newStepIndex;
+                else prisonJailbreakStep = msg.newStepIndex;
+                prisonRollFeedback = msg.feedback;
+                activeEscapeChallengeId = 0;
+
+                if (msg.newStepIndex >= 3)
+                {
+                    ClosePrisonDilemma(true, msg.feedback);
+                }
+                else
+                {
+                    showPrisonDilemmaWindow = true;
+                }
+            }
+        }
+
+        private void DrawDmEscapePromptWindow(int windowId)
+        {
+            if (!DrawWindowHeaderControls("DmEscapePrompt", "⚖", "Tirada DM", ref dmPendingEscapePrompt, ref dmPendingEscapeRect, new Rect((Screen.width - 500) * 0.5f, 60f, 500, 290)))
+                return;
+
+            DarkFantasyPixelArtTheme.DrawImGuiDivider();
+            GUILayout.Space(4);
+            GUILayout.Label($"<b>Jugador Solicitante:</b> <color=#F0D890>{dmPendingEscapeRollerName}</color> (ID {dmPendingEscapeRollerConnId})");
+            GUILayout.Label($"<b>Modalidad:</b> {(dmPendingEscapeMode == 0 ? "Fuga Solitaria" : "Fuga Grupal")} — <b>Paso {dmPendingEscapeStep + 1} de 3</b>");
+            GUILayout.Space(4);
+            GUILayout.Label($"<b>Táctica Elegida:</b>\n<color=#E0D0C0><i>\"{dmPendingEscapeTactic}\"</i></color>");
+            GUILayout.Space(8);
+
+            GUILayout.BeginHorizontal();
+            GUILayout.Label($"<b>Dificultad (DC): <color=#55FF55>{dmPendingEscapeDC}</color></b>", GUILayout.Width(170));
+            dmPendingEscapeDC = (int)GUILayout.HorizontalSlider(dmPendingEscapeDC, 8, 25);
+            GUILayout.EndHorizontal();
+            GUILayout.Label("<color=#706050>8-10 Fácil | 12-14 Media | 16-18 Difícil | 20+ Extrema</color>");
+            GUILayout.Space(10);
+
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button($"🎲 Exigir Tirada al Jugador (DC {dmPendingEscapeDC})", DarkFantasyPixelArtTheme.GoldButtonStyle, GUILayout.Height(32)))
+            {
+                ConfirmAndSendEscapeChallenge(dmPendingEscapeRollerConnId, dmPendingEscapeMode, dmPendingEscapeStep, dmPendingEscapeTactic, dmPendingEscapeDC);
+                dmPendingEscapePrompt = false;
+            }
+            if (GUILayout.Button("Cancelar", DarkFantasyPixelArtTheme.CrimsonButtonStyle, GUILayout.Width(90), GUILayout.Height(32)))
+            {
+                dmPendingEscapePrompt = false;
+            }
+            GUILayout.EndHorizontal();
+
+            GUI.DragWindow(new Rect(0, 0, 10000, 24));
+        }
+
+        private void DrawCyoaEscapeSteps(int mode, int currentStep, string[] stepTitles, string[][] stepTactics)
+        {
+            GUILayout.Label($"<b>Progreso General:</b> <color=#F0D890>Paso {currentStep + 1} de 3</color>");
+            GUILayout.Space(4);
+
+            for (int s = 0; s < 3; s++)
+            {
+                if (s < currentStep)
+                {
+                    // Completed step
+                    GUILayout.BeginVertical(GUI.skin.box);
+                    GUILayout.Label($"<color=#55FF55><b>[✓ SUPERADO]</b></color> <color=#A0D0A0>{stepTitles[s]}</color>");
+                    GUILayout.EndVertical();
+                    GUILayout.Space(3);
+                }
+                else if (s == currentStep)
+                {
+                    // Active step
+                    GUILayout.BeginVertical(GUI.skin.box);
+                    GUILayout.Label($"<color=#FFDF78><b>[► EN CURSO]</b></color> <b>{stepTitles[s]}</b>");
+                    GUILayout.Space(4);
+
+                    if (activeEscapeChallengeId != 0 && activeEscapeStep == s && activeEscapeMode == mode)
+                    {
+                        GUILayout.Label($"<color=#55FF55><b>🎲 ¡Desafío Activo del DM (DC {activeEscapeDC})!</b></color>\n<size=11>Despliega y lanza el D20 en la bandeja superior.</size>");
+                        GUILayout.Space(4);
+                        if (GUILayout.Button("🎲 Desplegar / Enfocar Bandeja de Dados D20", DarkFantasyPixelArtTheme.GoldButtonStyle, GUILayout.Height(30)))
+                        {
+                            DMDiceTrayController.Instance?.OpenTray();
+                        }
+                    }
+                    else
+                    {
+                        GUILayout.Label("<color=#A09080><size=11>Elige una táctica para afrontar este paso (el DM fijará la dificultad):</size></color>");
+                        GUILayout.Space(2);
+                        string[] tactics = stepTactics[s];
+                        for (int t = 0; t < tactics.Length; t++)
+                        {
+                            string tactic = tactics[t];
+                            if (GUILayout.Button($"🎲 Táctica {t + 1}: {tactic}", DarkFantasyPixelArtTheme.GoldButtonStyle, GUILayout.Height(30)))
+                            {
+                                InitiateEscapeCheck(mode, s, tactic);
+                            }
+                            GUILayout.Space(2);
+                        }
+                    }
+                    GUILayout.EndVertical();
+                    GUILayout.Space(3);
+                }
+                else
+                {
+                    // Locked step (subsequent steps disabled until current is passed)
+                    GUILayout.BeginVertical(GUI.skin.box);
+                    GUI.enabled = false;
+                    GUILayout.Label($"<color=#606060><b>[🔒 BLOQUEADO]</b> {stepTitles[s]}</color>");
+                    GUILayout.Button($"🔒 Paso {s + 1} Bloqueado (Supera el Paso {s})", DarkFantasyPixelArtTheme.TabInactiveStyle, GUILayout.Height(26));
+                    GUI.enabled = true;
+                    GUILayout.EndVertical();
+                    GUILayout.Space(3);
+                }
+            }
+
+            if (!string.IsNullOrEmpty(prisonRollFeedback))
+            {
+                GUILayout.Space(4);
+                GUILayout.Label(prisonRollFeedback);
+            }
+        }
+
+        private void DrawPrisonDilemmaWindow(int windowId)
+        {
+            if (!DrawWindowHeaderControls("PrisonDilemma", "🗝", "Calabozo", ref showPrisonDilemmaWindow, ref prisonDilemmaRect, new Rect((Screen.width - 660) * 0.5f, 150f, 660, 520), () => ClosePrisonDilemma(false)))
+                return;
+
+            DarkFantasyPixelArtTheme.DrawImGuiDivider();
+            GUILayout.Space(4);
+            GUILayout.Label($"<b>Condena Impuesta:</b> <color=#F0D890>{prisonSentenceDays} Días de Prisión</color>");
+            GUILayout.Space(4);
+
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button(prisonSelectedDilemmaOption == 0 ? "✦ 1. Espera Colectiva" : "1. Espera Colectiva", prisonSelectedDilemmaOption == 0 ? DarkFantasyPixelArtTheme.TabActiveStyle : DarkFantasyPixelArtTheme.TabInactiveStyle, GUILayout.Height(26)))
+                prisonSelectedDilemmaOption = 0;
+            if (GUILayout.Button(prisonSelectedDilemmaOption == 1 ? "✦ 2. Fuga Solitaria (3 Pasos)" : "2. Fuga Solitaria (3 Pasos)", prisonSelectedDilemmaOption == 1 ? DarkFantasyPixelArtTheme.TabActiveStyle : DarkFantasyPixelArtTheme.TabInactiveStyle, GUILayout.Height(26)))
+                prisonSelectedDilemmaOption = 1;
+            if (GUILayout.Button(prisonSelectedDilemmaOption == 2 ? "✦ 3. Fuga Grupal (3 Pasos)" : "3. Fuga Grupal (3 Pasos)", prisonSelectedDilemmaOption == 2 ? DarkFantasyPixelArtTheme.TabActiveStyle : DarkFantasyPixelArtTheme.TabInactiveStyle, GUILayout.Height(26)))
+                prisonSelectedDilemmaOption = 2;
+            GUILayout.EndHorizontal();
+
+            GUILayout.Space(6);
+            prisonDilemmaScroll = GUILayout.BeginScrollView(prisonDilemmaScroll, GUILayout.Height(280));
+
+            if (prisonSelectedDilemmaOption == 0)
+            {
+                GUILayout.BeginVertical(GUI.skin.box);
+                GUILayout.Label("<b>Opción 1: Cumplir la Condena en Conjunto</b>");
+                GUILayout.Label("<color=#A09080>Toda la party acuerda esperar el tiempo sugerido por el tribunal mediante el sistema de votación colectiva.</color>");
+                GUILayout.Space(8);
+                if (GUILayout.Button("Iniciar Votación de Espera de Party", DarkFantasyPixelArtTheme.EmeraldButtonStyle, GUILayout.Height(30)))
+                {
+                    InitiatePartyVote(PartyVoteType.Rest, VoteConsensusPolicy.Unanimous, $"Cumplir Condena ({prisonSentenceDays} días)", $"La party vota para cumplir la condena de {prisonSentenceDays} días juntos.", prisonSentenceDays * 24, 0, false, false, "");
+                    ClosePrisonDilemma(true, $"[Condena] Votación iniciada para cumplir los {prisonSentenceDays} días.");
+                }
+                GUILayout.EndVertical();
+            }
+            else if (prisonSelectedDilemmaOption == 1)
+            {
+                DrawCyoaEscapeSteps(0, prisonSoloEscapeStep, SoloStepTitles, SoloStepTactics);
+            }
+            else if (prisonSelectedDilemmaOption == 2)
+            {
+                DrawCyoaEscapeSteps(1, prisonJailbreakStep, GroupStepTitles, GroupStepTactics);
+            }
+
+            GUILayout.EndScrollView();
+            GUILayout.Space(6);
+
+            GUILayout.BeginHorizontal();
+            if (activeEscapeChallengeId != 0)
+            {
+                if (GUILayout.Button("🎲 Abrir Bandeja de Dados D20", DarkFantasyPixelArtTheme.GoldButtonStyle, GUILayout.Height(26)))
+                {
+                    DMDiceTrayController.Instance?.OpenTray();
+                }
+            }
+            if (GUILayout.Button("Minimizar Ventana", DarkFantasyPixelArtTheme.CrimsonButtonStyle, GUILayout.Height(26)))
+            {
+                showPrisonDilemmaWindow = false;
+            }
+            GUILayout.EndHorizontal();
+
+            GUI.DragWindow(new Rect(0, 0, 10000, 24));
+        }
+
+        private void DrawInfectionWindow(int windowId)
+        {
+            if (!DrawWindowHeaderControls("Infection", "🐺", "Transmutación", ref showInfectionWindow, ref infectionWindowRect, new Rect((Screen.width - 500) * 0.5f, (Screen.height - 320) * 0.5f, 500, 320)))
+                return;
+
+            DarkFantasyPixelArtTheme.DrawImGuiDivider();
+            GUILayout.Space(8);
+
+            GUILayout.BeginVertical(GUI.skin.box);
+            GUILayout.Label("<size=16><b>[ ACÁ VA VIDEO EN LOOP ]</b></size>", DarkFantasyPixelArtTheme.SectionBannerStyle, GUILayout.Height(60));
+            GUILayout.Space(6);
+            GUILayout.Label("<color=#A09080>Tu sangre y mente están mutando bajo el influjo de la maldición nocturna. Los días transcurren en tiempo real al ritmo del mundo y de tus compañeros, sin saltos temporales destructivos.</color>");
+            GUILayout.Space(6);
+            GUILayout.Label("<color=#F0D890>✦ Puedes participar en las votaciones colectivas de descanso para que la party duerma en conjunto y avance los días necesarios.</color>");
+            GUILayout.EndVertical();
+
+            GUILayout.Space(8);
+            if (GUILayout.Button("Aceptar / Minimizar Pantalla", DarkFantasyPixelArtTheme.GoldButtonStyle, GUILayout.Height(28)))
+            {
+                showInfectionWindow = false;
+            }
+
+            GUI.DragWindow(new Rect(0, 0, 10000, 24));
+        }
+
+        #endregion
+
     }
 }
