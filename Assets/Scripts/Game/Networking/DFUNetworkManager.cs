@@ -536,7 +536,28 @@ namespace DaggerfallWorkshop.Game.Networking
 
             if (NetworkSession.IsActive)
             {
-                StreamLocalPlayerTransform();
+                // In pre-game lobby (Title Screen), GameManager.Instance.PlayerObject is null.
+                // Maintain active reliable lobby heartbeats to prevent KCP timeout and keep the lobby state fresh.
+                if (GameManager.Instance == null || GameManager.Instance.PlayerObject == null)
+                {
+                    lobbyHeartbeatTimer += Time.deltaTime;
+                    if (lobbyHeartbeatTimer >= 2.0f)
+                    {
+                        lobbyHeartbeatTimer = 0f;
+                        if (NetworkServer.active)
+                        {
+                            BroadcastLobbyState();
+                        }
+                        else if (NetworkClient.isConnected)
+                        {
+                            SendLocalLobbyUpdate();
+                        }
+                    }
+                }
+                else
+                {
+                    StreamLocalPlayerTransform();
+                }
 
                 if (NetworkServer.active && DaggerfallUnity.Instance != null && DaggerfallUnity.Instance.WorldTime != null)
                 {
@@ -966,6 +987,26 @@ namespace DaggerfallWorkshop.Game.Networking
                     isImmediate = true
                 });
             }
+
+            // Register placeholder lobby player so lobby roster immediately reflects the new client
+            if (!serverLobbyPlayers.ContainsKey(conn.connectionId))
+            {
+                serverLobbyPlayers[conn.connectionId] = new LobbyPlayerDTO
+                {
+                    connectionId = conn.connectionId,
+                    playerName = $"Jugador #{conn.connectionId}",
+                    isHost = false,
+                    isDm = false,
+                    selectionMode = 0,
+                    isReady = false,
+                    modsCompatible = true,
+                    modMismatchSummary = "Sincronizando...",
+                    activeMods = new string[0]
+                };
+            }
+
+            // Immediately broadcast lobby state so both Host and newly joined Client have an active roster
+            BroadcastLobbyState();
 
             OnClientConnectedToServerEvent?.Invoke(conn);
         }
@@ -1743,6 +1784,12 @@ namespace DaggerfallWorkshop.Game.Networking
             if (profile.connectionId == selfConnId || (selfConnId != -1 && profile.connectionId == selfConnId))
                 return;
 
+            if (GameManager.Instance == null || GameManager.Instance.PlayerObject == null)
+            {
+                // Defer avatar instantiation until the player is actually in the 3D world
+                return;
+            }
+
             if (remotePlayerPuppets.ContainsKey(profile.connectionId))
             {
                 if (remotePlayerPuppets[profile.connectionId] != null)
@@ -1982,6 +2029,7 @@ namespace DaggerfallWorkshop.Game.Networking
                 DespawnRemotePlayerPuppet(localConnectionId);
             }
 
+            SendLocalLobbyUpdate();
             SendReputationReportToHost();
         }
 
@@ -10741,6 +10789,7 @@ namespace DaggerfallWorkshop.Game.Networking
         public readonly Dictionary<int, LobbyPlayerDTO> serverLobbyPlayers = new Dictionary<int, LobbyPlayerDTO>();
         public LobbyRosterBundle currentLobbyRoster = new LobbyRosterBundle();
         public event Action OnLobbyRosterUpdatedEvent;
+        private float lobbyHeartbeatTimer = 0f;
 
         // Local player's selected character & lobby state
         public bool localLobbyIsDm = false;
@@ -10859,6 +10908,7 @@ namespace DaggerfallWorkshop.Game.Networking
                     activeModsJson = string.Join("|", localMods)
                 };
                 NetworkClient.Send(updateMsg);
+                LogNetwork($"[DFU Lobby] Client sent lobby update: Name='{pName}', Mode={localLobbySelectionMode}, Ready={localLobbyIsReady}, Mods={localMods.Length}");
                 DFUModSyncController.Instance?.SendClientManifestReport();
             }
         }
@@ -10873,6 +10923,8 @@ namespace DaggerfallWorkshop.Game.Networking
 
             string[] hostMods = GetLocalActiveModList();
             EvaluateModCompatibility(hostMods, clientMods, out bool isCompat, out string summary);
+
+            LogNetwork($"[DFU Lobby] Server received client update from conn {conn.connectionId}: Name='{msg.playerName}', Mode={msg.selectionMode}, Ready={msg.isReady}, ModsCount={clientMods.Length}");
 
             LobbyPlayerDTO dto = new LobbyPlayerDTO
             {
@@ -10960,6 +11012,7 @@ namespace DaggerfallWorkshop.Game.Networking
             currentLobbyRoster = bundle;
             string json = SaveLoadManager.Serialize(typeof(LobbyRosterBundle), bundle, false);
             NetworkServer.SendToAll(new MsgLobbyStateSync { rosterBundleJson = json });
+            LogNetwork($"[DFU Lobby] Broadcasted lobby state to {serverLobbyPlayers.Count} player(s). Active clients: {connectedClients.Count}");
             OnLobbyRosterUpdatedEvent?.Invoke();
         }
 
@@ -10974,6 +11027,7 @@ namespace DaggerfallWorkshop.Game.Networking
                 if (bundle != null)
                 {
                     currentLobbyRoster = bundle;
+                    LogNetwork($"[DFU Lobby] Client received LobbyRosterBundle with {bundle.players.Count} player(s).");
                     OnLobbyRosterUpdatedEvent?.Invoke();
                 }
             }

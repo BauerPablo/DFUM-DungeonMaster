@@ -25,7 +25,7 @@ namespace kcp2k
         [Tooltip("KCP internal update interval. 100ms is KCP default, but a lower interval is recommended to minimize latency and to scale to more networked entities.")]
         public uint Interval = 10;
         [Tooltip("KCP timeout in milliseconds. Note that KCP sends a ping automatically.")]
-        public int Timeout = 10000;
+        public int Timeout = 30000;
 
         [Header("Advanced")]
         [Tooltip("KCP fastresend parameter. Faster resend for the cost of higher bandwidth. 0 in normal mode, 2 in turbo mode.")]

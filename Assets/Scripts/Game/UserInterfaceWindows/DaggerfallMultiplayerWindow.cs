@@ -181,6 +181,13 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
         public override void OnPush()
         {
             base.OnPush();
+            if (DFUNetworkManager.Instance != null)
+            {
+                DFUNetworkManager.Instance.OnLobbyRosterUpdatedEvent -= HandleLobbyRosterUpdated;
+                DFUNetworkManager.Instance.OnLobbyRosterUpdatedEvent += HandleLobbyRosterUpdated;
+                DFUNetworkManager.Instance.OnClientConnectedToHostEvent -= HandleLobbyRosterUpdated;
+                DFUNetworkManager.Instance.OnClientConnectedToHostEvent += HandleLobbyRosterUpdated;
+            }
             if (NetworkSession.IsActive && IsSetup)
             {
                 showingSavePickerModal = false;
@@ -191,6 +198,13 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
         public override void OnReturn()
         {
             base.OnReturn();
+            if (DFUNetworkManager.Instance != null)
+            {
+                DFUNetworkManager.Instance.OnLobbyRosterUpdatedEvent -= HandleLobbyRosterUpdated;
+                DFUNetworkManager.Instance.OnLobbyRosterUpdatedEvent += HandleLobbyRosterUpdated;
+                DFUNetworkManager.Instance.OnClientConnectedToHostEvent -= HandleLobbyRosterUpdated;
+                DFUNetworkManager.Instance.OnClientConnectedToHostEvent += HandleLobbyRosterUpdated;
+            }
             // When returning from StartNewGameWizard after creating a character for the Lobby
             if (NetworkSession.IsActive)
             {
@@ -213,7 +227,7 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
         {
             base.Update();
 
-            lobbyPollTimer += Time.realtimeSinceStartup > 0 ? 0.016f : 0.016f;
+            lobbyPollTimer += Time.deltaTime;
             if (activeTab == 2 && !showingSavePickerModal)
             {
                 int currentCount = (DFUNetworkManager.Instance != null && DFUNetworkManager.Instance.currentLobbyRoster != null && DFUNetworkManager.Instance.currentLobbyRoster.players != null)
@@ -222,6 +236,11 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
                 if (currentCount != lastKnownRosterCount)
                 {
                     lastKnownRosterCount = currentCount;
+                    needsLobbyUiRefresh = true;
+                }
+                else if (lobbyPollTimer >= 1.0f)
+                {
+                    lobbyPollTimer = 0f;
                     needsLobbyUiRefresh = true;
                 }
             }
@@ -621,7 +640,10 @@ namespace DaggerfallWorkshop.Game.UserInterfaceWindows
             float rowY = 4f;
             if (players.Count == 0)
             {
-                TextLabel waitLbl = DaggerfallUI.AddTextLabel(DaggerfallUI.DefaultFont, new Vector2(6, rowY), "Waiting for handshake...", rosterBox);
+                string waitText = Mirror.NetworkClient.isConnected || NetworkSession.IsHost
+                    ? "Sincronizando sala..."
+                    : "Conectando al anfitrión...";
+                TextLabel waitLbl = DaggerfallUI.AddTextLabel(DaggerfallUI.DefaultFont, new Vector2(6, rowY), waitText, rosterBox);
                 waitLbl.TextColor = DarkFantasyPixelArtTheme.TextMuted;
             }
             else
