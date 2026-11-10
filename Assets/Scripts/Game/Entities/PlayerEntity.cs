@@ -624,7 +624,13 @@ namespace DaggerfallWorkshop.Game.Entity
         public static bool PendingGuardDungeon = false;
         public static int PendingGuardBuildingKey = 0;
 
-        // Recreation of guard spawning based on classic
+        // Recreation of guard spawning based on classic (Vanilla DFU 1.1.1 signature for mod binary compatibility)
+        public void SpawnCityGuards(bool immediateSpawn)
+        {
+            SpawnCityGuards(immediateSpawn, -1, 0, default);
+        }
+
+        // Multiplayer / authoritative crime context overload
         public void SpawnCityGuards(bool immediateSpawn, int civilianPoolIndex = -1, int mapID = 0, Vector3 victimPos = default)
         {
             Vector3 myPos = GameManager.Instance.PlayerMotor != null
