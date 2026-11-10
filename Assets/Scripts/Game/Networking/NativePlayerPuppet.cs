@@ -1,0 +1,590 @@
+// Project:         Daggerfall Unity
+// Copyright:       Copyright (C) 2009-2022 Daggerfall Workshop
+// Web Site:        http://www.dfworkshop.net
+// License:         MIT License (http://www.opensource.org/licenses/mit-license.php)
+// Source Code:     https://github.com/Interkarma/daggerfall-unity
+
+using UnityEngine;
+using DaggerfallWorkshop;
+using DaggerfallWorkshop.Game;
+using DaggerfallWorkshop.Game.Entity;
+using DaggerfallWorkshop.Utility;
+
+namespace DaggerfallWorkshop.Game.Networking
+{
+    /// <summary>
+    /// Visual puppet representation for a connected party member in the game world.
+    /// Handles billboard animations, overhead 3D name tag billboard, and smooth snapshot motion interpolation.
+    /// Interaction (map sharing, trade) is triggered by proximity and pressing 'F'.
+    /// </summary>
+    public class NativePlayerPuppet : MonoBehaviour
+    {
+        [Header("Player Metadata")]
+        public int connectionId;
+        public string playerName;
+        public string careerName;
+        public string raceName;
+        public int gender;
+        public bool isDm;
+
+        [Header("Motion Interpolation")]
+        public float lerpRate = 12.0f;
+        public float snapDistance = 3.5f;
+
+        private Vector3 targetPosition;
+        private Quaternion targetRotation;
+        private bool isMoving;
+        private bool isCrouching;
+        private bool isAttacking;
+        private int weaponType;
+        private bool lastAttacking;
+        private CapsuleCollider capsuleCollider;
+        private float castAnimTimer = 0f;
+
+        private MobileUnit mobileUnit;
+        private GameObject nameTagObject;
+        private TextMesh nameTextMesh;
+        private Color nameTagBaseColor = new Color(0.2f, 0.9f, 1.0f);
+
+        private GameObject crouchBillboardObject;
+        private MeshRenderer crouchRenderer;
+        private Material crouchMaterial;
+        private Texture2D crouchFrontTex;
+        private Texture2D crouchBackTex;
+        private bool hasCrouchTextures = false;
+
+        private bool isDowned = false;
+        public bool IsDowned => isDowned;
+        private GameObject downedBillboardObject;
+
+        public void Initialize(MsgPlayerProfile profile)
+        {
+            connectionId = profile.connectionId;
+            playerName = profile.playerName;
+            careerName = profile.careerName;
+            raceName = profile.raceName;
+            gender = profile.gender;
+            isDm = profile.isDm || (profile.careerName != null && profile.careerName.Contains("Dungeon Master")) || (profile.playerName != null && profile.playerName.Contains("[DM]"));
+
+            isMoving = false;
+            isCrouching = false;
+            isAttacking = false;
+            lastAttacking = false;
+
+            targetPosition = profile.position;
+            targetRotation = Quaternion.Euler(0, profile.yaw, 0);
+
+            transform.position = profile.position;
+            transform.rotation = targetRotation;
+
+            capsuleCollider = GetComponent<CapsuleCollider>();
+            if (capsuleCollider != null)
+            {
+                capsuleCollider.isTrigger = true;
+                if (GameManager.Instance != null && GameManager.Instance.PlayerController != null)
+                {
+                    Physics.IgnoreCollision(GameManager.Instance.PlayerController, capsuleCollider, true);
+                }
+            }
+
+            SetupDemoEnemy setup = GetComponent<SetupDemoEnemy>();
+            if (setup != null)
+                mobileUnit = setup.GetMobileBillboardChild();
+            if (mobileUnit == null)
+                mobileUnit = GetComponentInChildren<MobileUnit>();
+
+            if (mobileUnit != null)
+                mobileUnit.ChangeEnemyState(MobileStates.Idle);
+
+            CreateOverheadNameTag();
+            InitializeCrouchBillboard();
+        }
+
+        private void InitializeCrouchBillboard()
+        {
+            try
+            {
+                string[] candidateDirs = new string[]
+                {
+                    System.IO.Path.Combine(Application.streamingAssetsPath, "Textures/TEXTURE.488"),
+                    System.IO.Path.Combine(Application.streamingAssetsPath, "TEXTURE.488"),
+                    System.IO.Path.Combine(Application.dataPath, "StreamingAssets/Textures/TEXTURE.488")
+                };
+
+                string foundDir = null;
+                foreach (string dir in candidateDirs)
+                {
+                    if (System.IO.Directory.Exists(dir) && System.IO.File.Exists(System.IO.Path.Combine(dir, "25-0.PNG")))
+                    {
+                        foundDir = dir;
+                        break;
+                    }
+                }
+
+                if (foundDir != null)
+                {
+                    string frontPath = System.IO.Path.Combine(foundDir, "25-0.PNG");
+                    string backPath = System.IO.Path.Combine(foundDir, "25-1.PNG");
+
+                    if (System.IO.File.Exists(frontPath))
+                    {
+                        byte[] frontBytes = System.IO.File.ReadAllBytes(frontPath);
+                        crouchFrontTex = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+                        crouchFrontTex.LoadImage(frontBytes);
+                        crouchFrontTex.filterMode = FilterMode.Point;
+                        hasCrouchTextures = true;
+                    }
+
+                    if (System.IO.File.Exists(backPath))
+                    {
+                        byte[] backBytes = System.IO.File.ReadAllBytes(backPath);
+                        crouchBackTex = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+                        crouchBackTex.LoadImage(backBytes);
+                        crouchBackTex.filterMode = FilterMode.Point;
+                    }
+                }
+
+                if (hasCrouchTextures)
+                {
+                    crouchBillboardObject = GameObject.CreatePrimitive(PrimitiveType.Quad);
+                    crouchBillboardObject.name = "CrouchBillboard";
+                    crouchBillboardObject.transform.SetParent(transform, false);
+
+                    Collider col = crouchBillboardObject.GetComponent<Collider>();
+                    if (col != null)
+                        Destroy(col);
+
+                    crouchRenderer = crouchBillboardObject.GetComponent<MeshRenderer>();
+                    MeshRenderer unitRenderer = mobileUnit != null ? mobileUnit.GetComponent<MeshRenderer>() : null;
+                    if (unitRenderer != null && unitRenderer.sharedMaterial != null)
+                    {
+                        crouchMaterial = new Material(unitRenderer.sharedMaterial);
+                    }
+                    else
+                    {
+                        Shader shader = Shader.Find("Daggerfall/Billboard") ?? Shader.Find("Sprites/Default");
+                        crouchMaterial = new Material(shader);
+                    }
+                    crouchMaterial.mainTexture = crouchFrontTex;
+                    crouchRenderer.material = crouchMaterial;
+
+                    crouchBillboardObject.SetActive(false);
+                }
+            }
+            catch (System.Exception ex)
+            {
+                Debug.LogWarning($"[DFU Puppet] Could not initialize custom crouch billboard: {ex.Message}");
+            }
+        }
+
+        private void InitializeDownedBillboard()
+        {
+            if (downedBillboardObject != null)
+                return;
+
+            try
+            {
+                downedBillboardObject = new GameObject("DownedBillboard");
+                downedBillboardObject.transform.SetParent(transform, false);
+
+                DaggerfallBillboard dfBillboard = downedBillboardObject.AddComponent<DaggerfallBillboard>();
+
+                int arch = 401;
+                int rec = 1;
+                if (EnemyBasics.GetEnemy(GameObjectHelper.ResolvePlayerClassMobileType(careerName), out MobileEnemy mobileEnemy))
+                {
+                    int corpseTex = (gender == 1 && mobileEnemy.FemaleCorpseTexture != 0) ? mobileEnemy.FemaleCorpseTexture : mobileEnemy.CorpseTexture;
+                    EnemyBasics.ReverseCorpseTexture(corpseTex, out arch, out rec);
+                }
+
+                dfBillboard.SetMaterial(arch, rec);
+                downedBillboardObject.SetActive(false);
+            }
+            catch (System.Exception ex)
+            {
+                Debug.LogWarning($"[DFU Puppet] Could not initialize downed corpse billboard: {ex.Message}");
+            }
+        }
+
+        private void UpdateDownedBillboardPosition()
+        {
+            if (downedBillboardObject == null)
+                return;
+
+            DaggerfallBillboard dfBillboard = downedBillboardObject.GetComponent<DaggerfallBillboard>();
+            float spriteHeight = (dfBillboard != null && dfBillboard.Summary.Size.y > 0) ? dfBillboard.Summary.Size.y : 0.8f;
+            float groundY = transform.position.y - 0.9f;
+
+            // Raycast down from slightly above puppet center to locate exact ground floor
+            if (Physics.Raycast(transform.position + Vector3.up * 0.5f, Vector3.down, out RaycastHit floorHit, 4.0f))
+            {
+                groundY = floorHit.point.y;
+            }
+
+            // Align bottom of billboard flush with floor
+            float localY = (groundY + (spriteHeight * 0.5f)) - transform.position.y;
+            downedBillboardObject.transform.localPosition = new Vector3(0, localY, 0);
+        }
+
+        public void SetDowned(bool downed)
+        {
+            isDowned = downed;
+
+            DaggerfallEntityBehaviour entityBeh = GetComponent<DaggerfallEntityBehaviour>();
+            if (entityBeh != null && entityBeh.Entity != null)
+            {
+                entityBeh.Entity.CurrentHealth = isDowned ? 0 : entityBeh.Entity.MaxHealth;
+            }
+
+            if (isDowned)
+            {
+                InitializeDownedBillboard();
+                UpdateDownedBillboardPosition();
+
+                if (mobileUnit != null && mobileUnit.gameObject.activeSelf)
+                    mobileUnit.gameObject.SetActive(false);
+
+                if (crouchBillboardObject != null && crouchBillboardObject.activeSelf)
+                    crouchBillboardObject.SetActive(false);
+
+                if (downedBillboardObject != null && !downedBillboardObject.activeSelf)
+                    downedBillboardObject.SetActive(true);
+
+                if (nameTagObject != null)
+                {
+                    nameTagObject.transform.localPosition = new Vector3(0, 0.40f, 0);
+                }
+                if (nameTextMesh != null)
+                {
+                    nameTextMesh.text = $"[INCONSCIENTE]\n{playerName}";
+                    nameTextMesh.color = new Color(1.0f, 0.25f, 0.25f, 1.0f);
+                }
+            }
+            else
+            {
+                if (downedBillboardObject != null && downedBillboardObject.activeSelf)
+                    downedBillboardObject.SetActive(false);
+
+                if (mobileUnit != null && !mobileUnit.gameObject.activeSelf)
+                {
+                    mobileUnit.gameObject.SetActive(true);
+                    mobileUnit.ChangeEnemyState(MobileStates.Idle);
+                }
+
+                if (nameTagObject != null)
+                {
+                    nameTagObject.transform.localPosition = isCrouching ? new Vector3(0, 1.05f, 0) : new Vector3(0, 2.15f, 0);
+                }
+                if (nameTextMesh != null)
+                {
+                    nameTextMesh.text = isDm ? $"[DUNGEON MASTER]\n{playerName}" : playerName;
+                    nameTextMesh.color = nameTagBaseColor;
+                }
+            }
+        }
+
+        private void CreateOverheadNameTag()
+        {
+            if (nameTagObject == null)
+            {
+                nameTagObject = new GameObject("NameTag");
+                nameTagObject.transform.SetParent(transform, false);
+                nameTagObject.transform.localPosition = new Vector3(0, 2.15f, 0);
+
+                nameTextMesh = nameTagObject.AddComponent<TextMesh>();
+                nameTextMesh.alignment = TextAlignment.Center;
+                nameTextMesh.anchor = TextAnchor.MiddleCenter;
+                nameTextMesh.characterSize = 0.12f;
+                nameTextMesh.fontSize = 24;
+            }
+
+            if (nameTextMesh != null)
+            {
+                if (isDm)
+                {
+                    nameTextMesh.text = $"[DUNGEON MASTER]\n{playerName}";
+                    nameTagBaseColor = new Color(1.0f, 0.84f, 0.0f, 1.0f); // Radiant Gold
+                }
+                else
+                {
+                    nameTextMesh.text = playerName;
+                    nameTagBaseColor = new Color(0.2f, 0.9f, 1.0f, 1.0f); // Bright cyan
+                }
+                nameTextMesh.color = nameTagBaseColor;
+            }
+        }
+
+        private void Update()
+        {
+            // Smoothly glide towards target snapshot position & orientation
+            float currentDist = Vector3.Distance(transform.position, targetPosition);
+            float effectiveLerpRate = currentDist > 1.5f ? lerpRate * 2.5f : lerpRate;
+            transform.position = Vector3.Lerp(transform.position, targetPosition, Time.deltaTime * effectiveLerpRate);
+            transform.rotation = Quaternion.Slerp(transform.rotation, targetRotation, Time.deltaTime * effectiveLerpRate);
+
+            // Orient 3D name tag towards active camera and apply distance fadeout
+            if (nameTagObject != null)
+            {
+                Camera mainCam = GameManager.Instance.MainCamera;
+                if (mainCam != null)
+                {
+                    nameTagObject.transform.rotation = mainCam.transform.rotation;
+
+                    // DM nametag is sacred and never fades out (always visible across entire scene)
+                    if (isDm)
+                    {
+                        if (!nameTagObject.activeSelf)
+                            nameTagObject.SetActive(true);
+
+                        if (nameTextMesh != null && nameTextMesh.color != nameTagBaseColor)
+                            nameTextMesh.color = nameTagBaseColor;
+                    }
+                    else
+                    {
+                        float dist = Vector3.Distance(transform.position, mainCam.transform.position);
+                        float maxDist = (DFUNetworkManager.Instance != null) ? DFUNetworkManager.Instance.nametagMaxDistance : 35f;
+                        float startDist = Mathf.Max(2f, maxDist * 0.35f);
+
+                        if (dist >= maxDist)
+                        {
+                            if (nameTagObject.activeSelf)
+                                nameTagObject.SetActive(false);
+                        }
+                        else
+                        {
+                            if (!nameTagObject.activeSelf)
+                                nameTagObject.SetActive(true);
+
+                            float alpha = 1.0f;
+                            if (dist > startDist)
+                            {
+                                alpha = Mathf.Clamp01(1.0f - ((dist - startDist) / (maxDist - startDist)));
+                            }
+
+                            if (nameTextMesh != null)
+                            {
+                                Color textColor = isDowned ? new Color(1.0f, 0.25f, 0.25f) : nameTagBaseColor;
+                                nameTextMesh.color = new Color(textColor.r, textColor.g, textColor.b, alpha);
+                                if (isDowned)
+                                    nameTextMesh.text = $"[INCONSCIENTE]\n{playerName}";
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Crouching handling
+            if (nameTagObject != null)
+            {
+                nameTagObject.transform.localPosition = isDowned ? new Vector3(0, 0.40f, 0) : (isCrouching ? new Vector3(0, 1.05f, 0) : new Vector3(0, 2.15f, 0));
+            }
+            if (capsuleCollider != null)
+            {
+                capsuleCollider.isTrigger = true;
+                capsuleCollider.height = isCrouching ? 0.9f : 1.8f;
+                capsuleCollider.center = isCrouching ? Vector3.zero : new Vector3(0, 0.9f, 0);
+
+                if (capsuleCollider.enabled && GameManager.Instance != null && GameManager.Instance.PlayerController != null && GameManager.Instance.PlayerController.enabled)
+                {
+                    Physics.IgnoreCollision(GameManager.Instance.PlayerController, capsuleCollider, true);
+                }
+            }
+
+            if (isDowned)
+            {
+                if (mobileUnit != null && mobileUnit.gameObject.activeSelf)
+                    mobileUnit.gameObject.SetActive(false);
+
+                if (crouchBillboardObject != null && crouchBillboardObject.activeSelf)
+                    crouchBillboardObject.SetActive(false);
+
+                if (downedBillboardObject != null && !downedBillboardObject.activeSelf)
+                    downedBillboardObject.SetActive(true);
+
+                UpdateDownedBillboardPosition();
+            }
+            else if (hasCrouchTextures && crouchBillboardObject != null)
+            {
+                if (isCrouching)
+                {
+                    if (mobileUnit != null && mobileUnit.gameObject.activeSelf)
+                        mobileUnit.gameObject.SetActive(false);
+
+                    if (!crouchBillboardObject.activeSelf)
+                        crouchBillboardObject.SetActive(true);
+
+                    Camera mainCam = GameManager.Instance.MainCamera;
+                    if (mainCam != null)
+                    {
+                        crouchBillboardObject.transform.rotation = mainCam.transform.rotation;
+
+                        Vector3 toCamera = (mainCam.transform.position - transform.position).normalized;
+                        float dot = Vector3.Dot(transform.forward, toCamera);
+                        Texture2D targetTex = (dot > 0f) ? crouchFrontTex : (crouchBackTex ?? crouchFrontTex);
+
+                        if (crouchMaterial != null && crouchMaterial.mainTexture != targetTex)
+                        {
+                            crouchMaterial.mainTexture = targetTex;
+                        }
+
+                        float aspect = (targetTex != null && targetTex.height > 0) ? (float)targetTex.width / targetTex.height : (56f / 75f);
+                        float height = 1.20f;
+                        float width = height * aspect;
+                        crouchBillboardObject.transform.localScale = new Vector3(width, height, 1f);
+                        // Pivot of quad is at center. Crouch root is at Y_ground + 0.45m, so local ground is at -0.45m.
+                        // Setting center at -0.45m + (height * 0.5f) grounds the bottom of the sprite perfectly.
+                        crouchBillboardObject.transform.localPosition = new Vector3(0, -0.45f + (height * 0.5f), 0);
+                    }
+                }
+                else
+                {
+                    if (crouchBillboardObject.activeSelf)
+                        crouchBillboardObject.SetActive(false);
+
+                    if (!isDowned && mobileUnit != null && !mobileUnit.gameObject.activeSelf)
+                        mobileUnit.gameObject.SetActive(true);
+                }
+            }
+
+            // Attack and motion animations
+            if (!isDowned && mobileUnit != null && mobileUnit.gameObject.activeSelf)
+            {
+                if (castAnimTimer > 0f)
+                {
+                    castAnimTimer -= Time.deltaTime;
+                    if (castAnimTimer <= 0f && !isAttacking)
+                    {
+                        bool moving = isMoving || (Vector3.Distance(transform.position, targetPosition) > 0.04f);
+                        mobileUnit.ChangeEnemyState(moving ? MobileStates.Move : MobileStates.Idle);
+                    }
+                }
+
+                if (isAttacking)
+                {
+                    MobileStates attackState = (weaponType == (int)WeaponTypes.Bow) ? MobileStates.RangedAttack1 : MobileStates.PrimaryAttack;
+                    if (mobileUnit.EnemyState != attackState && (mobileUnit.EnemyState == MobileStates.Idle || !lastAttacking))
+                    {
+                        mobileUnit.ChangeEnemyState(attackState);
+
+                        if (DaggerfallUI.Instance != null && DaggerfallUI.Instance.DaggerfallAudioSource != null)
+                        {
+                            SoundClips clip = (weaponType == (int)WeaponTypes.Bow) ? SoundClips.ArrowShoot : SoundClips.SwingMediumPitch;
+                            DaggerfallUI.Instance.DaggerfallAudioSource.PlayClipAtPoint(clip, transform.position, 0.8f);
+                        }
+                    }
+                }
+                else if (castAnimTimer <= 0f)
+                {
+                    bool actuallyMoving = isMoving || (Vector3.Distance(transform.position, targetPosition) > 0.04f);
+                    if (actuallyMoving && mobileUnit.EnemyState != MobileStates.Move && mobileUnit.EnemyState != MobileStates.PrimaryAttack && mobileUnit.EnemyState != MobileStates.RangedAttack1 && mobileUnit.EnemyState != MobileStates.Spell)
+                    {
+                        mobileUnit.ChangeEnemyState(MobileStates.Move);
+                    }
+                    else if (!actuallyMoving && (mobileUnit.EnemyState == MobileStates.Move || mobileUnit.EnemyState == MobileStates.PrimaryAttack || mobileUnit.EnemyState == MobileStates.Spell || mobileUnit.EnemyState == MobileStates.RangedAttack1))
+                    {
+                        mobileUnit.ChangeEnemyState(MobileStates.Idle);
+                    }
+                }
+                lastAttacking = isAttacking;
+            }
+        }
+
+        private void OnDestroy()
+        {
+            if (crouchMaterial != null)
+                Destroy(crouchMaterial);
+            if (crouchFrontTex != null)
+                Destroy(crouchFrontTex);
+            if (crouchBackTex != null)
+                Destroy(crouchBackTex);
+        }
+
+        /// <summary>
+        /// Controls puppet visibility based on whether local player and remote peer are in the same cell context.
+        /// </summary>
+        public void SetCellVisibility(bool isVisible)
+        {
+            if (gameObject.activeSelf != isVisible)
+            {
+                gameObject.SetActive(isVisible);
+                if (isVisible)
+                {
+                    transform.position = targetPosition;
+                    transform.rotation = targetRotation;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Updates the target position, orientation, and action states from incoming network packets.
+        /// </summary>
+        public void ApplyTransform(Vector3 pos, float yaw, bool moving, bool crouching, bool attacking, int weapon)
+        {
+            targetPosition = pos;
+            targetRotation = Quaternion.Euler(0, yaw, 0);
+            isMoving = moving;
+            isCrouching = crouching;
+            isAttacking = attacking;
+            weaponType = weapon;
+
+            if (Vector3.Distance(transform.position, pos) > snapDistance)
+            {
+                transform.position = pos;
+                transform.rotation = targetRotation;
+            }
+        }
+
+
+        /// <summary>
+        /// Gets the DaggerfallEntityBehaviour associated with this puppet.
+        /// </summary>
+        public DaggerfallEntityBehaviour EntityBehaviour => GetComponent<DaggerfallEntityBehaviour>();
+
+        /// <summary>
+        /// Triggers visual spellcasting billboard animation on this puppet.
+        /// </summary>
+        public void TriggerCastAnimation()
+        {
+            if (mobileUnit != null && mobileUnit.gameObject.activeSelf)
+            {
+                try
+                {
+                    var summary = mobileUnit.Summary;
+                    if (summary.Enemy.HasSpellAnimation && summary.Enemy.SpellAnimFrames != null && summary.Enemy.SpellAnimFrames.Length > 0)
+                    {
+                        mobileUnit.ChangeEnemyState(MobileStates.Spell);
+                    }
+                    else
+                    {
+                        mobileUnit.ChangeEnemyState(MobileStates.PrimaryAttack);
+                    }
+                    castAnimTimer = 0.5f;
+                }
+                catch (System.Exception ex)
+                {
+                    UnityEngine.Debug.LogWarning($"[DFU Magic] Failed to trigger cast animation on puppet: {ex.Message}");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Triggers visual attack billboard animation on this puppet.
+        /// </summary>
+        public void TriggerAttackAnimation()
+        {
+            if (mobileUnit != null && mobileUnit.gameObject.activeSelf)
+            {
+                try
+                {
+                    MobileStates attackState = (weaponType == (int)WeaponTypes.Bow) ? MobileStates.RangedAttack1 : MobileStates.PrimaryAttack;
+                    mobileUnit.ChangeEnemyState(attackState);
+                    castAnimTimer = 0.5f;
+                }
+                catch (System.Exception ex)
+                {
+                    UnityEngine.Debug.LogWarning($"[DFU Attack] Failed to trigger attack animation on puppet: {ex.Message}");
+                }
+            }
+        }
+    }
+}
